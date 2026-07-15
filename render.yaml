@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: deuce-pages-api
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_BASE_URL
+        sync: false
+      - key: API_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: deuce-pages-db
+          property: connectionString
+
+databases:
+  - name: deuce-pages-db
+    plan: starter

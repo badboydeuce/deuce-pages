@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DEUCE Pages | Pro Hacker Templates</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <canvas id="matrix" aria-hidden="true"></canvas>
+    <div class="scanline" aria-hidden="true"></div>
+
+    <main class="app-shell auth-mode">
+      <aside class="sidebar" aria-label="App navigation">
+        <div class="brand">
+          <span class="brand-mark">D2</span>
+          <div>
+            <h1>DEUCE Pages</h1>
+            <p>Red-team grade web templates</p>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="Primary navigation">
+          <a class="nav-item active" href="#dashboard" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">&#129517;</span>
+            <span>
+              <strong>Dashboard</strong>
+              <small>Control center</small>
+            </span>
+          </a>
+          <a class="nav-item" href="#pages">
+            <span class="nav-icon" aria-hidden="true">&#128196;</span>
+            <span>
+              <strong>Pages</strong>
+              <small>Template library</small>
+            </span>
+          </a>
+          <a class="nav-item" href="#admin" hidden aria-hidden="true" tabindex="-1">
+            <span class="nav-icon" aria-hidden="true">&#128736;</span>
+            <span>
+              <strong>Admin</strong>
+              <small>Uploader and designs</small>
+            </span>
+          </a>
+          <a class="nav-item" href="#my-pages">
+            <span class="nav-icon" aria-hidden="true">&#128451;</span>
+            <span>
+              <strong>My Pages</strong>
+              <small>Owned pages and controls</small>
+            </span>
+          </a>
+          <a class="nav-item" href="#wallet">
+            <span class="nav-icon" aria-hidden="true">&#128179;</span>
+            <span>
+              <strong>Wallet / Subscription</strong>
+              <small>Billing and active plans</small>
+            </span>
+          </a>
+        </nav>
+
+        <section class="intel-strip" aria-label="System status">
+          <span>TRACE: 0.03%</span>
+          <span>CIPHER: AES-512</span>
+          <span>NODE: LAGOS-07</span>
+        </section>
+      </aside>
+
+      <section class="workspace" aria-label="Template preview">
+        <header class="toolbar">
+          <div class="topbar-left">
+            <div class="status-line">
+              <span class="pulse"></span>
+              <span id="statusText">LOGIN READY</span>
+            </div>
+            <h2 id="topbarTitle">Login</h2>
+          </div>
+
+          <details class="topbar-menu">
+            <summary aria-label="Open dashboard controls">
+              <span class="profile-avatar" aria-hidden="true">&#128187;</span>
+              <span>
+                <strong id="profileName">Deuce User</strong>
+                <small id="profileRole">Subscriber account</small>
+              </span>
+              <i aria-hidden="true">&#9662;</i>
+            </summary>
+
+            <div class="dropdown-panel" aria-label="Dashboard controls">
+              <div class="dropdown-section">
+                <small>Profile</small>
+                <strong id="dropdownProfileName">Deuce User</strong>
+                <p>Wallet-funded subscriptions and account controls.</p>
+              </div>
+
+              <div class="dropdown-section">
+                <small>Signal Color</small>
+                <div class="swatches" id="swatches" aria-label="Accent colors">
+                  <button class="swatch active" type="button" data-accent="#7CFFB2" style="--swatch: #7CFFB2" aria-label="Phosphor"></button>
+                  <button class="swatch" type="button" data-accent="#6DEBFF" style="--swatch: #6DEBFF" aria-label="Ice blue"></button>
+                  <button class="swatch" type="button" data-accent="#FF4D8D" style="--swatch: #FF4D8D" aria-label="Magenta trace"></button>
+                  <button class="swatch" type="button" data-accent="#F9D56E" style="--swatch: #F9D56E" aria-label="Amber"></button>
+                </div>
+              </div>
+
+              <button class="theme-toggle" type="button" id="themeToggle" aria-label="Switch to light theme">
+                <span aria-hidden="true">&#127769;</span>
+                <strong>Dark Mode</strong>
+              </button>
+              <button class="theme-toggle logout-toggle" type="button" data-logout>
+                <span aria-hidden="true">&#9211;</span>
+                <strong>Logout</strong>
+              </button>
+            </div>
+          </details>
+        </header>
+
+        <article class="preview" id="preview" aria-live="polite">
+          <section class="app-view auth-view auth-loading">
+            <div class="view-heading">
+              <small>secure access</small>
+              <h2>Welcome back</h2>
+              <p>Loading your workspace access screen.</p>
+            </div>
+          </section>
+        </article>
+      </section>
+    </main>
+
+    <template id="blackbox-template">
+      <div class="preview-window blackbox-template">
+        <div class="window-bar">
+          <span></span><span></span><span></span>
+          <strong>blackbox.launch / verified</strong>
+          <em>sector-9</em>
+        </div>
+        <div class="blackbox-grid">
+          <section class="hero-copy">
+            <small>access layer 07</small>
+            <h2>Zero Noise. Full Control.</h2>
+            <p>Premium launch page for private tools, encrypted communities, security products, and founder drops that need sharp intent instead of generic neon.</p>
+            <div class="command-row">
+              <button class="primary-action" type="button">Request Key</button>
+              <code>ssh deuce@blackbox --cloak</code>
+            </div>
+          </section>
+          <section class="terminal-card" aria-label="Deployment log">
+            <p><b>01</b> handshake accepted</p>
+            <p><b>02</b> packet route masked</p>
+            <p><b>03</b> exploit surface reduced</p>
+            <p><b>04</b> launch signature armed</p>
+          </section>
+        </div>
+      </div>
+    </template>
+
+    <template id="command-template">
+      <div class="preview-window command-template">
+        <div class="window-bar">
+          <span></span><span></span><span></span>
+          <strong>overwatch.ops / live</strong>
+          <em>127 feeds</em>
+        </div>
+        <div class="ops-layout">
+          <section class="ops-map">
+            <div class="radar">
+              <i></i><i></i><i></i><i></i>
+              <span class="pin pin-a"></span>
+              <span class="pin pin-b"></span>
+              <span class="pin pin-c"></span>
+            </div>
+          </section>
+          <section class="ops-data">
+            <div class="metric-grid">
+              <div><small>Threat Index</small><b>02.8</b></div>
+              <div><small>Latency</small><b>14ms</b></div>
+              <div><small>Clean Routes</small><b>96%</b></div>
+            </div>
+            <h2>Command Layer</h2>
+            <p>Security operations dashboard template with compact metrics, tactical mapping, and a premium dark interface for serious products.</p>
+          </section>
+        </div>
+      </div>
+    </template>
+
+    <template id="vault-template">
+      <div class="preview-window vault-template">
+        <div class="window-bar">
+          <span></span><span></span><span></span>
+          <strong>vault.identity / masked</strong>
+          <em>clearance omega</em>
+        </div>
+        <div class="vault-layout">
+          <aside class="identity-card">
+            <div class="avatar">DX</div>
+            <small>operator profile</small>
+            <strong>DEUCE X</strong>
+          </aside>
+          <section>
+            <small>private portfolio system</small>
+            <h2>Signal Over Hype.</h2>
+            <p>Portfolio template for developers, security researchers, automation builders, and technical studios that want polished mystery without looking stock.</p>
+            <div class="tags">
+              <span>Reverse Engineering</span><span>OSINT</span><span>Automation</span><span>Web Ops</span>
+            </div>
+          </section>
+        </div>
+      </div>
+    </template>
+    <script src="script.js"></script>
+  </body>
+</html>
