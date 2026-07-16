@@ -409,14 +409,18 @@ function subscriptionState(page) {
     : null;
   const expired = daysLeft !== null && daysLeft < 0;
   const dueSoon = daysLeft !== null && daysLeft <= 3 && daysLeft >= 0;
+  const paymentFailed = page.status === "payment_failed" || subscription.renewalStatus === "payment_failed";
+  const locked = paymentFailed || page.status === "expired" || subscription.renewalStatus === "expired" || expired;
 
   return {
-    label: expired ? "Expired" : dueSoon ? "Due soon" : subscription.autoRenew ? "Auto renew" : "Manual renew",
-    className: expired ? "is-expired" : dueSoon ? "is-due" : subscription.autoRenew ? "is-auto" : "is-manual",
+    label: paymentFailed ? "Payment failed" : locked ? "Expired" : dueSoon ? "Due soon" : subscription.autoRenew ? "Auto renew" : "Manual renew",
+    className: paymentFailed ? "is-failed" : locked ? "is-expired" : dueSoon ? "is-due" : subscription.autoRenew ? "is-auto" : "is-manual",
     dueLabel: renewalDate || "Not scheduled",
     canRenew: true,
-    expired,
-    dueSoon
+    expired: locked,
+    dueSoon,
+    paymentFailed,
+    daysLeft
   };
 }
 
@@ -587,17 +591,22 @@ async function loadAppData() {
   try {
     const auth = getAuthState();
     const packagesResult = await requestApi("/api/packages");
-    const [userPagesResult, walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult] = auth.token
-      ? await Promise.all([
-        requestApi("/api/user-pages"),
+    let userPagesResult = { userPages: [] };
+    let walletResult = { balance: 0, currency: "USD", transactions: [] };
+    let depositRequestsResult = { requests: [] };
+    let fundingOptionsResult = { options: walletFundingOptions };
+    let adminDepositRequestsResult = { requests: [] };
+    if (auth.token) {
+      userPagesResult = await requestApi("/api/user-pages");
+      [walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult] = await Promise.all([
         requestApi("/api/wallet"),
         requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
         requestApi("/api/wallet/funding-options").catch(() => ({ options: walletFundingOptions })),
         isAdmin()
           ? requestApi("/api/wallet/admin/fund-requests").catch(() => ({ requests: [] }))
           : Promise.resolve({ requests: [] })
-      ])
-      : [{ userPages: [] }, { balance: 0, currency: "USD", transactions: [] }, { requests: [] }, { options: walletFundingOptions }, { requests: [] }];
+      ]);
+    }
     const packages = packagesResult.packages || [];
     marketPages = packages.filter((pagePackage) => pagePackage.status === "published").map(normalizePackage);
     adminPackages = packages.map(normalizePackage);
@@ -1484,12 +1493,14 @@ function renderDashboard() {
   const resultTotal = ownedPages.reduce((sum, page) => sum + (page.results?.length || 0), 0);
   const trafficTotal = ownedPages.reduce((sum, page) => sum + pageTrafficCount(page), 0);
   const activeRenewals = ownedPages.filter((page) => page.subscription?.autoRenew);
-  const bannedTotal = ownedPages.reduce((sum, page) => sum + (page.securityConfig?.bannedIps?.length || 0), 0);
-  const whitelistTotal = ownedPages.reduce((sum, page) => sum + (page.securityConfig?.whitelistIps?.length || 0), 0);
-  const captchaTotal = ownedPages.filter((page) => page.securityConfig?.captcha).length;
-  const securityTotal = bannedTotal + whitelistTotal + captchaTotal;
-  const nextPage = setupNeeded[0] || ownedPages[0] || null;
-  const walletStatus = walletData.balance >= 25 ? "Ready for weekly plans" : "Top up before paid subscriptions";
+  const subscriptionStates = ownedPages.map((page) => ({ page, state: subscriptionState(page) }));
+  const expiredPages = subscriptionStates.filter((item) => item.state.expired);
+  const dueSoonPages = subscriptionStates.filter((item) => item.state.dueSoon && !item.state.expired);
+  const subscriptionAttention = expiredPages[0] || dueSoonPages[0] || null;
+  const nextPage = subscriptionAttention?.page || setupNeeded[0] || ownedPages[0] || null;
+  const walletStatus = expiredPages.length
+    ? "Subscription attention"
+    : walletData.balance >= 25 ? "Ready for weekly plans" : "Top up before paid subscriptions";
   const recentPages = ownedPages.slice(0, 3);
   const recentTransactions = (walletData.transactions || []).slice(0, 3);
   const recentActivity = [
@@ -1530,23 +1541,37 @@ function renderDashboard() {
         routeButton("#signup", "Create account")
       ])}
 
+      ${subscriptionAttention ? `
+        <article class="subscription-alert ${subscriptionAttention.state.expired ? "is-critical" : "is-warning"}">
+          <div>
+            <small>subscription ${subscriptionAttention.state.expired ? "locked" : "due soon"}</small>
+            <h3>${escapeHtml(subscriptionAttention.page.name)} ${escapeHtml(subscriptionAttention.state.label.toLowerCase())}</h3>
+            <p>${subscriptionAttention.state.expired ? "Renew from wallet to restore runtime access." : `Renewal date: ${escapeHtml(subscriptionAttention.state.dueLabel)}.`}</p>
+          </div>
+          <div>
+            <button type="button" class="primary" data-route="#my-pages">Open My Pages</button>
+            <button type="button" data-route="#wallet">Fund wallet</button>
+          </div>
+        </article>
+      ` : ""}
+
       <div class="summary-grid dashboard-kpis">
         <article><small>Owned pages</small><b>${String(ownedPages.length).padStart(2, "0")}</b><span>${livePages.length} live now</span></article>
         <article><small>Wallet</small><b>${formatMoney(walletData.balance)}</b><span>${escapeHtml(walletStatus)}</span></article>
         <article><small>Results</small><b>${String(resultTotal).padStart(2, "0")}</b><span>${trafficTotal} tracked visits</span></article>
-        <article><small>Security</small><b>${String(securityTotal).padStart(2, "0")}</b><span>${bannedTotal} banned / ${whitelistTotal} trusted</span></article>
+        <article><small>Renewals</small><b>${String(expiredPages.length).padStart(2, "0")}</b><span>${dueSoonPages.length} due soon</span></article>
       </div>
 
       <div class="dashboard-grid">
         <article class="dashboard-panel dashboard-primary-panel">
           <div>
             <small>next best action</small>
-            <h3>${nextPage ? `${escapeHtml(nextPage.name)} needs ${pageLaunchReadiness(nextPage).percent}% launch review` : marketPages.length ? "Subscribe to your first page" : "Publish a page package"}</h3>
-            <p>${nextPage ? "Finish config, hosting, security, then download the live index.html from Go Live." : marketPages.length ? "Pick a marketplace page, choose a billing period, and activate it from wallet funds." : "Import a page package so users can subscribe from the marketplace."}</p>
+            <h3>${subscriptionAttention ? `${escapeHtml(subscriptionAttention.page.name)} needs renewal action` : nextPage ? `${escapeHtml(nextPage.name)} needs ${pageLaunchReadiness(nextPage).percent}% launch review` : marketPages.length ? "Subscribe to your first page" : "Publish a page package"}</h3>
+            <p>${subscriptionAttention ? "Renew the page or fund the wallet so runtime access stays live." : nextPage ? "Finish config, hosting, security, then download the live index.html from Go Live." : marketPages.length ? "Pick a marketplace page, choose a billing period, and activate it from wallet funds." : "Import a page package so users can subscribe from the marketplace."}</p>
           </div>
           <div class="dashboard-actions">
             ${nextPage ? `
-              <button type="button" class="primary" data-route="#go-live-${escapeHtml(nextPage.slug)}">Go Live</button>
+              <button type="button" class="primary" data-route="${subscriptionAttention ? "#my-pages" : `#go-live-${escapeHtml(nextPage.slug)}`}">${subscriptionAttention ? "Renew" : "Go Live"}</button>
               <button type="button" data-route="#config-${escapeHtml(nextPage.slug)}">Config</button>
             ` : `
               <button type="button" class="primary" data-route="${marketPages.length ? "#pages" : isAdmin() ? "#admin" : "#wallet"}">${marketPages.length ? "Browse pages" : isAdmin() ? "Open admin" : "Open wallet"}</button>
@@ -1560,7 +1585,7 @@ function renderDashboard() {
             <div><span>Live</span><strong>${livePages.length}</strong></div>
             <div><span>Setup</span><strong>${setupNeeded.length}</strong></div>
             <div><span>Auto renew</span><strong>${activeRenewals.length}</strong></div>
-            <div><span>Captcha</span><strong>${captchaTotal}</strong></div>
+            <div><span>Due soon</span><strong>${dueSoonPages.length}</strong></div>
           </div>
         </article>
 
@@ -2704,6 +2729,7 @@ function ownedPageCard(page, index) {
   const trafficCount = pageTrafficCount(page);
   const resultCount = page.results?.length || 0;
   const generatedLabel = page.generatedFile?.lastGeneratedAt ? "Generated" : page.generatedFile?.version || "Not generated";
+  const renewButtonLabel = renewal.paymentFailed ? "Fund and renew" : renewal.expired ? "Restore page" : "Renew now";
 
   return `
     <article class="owned-page-card my-page-card">
@@ -2741,7 +2767,7 @@ function ownedPageCard(page, index) {
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="security">&#128737; Security</button>
             <button type="button" data-results="${escapeHtml(page.slug)}">&#128193; Results</button>
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="traffic">&#128200; Traffic</button>
-            <button type="button" data-renew-page="${escapeHtml(page.slug)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; Renew now</button>
+            <button type="button" data-renew-page="${escapeHtml(page.slug)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; ${escapeHtml(renewButtonLabel)}</button>
           </section>
         </div>
       </details>
@@ -2754,7 +2780,9 @@ function renderMyPages() {
   const liveCount = ownedPages.filter((page) => page.hostingConfig?.verified || page.hostingConfig?.liveStatus === "Live").length;
   const resultTotal = ownedPages.reduce((sum, page) => sum + (page.results?.length || 0), 0);
   const captchaCount = ownedPages.filter((page) => page.securityConfig?.captcha).length;
-  const trafficTotal = ownedPages.reduce((sum, page) => sum + pageTrafficCount(page), 0);
+  const subscriptionStates = ownedPages.map((page) => ({ page, state: subscriptionState(page) }));
+  const expiredCount = subscriptionStates.filter((item) => item.state.expired).length;
+  const dueSoonCount = subscriptionStates.filter((item) => item.state.dueSoon && !item.state.expired).length;
 
   preview.innerHTML = `
     <section class="app-view">
@@ -2771,13 +2799,14 @@ function renderMyPages() {
         <article><small>Owned pages</small><b>${String(ownedPages.length).padStart(2, "0")}</b><span>Active subscriptions</span></article>
         <article><small>Live pages</small><b>${String(liveCount).padStart(2, "0")}</b><span>Verified hosting</span></article>
         <article><small>Results</small><b>${String(resultTotal).padStart(2, "0")}</b><span>Saved submissions</span></article>
-        <article><small>Traffic</small><b>${String(trafficTotal).padStart(2, "0")}</b><span>Tracked visits</span></article>
+        <article><small>Renewals</small><b>${String(expiredCount).padStart(2, "0")}</b><span>${dueSoonCount} due soon</span></article>
       </div>
 
       <article class="my-pages-brief">
         <div class="feature-row">
           <span>${captchaCount} captcha enabled</span>
           <span>${ownedPages.filter((page) => page.subscription?.autoRenew).length} auto-renewing</span>
+          <span>${expiredCount} locked</span>
           <span>${ownedPages.filter((page) => page.generatedFile?.lastGeneratedAt).length} generated files</span>
         </div>
       </article>

@@ -3740,6 +3740,12 @@ code,
   background: #ff5f63;
 }
 
+.subscription-chip.is-failed {
+  color: #ffffff;
+  border-color: #ff7a1a;
+  background: #ff7a1a;
+}
+
 :root[data-theme="light"] .subscription-chip {
   border-color: rgba(16, 32, 24, 0.12);
   background: rgba(255, 255, 255, 0.76);
@@ -3748,6 +3754,92 @@ code,
 :root[data-theme="light"] .subscription-chip.is-auto,
 :root[data-theme="light"] .subscription-chip.is-free {
   color: #ffffff;
+  background: var(--accent);
+}
+
+.subscription-alert {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid rgba(245, 196, 81, 0.42);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(245, 196, 81, 0.12), transparent 52%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.subscription-alert.is-critical {
+  border-color: rgba(255, 95, 99, 0.5);
+  background:
+    linear-gradient(135deg, rgba(255, 95, 99, 0.14), transparent 52%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.subscription-alert h3,
+.subscription-alert p {
+  margin: 0;
+}
+
+.subscription-alert h3 {
+  margin-top: 4px;
+  font-size: 1rem;
+}
+
+.subscription-alert p {
+  margin-top: 5px;
+  color: var(--soft);
+  line-height: 1.5;
+}
+
+.subscription-alert > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.subscription-alert button {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.subscription-alert button.primary {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+:root[data-theme="light"] .subscription-alert {
+  border-color: rgba(191, 133, 15, 0.28);
+  background:
+    linear-gradient(135deg, rgba(245, 196, 81, 0.16), transparent 52%),
+    rgba(255, 255, 255, 0.86);
+}
+
+:root[data-theme="light"] .subscription-alert.is-critical {
+  border-color: rgba(214, 55, 63, 0.32);
+  background:
+    linear-gradient(135deg, rgba(255, 95, 99, 0.13), transparent 52%),
+    rgba(255, 255, 255, 0.86);
+}
+
+:root[data-theme="light"] .subscription-alert button {
+  border-color: rgba(16, 32, 24, 0.12);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+:root[data-theme="light"] .subscription-alert button.primary {
+  color: #ffffff;
+  border-color: var(--accent);
   background: var(--accent);
 }
 
@@ -5043,6 +5135,18 @@ code {
 
   .my-page-tools summary strong {
     display: none;
+  }
+
+  .subscription-alert {
+    grid-template-columns: 1fr;
+  }
+
+  .subscription-alert > div:last-child {
+    justify-content: stretch;
+  }
+
+  .subscription-alert button {
+    flex: 1 1 140px;
   }
 
   .my-page-score {

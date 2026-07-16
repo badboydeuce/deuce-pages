@@ -636,11 +636,17 @@ export async function listUserPages(userId) {
   if (!userId) throw new Error("Authentication required");
   if (useJsonDb()) {
     const db = await readJsonDb();
-    return db.userPages.filter((page) => page.userId === userId).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const userPages = db.userPages.filter((page) => page.userId === userId);
+    const refreshed = [];
+    for (const page of userPages) {
+      refreshed.push(await resolveUserPageSubscription(page.id, userId));
+    }
+    return refreshed.filter(Boolean).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
   const result = await query("SELECT * FROM user_pages WHERE user_id = $1 ORDER BY created_at DESC", [userId]);
-  return result.rows.map(toUserPage);
+  const refreshed = await Promise.all(result.rows.map((row) => resolveUserPageSubscription(row.id, userId)));
+  return refreshed.filter(Boolean).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 export async function findUserPage(id, userId = null) {
@@ -660,6 +666,7 @@ export async function updateUserPageConfig(id, data, userId = null) {
   if (!current) return null;
   const next = {
     ...current,
+    status: data.status ?? current.status,
     domain: data.domain ?? current.domain,
     subscription: { ...current.subscription, ...(data.subscription || {}) },
     flow: data.flow || current.flow,
@@ -681,13 +688,14 @@ export async function updateUserPageConfig(id, data, userId = null) {
 
   const result = await query(
     `UPDATE user_pages
-     SET domain = $2, subscription = $3::jsonb, flow = $4::jsonb, configs = $5::jsonb,
-         security_config = $6::jsonb, hosting_config = $7::jsonb, result_settings = $8::jsonb, generated_file = $9::jsonb,
+     SET status = $2, domain = $3, subscription = $4::jsonb, flow = $5::jsonb, configs = $6::jsonb,
+         security_config = $7::jsonb, hosting_config = $8::jsonb, result_settings = $9::jsonb, generated_file = $10::jsonb,
          updated_at = now()
      WHERE id = $1
      RETURNING *`,
     [
       current.id,
+      next.status,
       next.domain,
       JSON.stringify(next.subscription),
       JSON.stringify(next.flow),
@@ -699,6 +707,70 @@ export async function updateUserPageConfig(id, data, userId = null) {
     ]
   );
   return toUserPage(result.rows[0]);
+}
+
+export function pageSubscriptionState(page) {
+  const subscription = page?.subscription || {};
+  if (subscription.adminFreeSubscription) {
+    return { status: "active", label: "Admin free", daysLeft: null, blocked: false };
+  }
+
+  const renewalDate = subscription.renewalDate || "";
+  if (!renewalDate) {
+    return { status: "active", label: "Active", daysLeft: null, blocked: false };
+  }
+
+  const today = new Date(`${isoDateOnly()}T00:00:00Z`);
+  const renewal = new Date(`${renewalDate}T00:00:00Z`);
+  if (Number.isNaN(renewal.getTime())) {
+    return { status: "active", label: "Active", daysLeft: null, blocked: false };
+  }
+
+  const daysLeft = Math.ceil((renewal.getTime() - today.getTime()) / 86400000);
+  if (page?.status === "payment_failed" || subscription.renewalStatus === "payment_failed") {
+    return { status: "payment_failed", label: "Payment failed", daysLeft, blocked: true };
+  }
+  if (page?.status === "expired" || subscription.renewalStatus === "expired" || daysLeft < 0) {
+    return { status: "expired", label: "Expired", daysLeft, blocked: true };
+  }
+  if (daysLeft <= 3) {
+    return { status: "due_soon", label: "Due soon", daysLeft, blocked: false };
+  }
+  return { status: "active", label: subscription.autoRenew ? "Auto renew" : "Active", daysLeft, blocked: false };
+}
+
+export async function resolveUserPageSubscription(id, userId = null) {
+  const current = await findUserPage(id, userId);
+  if (!current) return null;
+  const state = pageSubscriptionState(current);
+  const subscription = current.subscription || {};
+
+  if (!state.blocked && state.status !== "expired") return current;
+  if (subscription.adminFreeSubscription) return current;
+
+  if (subscription.autoRenew) {
+    const renewal = await renewUserPage(current.id, current.userId);
+    if (!renewal?.error) return renewal.userPage;
+    if (renewal.status !== 402) return current;
+    return updateUserPageConfig(current.id, {
+      status: "payment_failed",
+      subscription: {
+        ...subscription,
+        renewalStatus: "payment_failed",
+        paymentFailedAt: new Date().toISOString(),
+        lastRenewalError: renewal.error
+      }
+    }, userId);
+  }
+
+  return updateUserPageConfig(current.id, {
+    status: "expired",
+    subscription: {
+      ...subscription,
+      renewalStatus: "expired",
+      expiredAt: subscription.expiredAt || new Date().toISOString()
+    }
+  }, userId);
 }
 
 export async function renewUserPage(id, userId) {

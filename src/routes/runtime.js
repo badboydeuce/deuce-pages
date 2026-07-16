@@ -1,8 +1,9 @@
 import { Router } from "express";
 import {
   findPackage,
-  findUserPage,
   getSessionCommand,
+  pageSubscriptionState,
+  resolveUserPageSubscription,
   savePageResult,
   saveTrafficEvent,
   updateUserPageConfig
@@ -64,6 +65,7 @@ function publicPageConfig(page) {
     domain: page.domain,
     status: page.status,
     subscription: page.subscription,
+    subscriptionState: pageSubscriptionState(page),
     hosting: {
       domain: page.hostingConfig?.domain || page.domain || "",
       hostingType: page.hostingConfig?.hostingType || "cpanel",
@@ -88,7 +90,7 @@ function publicPageConfig(page) {
 
 async function runtimeContext(req, res) {
   const userPageId = req.body?.userPageId || req.query?.userPageId || req.body?.pageId || req.query?.pageId;
-  const page = await findUserPage(userPageId);
+  const page = await resolveUserPageSubscription(userPageId);
   if (!page) {
     res.status(404).json({ error: "Runtime page not found" });
     return null;
@@ -105,6 +107,19 @@ async function runtimeContext(req, res) {
   const allowedHosts = allowedHostsFor(page);
   if (allowedHosts.length && clientHost && !allowedHosts.includes(clientHost)) {
     res.status(403).json({ error: "Domain not authorized", host: clientHost });
+    return null;
+  }
+
+  const subscriptionState = pageSubscriptionState(page);
+  if (subscriptionState.blocked) {
+    res.status(402).json({
+      error: subscriptionState.status,
+      reason: subscriptionState.status === "payment_failed"
+        ? "Page subscription renewal failed. Fund wallet or renew manually."
+        : "Page subscription expired. Renew from wallet to restore access.",
+      userPageId: page.id,
+      renewalDate: page.subscription?.renewalDate || null
+    });
     return null;
   }
 
