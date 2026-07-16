@@ -511,9 +511,9 @@ function generateRelaySecret() {
 
 function cloudflareWorkerScript(page) {
   const hosting = page.hostingConfig || {};
-  const railwayApi = (hosting.relayTarget || page.generatedFile?.apiBase || apiBase()).replace(/\/$/, "");
+  const backendApi = (hosting.relayTarget || apiBase()).replace(/\/$/, "");
   const relaySecret = hosting.relaySecret || "";
-  return `const DEUCE_API = "${railwayApi}";
+  return `const DEUCE_API = "${backendApi}";
 const RELAY_SECRET = "${relaySecret}";
 
 export default {
@@ -2296,7 +2296,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const installPath = hosting.installPath || (isRenderStatic ? "root / public directory" : "public_html");
   const connectionType = hosting.connectionType || "cloudflare-worker";
   const relaySecret = hosting.relaySecret || "";
-  const relayTarget = hosting.relayTarget || page.generatedFile?.apiBase || apiBase();
+  const relayTarget = hosting.relayTarget || apiBase();
   const workerRoute = domain ? `${domain}/api/*` : "clientdomain.com/api/*";
   const hasDomain = Boolean(domain);
   const hasRenderOrigin = Boolean(serverIp);
@@ -2316,7 +2316,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       <div class="view-heading">
         <small>go live setup</small>
         <h2>${page.name} activation</h2>
-        <p>Follow the steps in order. The page is strict live-domain only: it should load on ${displayDomain}, not the raw Render Static Site URL.</p>
+        <p>Follow the steps in order. The page is strict live-domain only: it loads on ${displayDomain}, while backend traffic stays behind a domain relay.</p>
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
@@ -2344,8 +2344,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       <article class="my-pages-brief">
         <div>
           <small>local testing note</small>
-          <h3>Render can host the page, but Cloudflare needs a public API target.</h3>
-          <p>If your DEUCE API is only on localhost, the hosted page cannot reach it through Cloudflare. Use Railway, a Render Web Service, ngrok, or Cloudflare Tunnel for the API target when testing the real domain.</p>
+          <h3>Render hosts the page. Cloudflare hides the backend route.</h3>
+          <p>The visitor only calls https://${displayDomain}/api/*. Cloudflare relays those calls to the app backend without exposing the backend URL in the downloaded index.html.</p>
         </div>
         <div class="feature-row">
           <span>Live URL: https://${displayDomain}/</span>
@@ -2370,7 +2370,6 @@ function renderGoLiveCenter(pageSlug = "page-a") {
               ].map(([value, label]) => `<option value="${value}" ${connectionType === value ? "selected" : ""}>${label}</option>`).join("")}
             </select>
           </label>
-          <label><span>Railway API target</span><input type="text" data-hosting-field="relayTarget" value="${escapeHtml(relayTarget)}" placeholder="https://your-app.up.railway.app"></label>
           <div class="admin-actions">
             <button type="button" data-save-hosting="${page.slug}">Save domain</button>
           </div>
@@ -2399,7 +2398,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           <p>This secret is stored in the Cloudflare Worker only. It lets your backend reject direct runtime traffic.</p>
           <div class="traffic-log">
             <div><span>01</span><strong>Secret</strong><em>${relaySecret ? "Saved" : "Needed"}</em><small>${relaySecret ? "Ready for Worker install." : "Generate before copying Worker code."}</small></div>
-            <div><span>02</span><strong>Target</strong><em>${escapeHtml(relayTarget)}</em><small>Cloudflare forwards runtime calls here.</small></div>
+            <div><span>02</span><strong>Relay</strong><em>Hidden backend</em><small>Cloudflare forwards runtime calls privately.</small></div>
           </div>
           <div class="admin-actions">
             <button type="button" data-generate-relay-secret="${page.slug}">${relaySecret ? "Regenerate secret" : "Generate secret"}</button>
@@ -2409,10 +2408,10 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <article class="security-panel go-live-step-card ${hasWorkerRoute ? "is-complete" : hasRelaySecret ? "is-active" : ""}">
           <small>step 4</small>
           <h3>Install Cloudflare Worker</h3>
-          <p>Add this Worker on route <strong>${workerRoute}</strong>. It redirects /index.html and forwards /api/* to your hidden API target.</p>
+          <p>Add this Worker on route <strong>${workerRoute}</strong>. It redirects /index.html and forwards /api/* through the hidden backend relay.</p>
           <div class="admin-code-sample">
             <code>Worker route: ${workerRoute}</code>
-            <code>Runtime target: ${escapeHtml(relayTarget)}/api/runtime/*</code>
+            <code>Runtime target: hidden backend relay</code>
             <code>Browser calls: https://${displayDomain}/api/*</code>
           </div>
           <textarea class="worker-code-box" readonly data-worker-code="${page.slug}">${escapeHtml(workerScript)}</textarea>
@@ -2446,7 +2445,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <article class="security-panel go-live-step-card ${page.generatedFile?.lastGeneratedAt ? "is-complete" : readyToDownload ? "is-active" : ""}">
           <small>step 6</small>
           <h3>Download final index.html</h3>
-          <p>Download after the domain, relay secret, Worker route, and API target are set. Upload this file to the Render Static Site root/publish directory.</p>
+          <p>Download after the domain, relay secret, and Worker route are set. Upload this file to the Render Static Site root/publish directory.</p>
           <div class="admin-rule-list">
             ${isRenderStatic ? `
               <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
@@ -2674,7 +2673,7 @@ function renderFlowBuilder(pageSlug = "page-a") {
           <article class="generated-file-card">
             <small>generated file</small>
             <h3>Standalone index.html</h3>
-            <p>The download includes this page's saved flow, user config, subscription state, domain rules, license key, and Render API target.</p>
+            <p>The download includes this page's saved flow, user config, subscription state, domain rules, license key, and relay mode.</p>
             <div class="feature-row">
               <span>${page.flow.length} active screens</span>
               <span>${page.packageVersion}</span>
@@ -3200,7 +3199,7 @@ function collectHostingFields(page) {
     connectionType: field("connectionType") || "cloudflare-worker",
     hostingType: selectedHostingType,
     installPath: field("installPath") || (selectedHostingType === "render-static-site" ? "root / public directory" : "public_html"),
-    relayTarget: field("relayTarget") || apiBase(),
+    relayTarget: page.hostingConfig?.relayTarget || apiBase(),
     relaySecret: page.hostingConfig?.relaySecret || ""
   };
 }
@@ -3468,7 +3467,7 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
         resultPanel.innerHTML = `
           <code>${escapeHtml(connection.title)}</code>
           <code>${escapeHtml(connection.detail)}</code>
-          <code>API target: ${escapeHtml(apiBase())}</code>
+          <code>Backend connection is managed by the app.</code>
         `;
       }
       statusText.textContent = connection.status === 403 ? "ADMIN ACCESS REQUIRED" : "GITHUB IMPORT NEEDS API CONNECTION";
@@ -3500,7 +3499,7 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
       resultPanel.innerHTML = `
         <code>GitHub import failed</code>
         <code>${escapeHtml(error.message)}</code>
-        <code>API target: ${escapeHtml(apiBase())}. Private repos need GITHUB_TOKEN on Render. Public repos need the correct branch and folder.</code>
+        <code>Private repos need valid GitHub access. Public repos need the correct branch and folder.</code>
       `;
     }
     statusText.textContent = error.status === 401
