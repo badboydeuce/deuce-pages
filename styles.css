@@ -2665,7 +2665,7 @@ code,
 
 .traffic-log div {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto minmax(158px, auto);
   gap: 8px;
   align-items: center;
   padding: 10px;
@@ -2688,15 +2688,25 @@ code,
   font-style: normal;
 }
 
+.traffic-log em.is-banned {
+  color: #ff9f9f;
+}
+
+.traffic-log em.is-whitelisted {
+  color: var(--accent);
+}
+
 .traffic-log small {
   grid-column: 2 / -1;
 }
 
 .traffic-actions {
+  grid-column: 4;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
+  justify-self: end;
 }
 
 .traffic-actions button {
@@ -2708,6 +2718,11 @@ code,
   background: rgba(255, 255, 255, 0.045);
   cursor: pointer;
   font: 800 0.68rem var(--mono);
+}
+
+.traffic-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .traffic-actions button:first-child {
@@ -3833,6 +3848,7 @@ code {
   .traffic-actions {
     grid-column: 2 / -1;
     justify-content: flex-start;
+    justify-self: stretch;
   }
 
   .sidebar {

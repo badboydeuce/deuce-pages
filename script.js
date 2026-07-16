@@ -2785,7 +2785,7 @@ function formatTrafficDate(value) {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function trafficRowsMarkup(trafficLog, pageSlug) {
+function trafficRowsMarkup(trafficLog, pageSlug, bannedIps = [], whitelistIps = []) {
   if (!trafficLog.length) {
     return `
       <article class="empty-state traffic-empty">
@@ -2795,23 +2795,29 @@ function trafficRowsMarkup(trafficLog, pageSlug) {
     `;
   }
 
-  return trafficLog.map((event) => `
-    <div>
-      <span>${escapeHtml(formatTrafficTime(event.createdAt || event.time))}</span>
-      <strong>${escapeHtml(event.ip || "unknown ip")}</strong>
-      <em>${escapeHtml(event.result || event.event || "visit")}</em>
-      <small>${escapeHtml([
-        event.event || "page_load",
-        event.screen || event.path || "",
-        event.hostname || "",
-        formatTrafficDate(event.createdAt)
-      ].filter(Boolean).join(" / "))}</small>
-      <section class="traffic-actions" aria-label="Traffic IP actions">
-        <button type="button" data-traffic-ban-ip="${escapeHtml(event.ip || "")}" data-traffic-page="${escapeHtml(pageSlug)}" ${event.ip ? "" : "disabled"}>Ban</button>
-        <button type="button" data-traffic-whitelist-ip="${escapeHtml(event.ip || "")}" data-traffic-page="${escapeHtml(pageSlug)}" ${event.ip ? "" : "disabled"}>Whitelist</button>
-      </section>
-    </div>
-  `).join("");
+  return trafficLog.map((event) => {
+    const ip = event.ip || "";
+    const isBanned = bannedIps.includes(ip);
+    const isWhitelisted = whitelistIps.includes(ip);
+    const status = isBanned ? "Banned" : isWhitelisted ? "Whitelisted" : event.result || event.event || "Visit";
+    return `
+      <div>
+        <span>${escapeHtml(formatTrafficTime(event.createdAt || event.time))}</span>
+        <strong>${escapeHtml(ip || "unknown ip")}</strong>
+        <em class="${isBanned ? "is-banned" : isWhitelisted ? "is-whitelisted" : ""}">${escapeHtml(status)}</em>
+        <section class="traffic-actions" aria-label="Traffic IP actions">
+          <button type="button" data-traffic-ban-ip="${escapeHtml(ip)}" data-traffic-page="${escapeHtml(pageSlug)}" ${ip && !isBanned ? "" : "disabled"}>Ban</button>
+          <button type="button" data-traffic-whitelist-ip="${escapeHtml(ip)}" data-traffic-page="${escapeHtml(pageSlug)}" ${ip && !isWhitelisted ? "" : "disabled"}>Whitelist</button>
+        </section>
+        <small>${escapeHtml([
+          event.event || "page_load",
+          event.screen || event.path || "",
+          event.hostname || "",
+          formatTrafficDate(event.createdAt)
+        ].filter(Boolean).join(" / "))}</small>
+      </div>
+    `;
+  }).join("");
 }
 
 async function fetchPageTraffic(page) {
@@ -2908,7 +2914,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <div><span>Blocked</span><b>${trafficLog.filter((event) => event.result === "blocked").length}</b></div>
       </div>
       <div class="traffic-log">
-        ${trafficRowsMarkup(trafficLog, page.slug)}
+        ${trafficRowsMarkup(trafficLog, page.slug, bannedIps, whitelistIps)}
       </div>
     </article>
   `;
