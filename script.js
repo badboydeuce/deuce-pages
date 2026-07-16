@@ -2395,22 +2395,12 @@ function ownedPageCard(page, index) {
         </summary>
         <div class="my-page-tool-grid" aria-label="${escapeHtml(page.name)} management tools">
           <section>
-            <h4>Launch</h4>
+            <h4>Page controls</h4>
             <button type="button" data-go-live="${escapeHtml(page.slug)}">&#128640; Go Live</button>
-            <button type="button" data-config-page="${escapeHtml(page.slug)}">&#9881; Config</button>
-            <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="domains">&#127760; Domain</button>
-          </section>
-          <section>
-            <h4>Operate</h4>
             <button type="button" data-config-page="${escapeHtml(page.slug)}">&#9881; Config</button>
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="security">&#128737; Security</button>
             <button type="button" data-results="${escapeHtml(page.slug)}">&#128193; Results</button>
-          </section>
-          <section>
-            <h4>Export</h4>
-            <button type="button" data-download-index="${escapeHtml(page.slug)}">&#11015; index.html</button>
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="traffic">&#128200; Traffic</button>
-            <button type="button" data-route="#wallet">&#128179; Billing</button>
           </section>
         </div>
       </details>
@@ -2430,12 +2420,11 @@ function renderMyPages() {
       <div class="view-heading">
         <small>my pages</small>
         <h2>Page control room</h2>
-        <p>Manage every subscribed page from one place: launch setup, configuration, security rules, saved results, traffic, billing, and the final index.html file.</p>
+        <p>Manage each subscribed page from a compact control panel. Use Config for domain and page behavior, Go Live for hosting and download, and Security or Results when you need operations.</p>
       </div>
       ${viewNav([
         routeButton("#dashboard", "&#8592; Dashboard"),
-        routeButton("#pages", "Browse pages"),
-        routeButton("#wallet", "Wallet")
+        routeButton("#pages", "Browse pages")
       ])}
 
       <div class="summary-grid my-pages-kpis">
@@ -2448,8 +2437,8 @@ function renderMyPages() {
       <article class="my-pages-brief">
         <div>
           <small>workspace flow</small>
-          <h3>Subscribe, configure, connect hosting, then export.</h3>
-          <p>Each card below is one owned page. Open its management panel when you need tools, keep it closed when you only want the live status.</p>
+          <h3>Configure, secure, monitor, then go live.</h3>
+          <p>Each card below is one owned page. Open its controls for the few actions that matter most.</p>
         </div>
         <div class="feature-row">
           <span>${captchaCount} captcha enabled</span>
@@ -2510,8 +2499,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#config-${page.slug}`, "Config"),
-        routeButton(`#security-${page.slug}:domains`, "Domains")
+        routeButton(`#config-${page.slug}`, "Config")
       ])}
 
       <div class="summary-grid">
@@ -2546,9 +2534,12 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       <div class="go-live-steps">
         <article class="security-panel package-form go-live-step-card ${hasDomain ? "is-complete" : "is-active"}">
           <small>step 1</small>
-          <h3>Set the live domain</h3>
-          <p>This is the only hostname where the downloaded page is allowed to run.</p>
-          <label><span>Domain name</span><input type="text" data-hosting-field="domain" value="${domain}" placeholder="example.com"></label>
+          <h3>Confirm the live domain</h3>
+          <p>The domain is managed in Config. Go Live uses that saved domain as the only hostname where the downloaded page is allowed to run.</p>
+          <div class="admin-code-sample">
+            <code>Live domain: ${escapeHtml(domain || "Not configured")}</code>
+            <code>Allowed URL: https://${escapeHtml(displayDomain)}/</code>
+          </div>
           <label>
             <span>Connection type</span>
             <select data-hosting-field="connectionType">
@@ -2560,7 +2551,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             </select>
           </label>
           <div class="admin-actions">
-            <button type="button" data-save-hosting="${page.slug}">Save domain</button>
+            <button type="button" data-route="#config-${page.slug}">Open Config</button>
+            <button type="button" data-save-hosting="${page.slug}">Save connection type</button>
           </div>
         </article>
 
@@ -2696,7 +2688,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
       <div class="view-heading">
         <small>user config</small>
         <h2>${page.name} configuration</h2>
-        <p>This is the subscriber-owned config record that controls billing, hosting, generated files, result capture, and page behavior.</p>
+        <p>Set the page domain, subscription behavior, runtime endpoints, and result capture rules. Downloading the final index.html now happens only inside Go Live.</p>
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
@@ -2731,11 +2723,15 @@ function renderUserConfigCenter(pageSlug = "page-a") {
 
         <article class="security-panel package-form">
           <small>hosting</small>
-          <h3>Domain and generated file</h3>
-          <label><span>Primary domain</span><input type="text" data-user-config="domain" value="${page.domain}"></label>
+          <h3>Domain and runtime</h3>
+          <label><span>Primary domain</span><input type="text" data-user-config="domain" value="${page.domain}" placeholder="clientdomain.com"></label>
           <label><span>API base</span><input type="text" data-user-config="apiBase" value="${page.generatedFile.apiBase}"></label>
           <label><span>Download name</span><input type="text" data-user-config="downloadName" value="${page.generatedFile.downloadName}"></label>
           <label><span>Build version</span><input type="text" data-user-config="fileVersion" value="${page.generatedFile.version}"></label>
+          <div class="admin-actions">
+            <button type="button" data-save-user-config="${page.slug}">Save config</button>
+            <button type="button" data-go-live="${page.slug}">Go Live / Download</button>
+          </div>
         </article>
 
         <article class="security-panel package-form">
@@ -2748,8 +2744,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
             <span>Notify user when a new result arrives</span>
           </label>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save user config</button>
-            <button type="button" data-download-index="${page.slug}">Generate index.html</button>
+            <button type="button" data-save-user-config="${page.slug}">Save results config</button>
           </div>
         </article>
 
@@ -2832,6 +2827,7 @@ async function fetchPageTraffic(page) {
 
 async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   activeFlowSlug = null;
+  tab = tab === "domains" ? "security" : tab;
   const page = getPageBySlug(pageSlug);
   if (!page) {
     renderMissingPage();
@@ -2839,33 +2835,15 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   }
   const security = page.securityConfig;
   const turnstile = security.turnstile || {};
-  const domains = security.domains || [];
   const bannedIps = security.bannedIps || [];
   const whitelistIps = security.whitelistIps || [];
   const blockedDevices = security.blockedDevices || [];
   const trafficLog = tab === "traffic" ? await fetchPageTraffic(page) : security.trafficLog || [];
   const tabButtons = [
     routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:domains`, "Domains", tab === "domains" ? "primary" : ""),
     routeButton(`#security-${page.slug}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
     routeButton(`#security-${page.slug}:traffic`, "Traffic", tab === "traffic" ? "primary" : "")
   ];
-  const domainPanel = `
-    <article class="security-panel">
-      <div class="builder-heading">
-        <div>
-          <small>domains</small>
-          <h3>Allowed hosts</h3>
-        </div>
-        <button type="button" data-save-security="${page.slug}">Save security</button>
-      </div>
-      <label>
-        <span>Allowed domains</span>
-        <textarea data-security-field="domains">${domains.join("\n")}</textarea>
-      </label>
-      <p>Generated files only run on these domains. Keep this list tight once the page is live.</p>
-    </article>
-  `;
   const captchaPanel = `
     <article class="security-panel">
       <small>captcha</small>
@@ -2946,11 +2924,9 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   `;
   const panels = tab === "traffic"
     ? trafficPanel
-    : tab === "domains"
-      ? `${domainPanel}${captchaPanel}`
     : tab === "ips"
         ? `${ipPanel}${devicePanel}${trafficPanel}`
-        : `${domainPanel}${captchaPanel}${ipPanel}${devicePanel}${trafficPanel}`;
+        : `${captchaPanel}${ipPanel}${devicePanel}${trafficPanel}`;
 
   preview.innerHTML = `
     <section class="app-view">
