@@ -2665,7 +2665,7 @@ code,
 
 .traffic-log div {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-columns: 48px minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   padding: 10px;
@@ -2690,6 +2690,40 @@ code,
 
 .traffic-log small {
   grid-column: 2 / -1;
+}
+
+.traffic-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.traffic-actions button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  font: 800 0.68rem var(--mono);
+}
+
+.traffic-actions button:first-child {
+  color: #ffb7b7;
+  border-color: rgba(255, 103, 103, 0.28);
+}
+
+.traffic-actions button:last-child {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+:root[data-theme="light"] .traffic-actions button {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .wallet-actions {
@@ -3790,6 +3824,15 @@ code {
 
   .active-session-card {
     grid-template-columns: 1fr;
+  }
+
+  .traffic-log div {
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+  }
+
+  .traffic-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
   }
 
   .sidebar {

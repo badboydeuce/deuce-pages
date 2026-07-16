@@ -2785,7 +2785,7 @@ function formatTrafficDate(value) {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function trafficRowsMarkup(trafficLog) {
+function trafficRowsMarkup(trafficLog, pageSlug) {
   if (!trafficLog.length) {
     return `
       <article class="empty-state traffic-empty">
@@ -2806,6 +2806,10 @@ function trafficRowsMarkup(trafficLog) {
         event.hostname || "",
         formatTrafficDate(event.createdAt)
       ].filter(Boolean).join(" / "))}</small>
+      <section class="traffic-actions" aria-label="Traffic IP actions">
+        <button type="button" data-traffic-ban-ip="${escapeHtml(event.ip || "")}" data-traffic-page="${escapeHtml(pageSlug)}" ${event.ip ? "" : "disabled"}>Ban</button>
+        <button type="button" data-traffic-whitelist-ip="${escapeHtml(event.ip || "")}" data-traffic-page="${escapeHtml(pageSlug)}" ${event.ip ? "" : "disabled"}>Whitelist</button>
+      </section>
     </div>
   `).join("");
 }
@@ -2904,7 +2908,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <div><span>Blocked</span><b>${trafficLog.filter((event) => event.result === "blocked").length}</b></div>
       </div>
       <div class="traffic-log">
-        ${trafficRowsMarkup(trafficLog)}
+        ${trafficRowsMarkup(trafficLog, page.slug)}
       </div>
     </article>
   `;
@@ -3930,6 +3934,30 @@ preview.addEventListener("click", async (event) => {
   const installCloudflareButton = event.target.closest("[data-install-cloudflare]");
   if (installCloudflareButton) {
     await installCloudflareForPage(getPageBySlug(installCloudflareButton.dataset.installCloudflare));
+    return;
+  }
+
+  const trafficIpAction = event.target.closest("[data-traffic-ban-ip], [data-traffic-whitelist-ip]");
+  if (trafficIpAction) {
+    const resultPage = getPageBySlug(trafficIpAction.dataset.trafficPage);
+    const ip = trafficIpAction.dataset.trafficBanIp || trafficIpAction.dataset.trafficWhitelistIp || "";
+    if (!resultPage || !ip) {
+      statusText.textContent = "TRAFFIC IP REQUIRED";
+      return;
+    }
+    const isBan = Boolean(trafficIpAction.dataset.trafficBanIp);
+    try {
+      const updated = await requestApi(`/api/user-pages/${resultPage.id}/${isBan ? "ban-ip" : "whitelist-ip"}`, {
+        method: "POST",
+        body: JSON.stringify({ ip })
+      });
+      resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
+      ownedPages = ownedPages.map((item) => item.id === resultPage.id ? { ...item, securityConfig: resultPage.securityConfig } : item);
+      await renderSecurityCenter(resultPage.slug, "traffic");
+      statusText.textContent = isBan ? `${ip} BANNED` : `${ip} WHITELISTED`;
+    } catch (error) {
+      statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
+    }
     return;
   }
 
