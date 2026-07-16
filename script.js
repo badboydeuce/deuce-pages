@@ -61,6 +61,8 @@ let adminDepositRequests = [];
 let walletFundOpen = false;
 let walletHistoryOpen = false;
 let walletFundingOptions = [];
+const expandedAdminUsers = new Set();
+const collabAdminUsers = new Set();
 const selectedMarketPlans = {};
 const billingPeriodLabels = {
   daily: "Daily",
@@ -505,12 +507,23 @@ function normalizeUserPage(page) {
 
 function normalizeAdminUser(user) {
   const pages = (user.pages || []).map(normalizeUserPage);
+  const spend = user.spend || {};
   return {
     ...user,
     name: user.name || user.email || "User",
     role: user.role || "subscriber",
     status: user.status || "active",
     walletBalance: Number(user.walletBalance ?? user.wallet ?? 0),
+    collaboration: user.collaboration || {},
+    spend: {
+      totalSpent: Number(spend.totalSpent || 0),
+      subscriptionSpend: Number(spend.subscriptionSpend || 0),
+      totalFunded: Number(spend.totalFunded || 0),
+      cryptoFunded: Number(spend.cryptoFunded || 0),
+      adminCredits: Number(spend.adminCredits || 0),
+      adminDebits: Number(spend.adminDebits || 0)
+    },
+    recentTransactions: user.recentTransactions || [],
     pages,
     pageCount: pages.length
   };
@@ -2725,6 +2738,10 @@ function renderAdminUsers() {
           ${adminUsers.length ? adminUsers.map((user) => {
             const initials = user.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "US";
             const selectedPage = user.pages?.[0] || null;
+            const isExpanded = expandedAdminUsers.has(user.id);
+            const collabsOpen = collabAdminUsers.has(user.id);
+            const collab = user.collaboration || {};
+            const recentSpendRows = (user.recentTransactions || []).slice(0, 3);
             return `
             <article class="admin-user-card">
               <div class="user-avatar">${escapeHtml(initials)}</div>
@@ -2736,9 +2753,16 @@ function renderAdminUsers() {
                 <span>${escapeHtml(user.role)}</span>
                 <span>${escapeHtml(user.status)}</span>
                 <span>${formatMoney(user.walletBalance)}</span>
+                <span>Spent ${formatMoney(user.spend?.totalSpent || 0)}</span>
                 <span>${user.pages.length} pages</span>
+                ${collab.enabled ? "<span>Collab on</span>" : ""}
+              </div>
+              <div class="user-actions admin-user-actions">
+                <button type="button" data-admin-user-expand="${escapeHtml(user.id)}">${isExpanded ? "Collapse" : "Expand"}</button>
+                <button type="button" data-admin-user-collabs="${escapeHtml(user.id)}">${collabsOpen ? "Hide collabs" : "Collabs"}</button>
               </div>
 
+              ${isExpanded ? `
               <div class="admin-user-controls">
                 <label>
                   <span>Role</span>
@@ -2753,6 +2777,36 @@ function renderAdminUsers() {
                   </select>
                 </label>
                 <button type="button" data-save-admin-user="${escapeHtml(user.id)}">Save access</button>
+              </div>
+
+              <div class="admin-user-controls admin-spend-control">
+                <div>
+                  <span>Total spent</span>
+                  <strong>${formatMoney(user.spend?.totalSpent || 0)}</strong>
+                </div>
+                <div>
+                  <span>Subscriptions</span>
+                  <strong>${formatMoney(user.spend?.subscriptionSpend || 0)}</strong>
+                </div>
+                <div>
+                  <span>Total funded</span>
+                  <strong>${formatMoney(user.spend?.totalFunded || 0)}</strong>
+                </div>
+                <div>
+                  <span>Crypto funded</span>
+                  <strong>${formatMoney(user.spend?.cryptoFunded || 0)}</strong>
+                </div>
+                ${recentSpendRows.length ? `
+                  <section class="admin-recent-spend">
+                    ${recentSpendRows.map((transaction) => `
+                      <div>
+                        <span>${escapeHtml(transaction.type || "transaction")}</span>
+                        <b class="${Number(transaction.amount || 0) < 0 ? "is-negative" : "is-positive"}">${formatMoney(transaction.amount || 0)}</b>
+                        <small>${escapeHtml(walletHistoryDate(transaction.createdAt))}</small>
+                      </div>
+                    `).join("")}
+                  </section>
+                ` : ""}
               </div>
 
               <div class="admin-user-controls wallet-control">
@@ -2774,6 +2828,18 @@ function renderAdminUsers() {
                 <label class="toggle-row"><input type="checkbox" data-admin-page-autorenew="${escapeHtml(user.id)}" ${selectedPage?.subscription?.autoRenew ? "checked" : ""}><span>Auto renew</span></label>
                 <button type="button" data-admin-page-extend="${escapeHtml(user.id)}">Extend / Reactivate</button>
               </div>
+              ` : ""}
+
+              ${collabsOpen ? `
+              <div class="admin-user-controls collab-control">
+                <label class="toggle-row"><input type="checkbox" data-admin-collab-field="enabled" data-admin-collab="${escapeHtml(user.id)}" ${collab.enabled ? "checked" : ""}><span>Enable collab access</span></label>
+                <label class="toggle-row"><input type="checkbox" data-admin-collab-field="pageEditor" data-admin-collab="${escapeHtml(user.id)}" ${collab.pageEditor ? "checked" : ""}><span>Page editor</span></label>
+                <label class="toggle-row"><input type="checkbox" data-admin-collab-field="supportAccess" data-admin-collab="${escapeHtml(user.id)}" ${collab.supportAccess ? "checked" : ""}><span>Support access</span></label>
+                <label class="toggle-row"><input type="checkbox" data-admin-collab-field="walletReview" data-admin-collab="${escapeHtml(user.id)}" ${collab.walletReview ? "checked" : ""}><span>Wallet review</span></label>
+                <label><span>Collab note</span><input type="text" data-admin-collab-note="${escapeHtml(user.id)}" value="${escapeHtml(collab.note || "")}" placeholder="Scope, team, or restriction"></label>
+                <button type="button" data-save-admin-user="${escapeHtml(user.id)}">Save collabs</button>
+              </div>
+              ` : ""}
             </article>
           `;
           }).join("") : emptyState("No users loaded", "Refresh users or check admin API access.", "#admin-users")}
@@ -4370,15 +4436,25 @@ async function refreshAdminUsers() {
 }
 
 async function saveAdminUserAccess(userId) {
-  const role = preview.querySelector(`[data-admin-user-field="role"][data-admin-user="${userId}"]`)?.value || "subscriber";
-  const status = preview.querySelector(`[data-admin-user-field="status"][data-admin-user="${userId}"]`)?.value || "active";
+  const user = adminUserById(userId);
+  const role = preview.querySelector(`[data-admin-user-field="role"][data-admin-user="${userId}"]`)?.value || user?.role || "subscriber";
+  const status = preview.querySelector(`[data-admin-user-field="status"][data-admin-user="${userId}"]`)?.value || user?.status || "active";
+  const collabFields = [...preview.querySelectorAll(`[data-admin-collab="${userId}"]`)];
+  const collabNote = preview.querySelector(`[data-admin-collab-note="${userId}"]`)?.value.trim() || "";
+  const payload = { role, status };
+  if (collabFields.length) {
+    payload.collaboration = collabFields.reduce((collaboration, field) => ({
+      ...collaboration,
+      [field.dataset.adminCollabField]: field.checked
+    }), { note: collabNote });
+  }
   await requestApi(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",
-    body: JSON.stringify({ role, status })
+    body: JSON.stringify(payload)
   });
   await loadAppData();
   renderAdminUsers();
-  statusText.textContent = "USER ACCESS UPDATED";
+  statusText.textContent = collabFields.length ? "USER COLLABS UPDATED" : "USER ACCESS UPDATED";
 }
 
 async function adjustAdminUserWallet(userId, mode) {
@@ -4767,6 +4843,26 @@ preview.addEventListener("click", async (event) => {
   const refreshAdminUsersButton = event.target.closest("[data-refresh-admin-users]");
   if (refreshAdminUsersButton) {
     await withButtonBusy(refreshAdminUsersButton, "Refreshing", refreshAdminUsers);
+    return;
+  }
+
+  const expandAdminUserButton = event.target.closest("[data-admin-user-expand]");
+  if (expandAdminUserButton) {
+    const userId = expandAdminUserButton.dataset.adminUserExpand;
+    if (expandedAdminUsers.has(userId)) expandedAdminUsers.delete(userId);
+    else expandedAdminUsers.add(userId);
+    renderAdminUsers();
+    statusText.textContent = expandedAdminUsers.has(userId) ? "USER CONTROLS EXPANDED" : "USER CONTROLS COLLAPSED";
+    return;
+  }
+
+  const collabAdminUserButton = event.target.closest("[data-admin-user-collabs]");
+  if (collabAdminUserButton) {
+    const userId = collabAdminUserButton.dataset.adminUserCollabs;
+    if (collabAdminUsers.has(userId)) collabAdminUsers.delete(userId);
+    else collabAdminUsers.add(userId);
+    renderAdminUsers();
+    statusText.textContent = collabAdminUsers.has(userId) ? "USER COLLABS OPEN" : "USER COLLABS HIDDEN";
     return;
   }
 

@@ -2336,7 +2336,7 @@ code,
 
 .user-manager-list article {
   display: grid;
-  grid-template-columns: 46px minmax(160px, 0.7fr) minmax(220px, 1fr);
+  grid-template-columns: 46px minmax(160px, 0.7fr) minmax(220px, 1fr) auto;
   gap: 12px;
   align-items: center;
   padding: 12px;
@@ -2504,10 +2504,85 @@ code,
   font-weight: 850;
 }
 
+.admin-user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: end;
+}
+
+.admin-user-actions button:first-child {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.admin-spend-control {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.admin-spend-control > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-spend-control > div span,
+.admin-recent-spend small {
+  color: var(--muted);
+  font: 800 0.66rem var(--mono);
+  text-transform: uppercase;
+}
+
+.admin-spend-control > div strong,
+.admin-recent-spend b {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.admin-recent-spend {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.admin-recent-spend div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.admin-recent-spend span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.admin-recent-spend b.is-negative {
+  color: #ffb9b9;
+}
+
+.collab-control {
+  border-color: rgba(124, 255, 178, 0.18);
+}
+
 .user-actions button:nth-last-child(2),
 .user-actions button:last-child {
   border-color: rgba(255, 77, 141, 0.35);
   color: #ff8aae;
+}
+
+.admin-user-actions button:last-child {
+  color: var(--soft);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
 }
 
 :root[data-theme="light"] .user-actions button {

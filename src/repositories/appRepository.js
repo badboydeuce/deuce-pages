@@ -59,6 +59,7 @@ function toUser(row) {
     role: row.role,
     status: row.status,
     walletBalance: Number(row.wallet_balance || 0),
+    collaboration: row.collaboration || {},
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -200,6 +201,7 @@ export async function createUser(data) {
         role,
         status: "active",
         walletBalance: 0,
+        collaboration: {},
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -209,8 +211,8 @@ export async function createUser(data) {
   }
 
   const result = await query(
-    `INSERT INTO users (id, name, email, password_hash, role, status, wallet_balance)
-     VALUES ($1, $2, $3, $4, $5, 'active', 0)
+    `INSERT INTO users (id, name, email, password_hash, role, status, wallet_balance, collaboration)
+     VALUES ($1, $2, $3, $4, $5, 'active', 0, '{}'::jsonb)
      RETURNING *`,
     [createId("user"), data.name || "New User", email, passwordHash, role]
   );
@@ -936,29 +938,76 @@ export async function getWallet(userId) {
   return { balance: user.walletBalance, currency: "USD", transactions: txns.rows.map(toTransaction) };
 }
 
+function userSpendSummary(transactions = []) {
+  return transactions.reduce((summary, transaction) => {
+    const amount = Number(transaction.amount || 0);
+    const type = String(transaction.type || "");
+    if (amount < 0) {
+      summary.totalSpent += Math.abs(amount);
+      if (type.includes("subscription")) summary.subscriptionSpend += Math.abs(amount);
+      if (type.includes("admin")) summary.adminDebits += Math.abs(amount);
+    } else if (amount > 0) {
+      summary.totalFunded += amount;
+      if (type.includes("deposit")) summary.cryptoFunded += amount;
+      if (type.includes("admin")) summary.adminCredits += amount;
+    }
+    return summary;
+  }, {
+    totalSpent: 0,
+    subscriptionSpend: 0,
+    totalFunded: 0,
+    cryptoFunded: 0,
+    adminCredits: 0,
+    adminDebits: 0
+  });
+}
+
+function withAdminUserMetrics(user, pages = [], transactions = []) {
+  const cleanTransactions = transactions.map((transaction) => ({
+    ...transaction,
+    amount: Number(transaction.amount || 0)
+  }));
+  return {
+    ...user,
+    collaboration: user.collaboration || {},
+    pages,
+    spend: userSpendSummary(cleanTransactions),
+    recentTransactions: cleanTransactions
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, 4)
+  };
+}
+
 export async function listAdminUsers() {
   if (useJsonDb()) {
     const db = await readJsonDb();
     return db.users
-      .map((user) => ({
-        ...publicJsonUser(user),
-        pages: db.userPages.filter((page) => page.userId === user.id)
-      }))
+      .map((user) => withAdminUserMetrics(
+        publicJsonUser(user),
+        db.userPages.filter((page) => page.userId === user.id),
+        (db.walletTransactions || []).filter((transaction) => transaction.userId === user.id)
+      ))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
-  const [usersResult, pagesResult] = await Promise.all([
+  const [usersResult, pagesResult, transactionsResult] = await Promise.all([
     query("SELECT * FROM users ORDER BY created_at DESC"),
-    query("SELECT * FROM user_pages ORDER BY created_at DESC")
+    query("SELECT * FROM user_pages ORDER BY created_at DESC"),
+    query("SELECT * FROM wallet_transactions ORDER BY created_at DESC")
   ]);
   const pagesByUser = new Map();
   pagesResult.rows.map(toUserPage).forEach((page) => {
     pagesByUser.set(page.userId, [...(pagesByUser.get(page.userId) || []), page]);
   });
-  return usersResult.rows.map(toUser).map((user) => ({
-    ...user,
-    pages: pagesByUser.get(user.id) || []
-  }));
+  const transactionsByUser = new Map();
+  transactionsResult.rows.map(toTransaction).forEach((transaction) => {
+    transactionsByUser.set(transaction.userId, [...(transactionsByUser.get(transaction.userId) || []), transaction]);
+  });
+  return usersResult.rows.map(toUser).map((user) => withAdminUserMetrics(
+    user,
+    pagesByUser.get(user.id) || [],
+    transactionsByUser.get(user.id) || []
+  ));
 }
 
 export async function updateAdminUser(userId, data = {}) {
@@ -966,6 +1015,13 @@ export async function updateAdminUser(userId, data = {}) {
   const allowedStatuses = new Set(["active", "review", "suspended"]);
   const role = data.role ? String(data.role).toLowerCase() : null;
   const status = data.status ? String(data.status).toLowerCase() : null;
+  const collaboration = data.collaboration && typeof data.collaboration === "object" ? {
+    enabled: Boolean(data.collaboration.enabled),
+    pageEditor: Boolean(data.collaboration.pageEditor),
+    supportAccess: Boolean(data.collaboration.supportAccess),
+    walletReview: Boolean(data.collaboration.walletReview),
+    note: String(data.collaboration.note || "").trim()
+  } : null;
   if (role && !allowedRoles.has(role)) throw new Error("Unsupported user role");
   if (status && !allowedStatuses.has(status)) throw new Error("Unsupported user status");
 
@@ -975,6 +1031,7 @@ export async function updateAdminUser(userId, data = {}) {
       if (!user) return { error: "User not found", status: 404 };
       if (role) user.role = role;
       if (status) user.status = status;
+      if (collaboration) user.collaboration = { ...(user.collaboration || {}), ...collaboration };
       user.updatedAt = new Date().toISOString();
       return { user: publicJsonUser(user), pages: db.userPages.filter((page) => page.userId === user.id) };
     });
@@ -984,10 +1041,13 @@ export async function updateAdminUser(userId, data = {}) {
   if (!current.rows[0]) return { error: "User not found", status: 404 };
   const result = await query(
     `UPDATE users
-     SET role = COALESCE($2, role), status = COALESCE($3, status), updated_at = now()
+     SET role = COALESCE($2, role),
+         status = COALESCE($3, status),
+         collaboration = CASE WHEN $4::jsonb IS NULL THEN collaboration ELSE collaboration || $4::jsonb END,
+         updated_at = now()
      WHERE id = $1
      RETURNING *`,
-    [userId, role, status]
+    [userId, role, status, collaboration ? JSON.stringify(collaboration) : null]
   );
   const pages = await query("SELECT * FROM user_pages WHERE user_id = $1 ORDER BY created_at DESC", [userId]);
   return { user: toUser(result.rows[0]), pages: pages.rows.map(toUserPage) };

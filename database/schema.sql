@@ -6,9 +6,12 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL DEFAULT 'subscriber',
   status TEXT NOT NULL DEFAULT 'active',
   wallet_balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  collaboration JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collaboration JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   id TEXT PRIMARY KEY,
