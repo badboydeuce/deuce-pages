@@ -224,10 +224,18 @@ function apiBase() {
 async function requestApi(path, options = {}) {
   const auth = getAuthState();
   const authHeaders = auth.token ? { Authorization: `Bearer ${auth.token}` } : {};
-  const response = await fetch(`${apiBase()}${path}`, {
-    headers: { "Content-Type": "application/json", ...authHeaders, ...(options.headers || {}) },
-    ...options
-  });
+  let response;
+  try {
+    response = await fetch(`${apiBase()}${path}`, {
+      headers: { "Content-Type": "application/json", ...authHeaders, ...(options.headers || {}) },
+      ...options
+    });
+  } catch (error) {
+    const apiError = new Error(`API connection failed at ${apiBase()}${path}`);
+    apiError.status = 0;
+    apiError.cause = error;
+    throw apiError;
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.error || `API request failed: ${response.status}`);
@@ -236,6 +244,42 @@ async function requestApi(path, options = {}) {
     throw error;
   }
   return data;
+}
+
+async function checkAdminApiConnection() {
+  let health;
+  try {
+    health = await requestApi("/api/health");
+  } catch (error) {
+    return {
+      ok: false,
+      status: error.status || 0,
+      title: "API connection failed",
+      detail: `The app could not reach ${apiBase()}/api/health. Check Render deploy status, API_BASE_URL/CORS_ORIGINS, and that the web service is awake.`
+    };
+  }
+
+  try {
+    const session = await requestApi("/api/auth/me");
+    if (String(session.user?.role || "").toLowerCase() !== "admin") {
+      return {
+        ok: false,
+        status: 403,
+        title: "Admin access required",
+        detail: "GitHub import is an admin action. Log in with an email listed in ADMIN_EMAILS on Render, then refresh and try again."
+      };
+    }
+    return { ok: true, health, user: session.user };
+  } catch (error) {
+    return {
+      ok: false,
+      status: error.status || 0,
+      title: error.status === 401 ? "Login required" : "Admin session check failed",
+      detail: error.status === 401
+        ? "Log in first, then open Admin > Import > GitHub again."
+        : error.message
+    };
+  }
 }
 
 function formatMoney(value) {
@@ -1595,7 +1639,7 @@ function renderAdminLegacyReference() {
         <article class="security-panel admin-upload-panel">
           <small>github import</small>
           <h3>Connect repository pages</h3>
-          <p>Paste a GitHub repo URL, choose a branch, then select which folder becomes a page package. This supports repeated imports and cleaner version history.</p>
+          <p>Paste a GitHub repo URL, choose a branch, then let the deployed API scan the repository and create a real package record.</p>
           <div class="github-import-box">
             <span>https://github.com/you/page-templates</span>
             <button type="button" data-admin-action="GITHUB REPO SCAN QUEUED">Scan repo</button>
@@ -1747,8 +1791,8 @@ function renderAdminImportWizard(sourceType = "local") {
               <button type="button" data-github-publish>Import & Publish</button>
             </div>
             <div class="admin-code-sample github-live-result" data-github-result>
-              <code>Ready to scan GitHub.</code>
-              <code>Click Scan repo to detect HTML, CSS, scripts, and assets.</code>
+              <code>API connection required: ${escapeHtml(apiBase())}</code>
+              <code>Click Scan repo to verify admin session, then detect HTML, CSS, scripts, and assets.</code>
             </div>
           ` : ""}
         </article>
@@ -1832,7 +1876,7 @@ Scoped selectors: ready</textarea></label>
             <small>github scan result</small>
             <h3>Repository connection</h3>
             <div class="admin-code-sample" data-github-result>
-              <code>Enter your GitHub repo, branch, and optional folder, then scan.</code>
+              <code>API connection required: ${escapeHtml(apiBase())}</code>
               <code>Public repos work directly. Private repos need GITHUB_TOKEN on Render.</code>
             </div>
           </article>
@@ -3406,15 +3450,44 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
   }
 
   if (resultPanel) {
-    resultPanel.innerHTML = `<code>Connecting to GitHub...</code><code>${escapeHtml(payload.repoUrl || "No repository entered")}</code>`;
+    resultPanel.innerHTML = `
+      <code>Checking API connection...</code>
+      <code>${escapeHtml(apiBase())}/api/health</code>
+    `;
   }
   if (triggerButton) {
     triggerButton.disabled = true;
-    triggerButton.textContent = mode === "publish" ? "Publishing..." : createPackageRecord ? "Creating..." : "Scanning...";
+    triggerButton.textContent = "Checking API...";
   }
-  statusText.textContent = mode === "publish" ? "IMPORTING AND PUBLISHING PACKAGE" : createPackageRecord ? "CREATING GITHUB PACKAGE DRAFT" : "SCANNING GITHUB REPOSITORY";
+  statusText.textContent = "VERIFYING API CONNECTION";
 
   try {
+    const connection = await checkAdminApiConnection();
+    if (!connection.ok) {
+      if (resultPanel) {
+        resultPanel.innerHTML = `
+          <code>${escapeHtml(connection.title)}</code>
+          <code>${escapeHtml(connection.detail)}</code>
+          <code>API target: ${escapeHtml(apiBase())}</code>
+        `;
+      }
+      statusText.textContent = connection.status === 403 ? "ADMIN ACCESS REQUIRED" : "GITHUB IMPORT NEEDS API CONNECTION";
+      if (connection.status === 401) window.location.hash = "#login";
+      return;
+    }
+
+    if (resultPanel) {
+      resultPanel.innerHTML = `
+        <code>API online: ${escapeHtml(connection.health?.service || "deuce-pages-api")}</code>
+        <code>Admin verified: ${escapeHtml(connection.user?.email || "current session")}</code>
+        <code>Connecting to GitHub: ${escapeHtml(payload.repoUrl)}</code>
+      `;
+    }
+    if (triggerButton) {
+      triggerButton.textContent = mode === "publish" ? "Publishing..." : createPackageRecord ? "Creating..." : "Scanning...";
+    }
+    statusText.textContent = mode === "publish" ? "IMPORTING AND PUBLISHING PACKAGE" : createPackageRecord ? "CREATING GITHUB PACKAGE DRAFT" : "SCANNING GITHUB REPOSITORY";
+
     const result = await requestApi(endpoint, {
       method: "POST",
       body: JSON.stringify(payload)
@@ -3427,10 +3500,16 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
       resultPanel.innerHTML = `
         <code>GitHub import failed</code>
         <code>${escapeHtml(error.message)}</code>
-        <code>Make sure localhost is running with npm.cmd start. Private repos need GITHUB_TOKEN.</code>
+        <code>API target: ${escapeHtml(apiBase())}. Private repos need GITHUB_TOKEN on Render. Public repos need the correct branch and folder.</code>
       `;
     }
-    statusText.textContent = "GITHUB IMPORT NEEDS API CONNECTION";
+    statusText.textContent = error.status === 401
+      ? "LOGIN REQUIRED"
+      : error.status === 403
+        ? "ADMIN ACCESS REQUIRED"
+        : error.status === 0
+          ? "GITHUB IMPORT NEEDS API CONNECTION"
+          : "GITHUB IMPORT FAILED";
   } finally {
     if (triggerButton) {
       triggerButton.disabled = false;
