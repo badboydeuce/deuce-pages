@@ -700,7 +700,7 @@ async function handleRequest(request) {
 
 function hostingTypeOptions(selectedType = "render-static-site") {
   return [
-    ["render-static-site", "Render Static Site"],
+    ["render-static-site", "Static Site"],
     ["cpanel", "cPanel"],
     ["vps", "VPS"],
     ["shared-hosting", "Shared hosting"],
@@ -710,7 +710,7 @@ function hostingTypeOptions(selectedType = "render-static-site") {
 
 function hostingTypeLabel(value = "cpanel") {
   return {
-    "render-static-site": "Render Static Site",
+    "render-static-site": "Static Site",
     cpanel: "cPanel",
     vps: "VPS",
     "shared-hosting": "Shared hosting",
@@ -2756,7 +2756,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
 
       <div class="wizard-progress go-live-progress">
         <span class="${setupStepClass(hasDomain, true)}">1 Domain</span>
-        <span class="${setupStepClass(hasRenderOrigin, hasDomain && !hasRenderOrigin)}">2 Render</span>
+        <span class="${setupStepClass(hasRenderOrigin, hasDomain && !hasRenderOrigin)}">2 Host</span>
         <span class="${setupStepClass(hasRelaySecret, hasDomain && !hasRelaySecret)}">3 Secret</span>
         <span class="${setupStepClass(hasWorkerRoute, hasRelaySecret && !hasWorkerRoute)}">4 Worker</span>
         <span class="${setupStepClass(hasVerified, hasWorkerRoute && !hasVerified)}">5 Verify</span>
@@ -2790,18 +2790,11 @@ function renderGoLiveCenter(pageSlug = "page-a") {
 
         <article class="security-panel package-form go-live-step-card ${hasRenderOrigin ? "is-complete" : hasDomain ? "is-active" : ""}">
           <small>step 2</small>
-          <h3>Create the Render Static Site</h3>
-          <p>Upload or deploy the final index.html to Render Static Site, then connect ${displayDomain} as the custom domain in Render.</p>
-          <label>
-            <span>Hosting type</span>
-            <select data-hosting-field="hostingType">
-              ${hostingTypeOptions(hostingType)}
-            </select>
-          </label>
-          <label><span>${isRenderStatic ? "Render origin URL (not live URL)" : "cPanel or server IP"}</span><input type="text" data-hosting-field="serverIp" value="${serverIp}" placeholder="${isRenderStatic ? "https://your-static-site.onrender.com" : "123.45.67.89"}"></label>
-          <label><span>${isRenderStatic ? "Render publish directory" : "Install path"}</span><input type="text" data-hosting-field="installPath" value="${escapeHtml(installPath)}" placeholder="${isRenderStatic ? "root or public" : "public_html"}"></label>
+          <h3>Add raw host URL</h3>
+          <p>Enter the raw URL from the static host where the downloaded index.html is uploaded. The live domain remains ${displayDomain}.</p>
+          <label><span>Raw host URL</span><input type="url" data-hosting-field="serverIp" value="${serverIp}" placeholder="https://your-static-host.example.com"></label>
           <div class="admin-actions">
-            <button type="button" data-save-hosting="${page.slug}">Save Render setup</button>
+            <button type="button" data-save-hosting="${page.slug}">Save host URL</button>
           </div>
         </article>
 
@@ -2847,13 +2840,13 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <article class="security-panel go-live-step-card ${hasVerified ? "is-complete" : hasWorkerRoute ? "is-active" : ""}">
           <small>step 5</small>
           <h3>Connect custom domain</h3>
-          <p>In Cloudflare DNS, point ${displayDomain} to the Render Static Site custom domain setup. The raw Render URL stays only as the origin.</p>
+          <p>Point ${displayDomain} to the static host. The raw host URL stays as the origin and should not be shared as the live link.</p>
           <div class="admin-rule-list">
             ${isRenderStatic ? `
-              <div><strong>1</strong><span>Create a Render Static Site for this page.</span></div>
-              <div><strong>2</strong><span>Connect ${displayDomain} as the custom domain in Render.</span></div>
+              <div><strong>1</strong><span>Upload the generated index.html to your static host.</span></div>
+              <div><strong>2</strong><span>Connect ${displayDomain} as the custom domain.</span></div>
               <div><strong>3</strong><span>In Cloudflare, keep the DNS record proxied so Worker route ${workerRoute} runs.</span></div>
-              <div><strong>4</strong><span>The raw Render URL is unauthorized by the generated page.</span></div>
+              <div><strong>4</strong><span>The raw host URL is unauthorized by the generated page.</span></div>
             ` : `
               <div><strong>1</strong><span>Point the domain to the hosting account.</span></div>
               <div><strong>2</strong><span>Keep the Worker route active in Cloudflare.</span></div>
@@ -2869,13 +2862,13 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <article class="security-panel go-live-step-card ${page.generatedFile?.lastGeneratedAt ? "is-complete" : readyToDownload ? "is-active" : ""}">
           <small>step 6</small>
           <h3>Download final index.html</h3>
-          <p>Download after the domain, relay secret, and Worker route are set. Upload this file to the Render Static Site root/publish directory.</p>
+          <p>Download after the domain, relay secret, and Worker route are set. Upload this file as index.html on the static host.</p>
           <div class="admin-rule-list">
             ${isRenderStatic ? `
               <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
-              <div><strong>2</strong><span>Upload or commit it to the Render Static Site publish folder: ${installPath || "root"}.</span></div>
-              <div><strong>3</strong><span>Connect ${domain || "clientdomain.com"} as the custom domain in Render.</span></div>
-              <div><strong>4</strong><span>Visitors must use ${domain || "clientdomain.com"} only. The raw Render URL is treated as unauthorized.</span></div>
+              <div><strong>2</strong><span>Upload or commit it to the static host root/publish folder.</span></div>
+              <div><strong>3</strong><span>Connect ${domain || "clientdomain.com"} as the custom domain.</span></div>
+              <div><strong>4</strong><span>Visitors must use ${domain || "clientdomain.com"} only. The raw host URL is treated as unauthorized.</span></div>
             ` : `
               <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
               <div><strong>2</strong><span>Go to ${installPath || "public_html"} or the domain document root.</span></div>
