@@ -38,6 +38,42 @@ textarea {
   max-width: 100%;
 }
 
+button {
+  position: relative;
+  touch-action: manipulation;
+  transition:
+    transform 140ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+}
+
+button:active,
+button.is-pressed {
+  transform: translateY(1px) scale(0.985);
+}
+
+button.is-loading,
+button[aria-busy="true"] {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  cursor: progress;
+  opacity: 0.76;
+}
+
+.button-roll {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.72s linear infinite;
+}
+
 button,
 a,
 span,
@@ -122,6 +158,44 @@ body::before {
   display: grid;
   grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
   min-height: 100vh;
+}
+
+.app-shell.is-loading::after {
+  position: fixed;
+  right: clamp(12px, 2.4vw, 24px);
+  bottom: clamp(12px, 2.4vw, 24px);
+  z-index: 60;
+  padding: 10px 12px 10px 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: rgba(3, 7, 7, 0.88);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.32), 0 0 26px rgba(124, 255, 178, 0.12);
+  content: attr(data-busy-label);
+  font: 850 0.68rem var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  backdrop-filter: blur(16px);
+}
+
+.app-shell.is-loading::before {
+  position: fixed;
+  right: calc(clamp(12px, 2.4vw, 24px) + 12px);
+  bottom: calc(clamp(12px, 2.4vw, 24px) + 12px);
+  z-index: 61;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: spin 0.72s linear infinite;
+}
+
+:root[data-theme="light"] .app-shell.is-loading::after {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 42px rgba(28, 45, 36, 0.14);
 }
 
 .app-shell.auth-mode {
@@ -657,6 +731,10 @@ code,
   min-height: 0;
   padding: clamp(16px, 4vw, 48px);
   overflow-x: hidden;
+}
+
+.app-busy .preview {
+  transition: opacity 180ms ease, filter 180ms ease;
 }
 
 .app-view {
@@ -3914,6 +3992,91 @@ code {
   width: min(980px, 100%);
 }
 
+.app-loading-view {
+  justify-items: center;
+  align-content: center;
+  width: min(720px, 100%);
+  min-height: min(520px, calc(100vh - 150px));
+  padding: clamp(20px, 5vw, 48px);
+  text-align: center;
+}
+
+.app-loading-view .view-heading {
+  justify-items: center;
+}
+
+.loader-orbit {
+  position: relative;
+  display: grid;
+  width: 74px;
+  height: 74px;
+  place-items: center;
+  margin-bottom: 6px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(124, 255, 178, 0.05);
+  box-shadow: 0 0 44px rgba(124, 255, 178, 0.14);
+}
+
+.loader-orbit::before {
+  position: absolute;
+  inset: 10px;
+  border: 2px solid rgba(124, 255, 178, 0.24);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  content: "";
+  animation: spin 0.86s linear infinite;
+}
+
+.loader-orbit span {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 18px var(--accent);
+  animation: loaderBlink 1.2s ease-in-out infinite;
+}
+
+.loader-orbit span:nth-child(1) {
+  transform: translateY(-23px);
+}
+
+.loader-orbit span:nth-child(2) {
+  transform: rotate(120deg) translateY(-23px);
+  animation-delay: 0.16s;
+}
+
+.loader-orbit span:nth-child(3) {
+  transform: rotate(240deg) translateY(-23px);
+  animation-delay: 0.32s;
+}
+
+.loading-rail {
+  width: min(360px, 100%);
+  height: 7px;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  overflow: hidden;
+}
+
+.loading-rail span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: loadingRail 1.25s ease-in-out infinite;
+}
+
+:root[data-theme="light"] .loader-orbit,
+:root[data-theme="light"] .loading-rail {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(19, 133, 78, 0.055);
+}
+
 .auth-loading {
   opacity: 0.72;
 }
@@ -4050,6 +4213,28 @@ code {
   50% {
     opacity: 0.42;
     transform: scale(1.35);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loaderBlink {
+  50% {
+    opacity: 0.32;
+  }
+}
+
+@keyframes loadingRail {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(250%);
   }
 }
 

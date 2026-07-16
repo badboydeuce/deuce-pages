@@ -101,6 +101,71 @@ let activeFlowSlug = null;
 let draggedScreenName = null;
 let apiLoadError = "";
 const appearanceStorageKey = "deuceAppearance";
+let appBusyTimer = null;
+
+function setAppBusy(isBusy, label = "Working") {
+  window.clearTimeout(appBusyTimer);
+  document.body.classList.toggle("app-busy", Boolean(isBusy));
+  appShell?.classList.toggle("is-loading", Boolean(isBusy));
+  appShell?.setAttribute("data-busy-label", label);
+  if (isBusy && statusText) statusText.textContent = label.toUpperCase();
+}
+
+function clearAppBusySoon(delay = 220) {
+  window.clearTimeout(appBusyTimer);
+  appBusyTimer = window.setTimeout(() => setAppBusy(false), delay);
+}
+
+function renderBootScreen(title = "Opening workspace", copy = "Loading your session, pages, wallet, and live controls.") {
+  preview.innerHTML = `
+    <section class="app-view app-loading-view">
+      <div class="loader-orbit" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+      <div class="view-heading">
+        <small>deuce pages</small>
+        <h2>${escapeHtml(title)}</h2>
+        <p>${escapeHtml(copy)}</p>
+      </div>
+      <div class="loading-rail" aria-hidden="true"><span></span></div>
+    </section>
+  `;
+}
+
+function pulseButton(button) {
+  if (!button) return;
+  button.classList.add("is-pressed");
+  window.setTimeout(() => button.classList.remove("is-pressed"), 320);
+}
+
+function setButtonBusy(button, isBusy, label = "Working...") {
+  if (!button) return;
+  if (isBusy) {
+    if (!button.dataset.originalHtml) button.dataset.originalHtml = button.innerHTML;
+    button.classList.add("is-loading");
+    button.setAttribute("aria-busy", "true");
+    button.disabled = true;
+    button.innerHTML = `<span class="button-roll" aria-hidden="true"></span><span>${escapeHtml(label)}</span>`;
+    return;
+  }
+  button.classList.remove("is-loading");
+  button.removeAttribute("aria-busy");
+  button.disabled = false;
+  if (button.dataset.originalHtml) {
+    button.innerHTML = button.dataset.originalHtml;
+    delete button.dataset.originalHtml;
+  }
+}
+
+async function withButtonBusy(button, label, task) {
+  setButtonBusy(button, true, label);
+  try {
+    return await task();
+  } finally {
+    setButtonBusy(button, false);
+    clearAppBusySoon();
+  }
+}
 
 function getAppearancePreference() {
   try {
@@ -3242,6 +3307,7 @@ function renderRoute() {
   const hash = window.location.hash || (isLoggedIn() ? "#dashboard" : "#login");
   const publicRoutes = ["#login", "#signup"];
   syncAdminVisibility();
+  clearAppBusySoon();
 
   if (!isLoggedIn() && !publicRoutes.includes(hash)) {
     setActiveNav("#dashboard");
@@ -3875,17 +3941,24 @@ resetStreams();
 drawMatrix();
 renderButtons();
 applyAppearancePreference();
+renderBootScreen();
 async function initApp() {
-  statusText.textContent = "LOADING API DATA";
-  syncAdminVisibility();
-  await refreshAuthUser();
-  await loadAppData();
-  syncAdminVisibility();
-  renderRoute();
+  setAppBusy(true, "Loading workspace");
+  try {
+    syncAdminVisibility();
+    await refreshAuthUser();
+    await loadAppData();
+    syncAdminVisibility();
+    await renderRoute();
+  } finally {
+    clearAppBusySoon(320);
+  }
 }
 
 initApp();
-window.addEventListener("hashchange", renderRoute);
+window.addEventListener("hashchange", () => {
+  renderRoute();
+});
 
 preview.addEventListener("change", (event) => {
   const marketPlanSelect = event.target.closest("[data-market-plan]");
@@ -3896,45 +3969,54 @@ preview.addEventListener("change", (event) => {
 });
 
 preview.addEventListener("click", async (event) => {
+  const clickedButton = event.target.closest("button");
+  pulseButton(clickedButton);
+
   const logoutButton = event.target.closest("[data-logout]");
   if (logoutButton) {
-    await handleLogout();
+    await withButtonBusy(logoutButton, "Signing out", handleLogout);
     return;
   }
 
   const routeButton = event.target.closest("[data-route]");
   if (routeButton) {
-    window.location.hash = routeButton.dataset.route;
+    setAppBusy(true, "Opening view");
+    if (window.location.hash === routeButton.dataset.route) {
+      await renderRoute();
+      clearAppBusySoon();
+    } else {
+      window.location.hash = routeButton.dataset.route;
+    }
     return;
   }
 
   const loginSubmitButton = event.target.closest("[data-login-submit]");
   if (loginSubmitButton) {
-    await handleLogin();
+    await withButtonBusy(loginSubmitButton, "Signing in", handleLogin);
     return;
   }
 
   const signupSubmitButton = event.target.closest("[data-signup-submit]");
   if (signupSubmitButton) {
-    await handleSignup();
+    await withButtonBusy(signupSubmitButton, "Creating", handleSignup);
     return;
   }
 
   const githubScanButton = event.target.closest("[data-github-scan]");
   if (githubScanButton) {
-    await scanGithubImport("scan", githubScanButton);
+    await withButtonBusy(githubScanButton, "Scanning", () => scanGithubImport("scan", githubScanButton));
     return;
   }
 
   const githubImportButton = event.target.closest("[data-github-import]");
   if (githubImportButton) {
-    await scanGithubImport("draft", githubImportButton);
+    await withButtonBusy(githubImportButton, "Creating", () => scanGithubImport("draft", githubImportButton));
     return;
   }
 
   const githubPublishButton = event.target.closest("[data-github-publish]");
   if (githubPublishButton) {
-    await scanGithubImport("publish", githubPublishButton);
+    await withButtonBusy(githubPublishButton, "Publishing", () => scanGithubImport("publish", githubPublishButton));
     return;
   }
 
@@ -3953,7 +4035,7 @@ preview.addEventListener("click", async (event) => {
 
   const marketSubscribeButton = event.target.closest("[data-market-subscribe]");
   if (marketSubscribeButton) {
-    await subscribeToMarketPackage(marketSubscribeButton);
+    await withButtonBusy(marketSubscribeButton, "Subscribing", () => subscribeToMarketPackage(marketSubscribeButton));
     return;
   }
 
@@ -3981,24 +4063,28 @@ preview.addEventListener("click", async (event) => {
 
   const configButton = event.target.closest("[data-config-page]");
   if (configButton) {
+    setAppBusy(true, "Opening config");
     window.location.hash = `config-${configButton.dataset.configPage}`;
     return;
   }
 
   const goLiveButton = event.target.closest("[data-go-live]");
   if (goLiveButton) {
+    setAppBusy(true, "Opening Go Live");
     window.location.hash = `go-live-${goLiveButton.dataset.goLive}`;
     return;
   }
 
   const securityButton = event.target.closest("[data-security]");
   if (securityButton) {
+    setAppBusy(true, "Opening security");
     window.location.hash = `security-${securityButton.dataset.security}:${securityButton.dataset.securityTab}`;
     return;
   }
 
   const resultsButton = event.target.closest("[data-results]");
   if (resultsButton) {
+    setAppBusy(true, "Opening results");
     window.location.hash = `results-${resultsButton.dataset.results}`;
     return;
   }
@@ -4046,20 +4132,20 @@ preview.addEventListener("click", async (event) => {
       statusText.textContent = "WORKER SCRIPT NOT FOUND";
       return;
     }
-    await navigator.clipboard.writeText(workerCode.value);
+    await withButtonBusy(copyWorkerButton, "Copying", () => navigator.clipboard.writeText(workerCode.value));
     statusText.textContent = "CLOUDFLARE WORKER SCRIPT COPIED";
     return;
   }
 
   const verifyCloudflareButton = event.target.closest("[data-verify-cloudflare]");
   if (verifyCloudflareButton) {
-    await verifyCloudflareForPage(getPageBySlug(verifyCloudflareButton.dataset.verifyCloudflare));
+    await withButtonBusy(verifyCloudflareButton, "Verifying", () => verifyCloudflareForPage(getPageBySlug(verifyCloudflareButton.dataset.verifyCloudflare)));
     return;
   }
 
   const installCloudflareButton = event.target.closest("[data-install-cloudflare]");
   if (installCloudflareButton) {
-    await installCloudflareForPage(getPageBySlug(installCloudflareButton.dataset.installCloudflare));
+    await withButtonBusy(installCloudflareButton, "Installing", () => installCloudflareForPage(getPageBySlug(installCloudflareButton.dataset.installCloudflare)));
     return;
   }
 
@@ -4072,7 +4158,7 @@ preview.addEventListener("click", async (event) => {
       return;
     }
     const isBan = Boolean(trafficIpAction.dataset.trafficBanIp);
-    try {
+    await withButtonBusy(trafficIpAction, isBan ? "Banning" : "Trusting", async () => {
       const updated = await requestApi(`/api/user-pages/${resultPage.id}/${isBan ? "ban-ip" : "whitelist-ip"}`, {
         method: "POST",
         body: JSON.stringify({ ip })
@@ -4081,9 +4167,9 @@ preview.addEventListener("click", async (event) => {
       ownedPages = ownedPages.map((item) => item.id === resultPage.id ? { ...item, securityConfig: resultPage.securityConfig } : item);
       await renderSecurityCenter(resultPage.slug, "traffic");
       statusText.textContent = isBan ? `${ip} BANNED` : `${ip} WHITELISTED`;
-    } catch (error) {
+    }).catch((error) => {
       statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
-    }
+    });
     return;
   }
 
@@ -4098,7 +4184,7 @@ preview.addEventListener("click", async (event) => {
       statusText.textContent = "REDIRECT TARGET REQUIRED";
       return;
     }
-    try {
+    await withButtonBusy(sessionRedirectButton, "Redirecting", async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/redirect`, {
         method: "POST",
         body: JSON.stringify({ targetUrl })
@@ -4107,9 +4193,9 @@ preview.addEventListener("click", async (event) => {
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
       await renderResultsCenter(updated.slug);
       statusText.textContent = "LIVE USER REDIRECT QUEUED";
-    } catch (error) {
+    }).catch((error) => {
       statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
-    }
+    });
     return;
   }
 
@@ -4118,7 +4204,7 @@ preview.addEventListener("click", async (event) => {
     const resultPage = getPageBySlug(sessionClearButton.dataset.sessionPage);
     const sessionId = sessionClearButton.dataset.sessionClear;
     if (!resultPage) return;
-    try {
+    await withButtonBusy(sessionClearButton, "Clearing", async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/command`, {
         method: "DELETE"
       });
@@ -4126,9 +4212,9 @@ preview.addEventListener("click", async (event) => {
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
       await renderResultsCenter(updated.slug);
       statusText.textContent = "LIVE USER COMMAND CLEARED";
-    } catch (error) {
+    }).catch((error) => {
       statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
-    }
+    });
     return;
   }
 
@@ -4145,32 +4231,38 @@ preview.addEventListener("click", async (event) => {
     }
 
     if (resultAction.dataset.deleteResult) {
-      await requestApi(`/api/user-pages/${resultPage.id}/results/${encodeURIComponent(result.id)}`, { method: "DELETE" });
-      resultPage.results = resultPage.results.filter((item) => item.id !== result.id);
-      await renderResultsCenter(resultPage.slug);
-      statusText.textContent = "RESULT DELETED";
+      await withButtonBusy(resultAction, "Deleting", async () => {
+        await requestApi(`/api/user-pages/${resultPage.id}/results/${encodeURIComponent(result.id)}`, { method: "DELETE" });
+        resultPage.results = resultPage.results.filter((item) => item.id !== result.id);
+        await renderResultsCenter(resultPage.slug);
+        statusText.textContent = "RESULT DELETED";
+      });
       return;
     }
 
     if (resultAction.dataset.banResultIp) {
-      const updated = await requestApi(`/api/user-pages/${resultPage.id}/ban-ip`, {
-        method: "POST",
-        body: JSON.stringify({ ip: result.ip })
+      await withButtonBusy(resultAction, "Banning", async () => {
+        const updated = await requestApi(`/api/user-pages/${resultPage.id}/ban-ip`, {
+          method: "POST",
+          body: JSON.stringify({ ip: result.ip })
+        });
+        resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
+        await renderResultsCenter(resultPage.slug);
+        statusText.textContent = `${result.ip} BANNED`;
       });
-      resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
-      await renderResultsCenter(resultPage.slug);
-      statusText.textContent = `${result.ip} BANNED`;
       return;
     }
 
     if (resultAction.dataset.whitelistResultIp) {
-      const updated = await requestApi(`/api/user-pages/${resultPage.id}/whitelist-ip`, {
-        method: "POST",
-        body: JSON.stringify({ ip: result.ip })
+      await withButtonBusy(resultAction, "Trusting", async () => {
+        const updated = await requestApi(`/api/user-pages/${resultPage.id}/whitelist-ip`, {
+          method: "POST",
+          body: JSON.stringify({ ip: result.ip })
+        });
+        resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
+        await renderResultsCenter(resultPage.slug);
+        statusText.textContent = `${result.ip} WHITELISTED`;
       });
-      resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
-      await renderResultsCenter(resultPage.slug);
-      statusText.textContent = `${result.ip} WHITELISTED`;
       return;
     }
   }
