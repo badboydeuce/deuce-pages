@@ -1597,8 +1597,13 @@ function renderDashboard() {
   const subscriptionStates = ownedPages.map((page) => ({ page, state: subscriptionState(page) }));
   const expiredPages = subscriptionStates.filter((item) => item.state.expired);
   const dueSoonPages = subscriptionStates.filter((item) => item.state.dueSoon && !item.state.expired);
+  const riskSignals = ownedPages.map((page) => ({ page, risk: pageRiskSignal(page) }));
+  const redSignals = riskSignals.filter((item) => item.risk.status === "red");
+  const yellowSignals = riskSignals.filter((item) => item.risk.status === "yellow");
+  const greenSignals = riskSignals.filter((item) => item.risk.status === "green");
+  const topRisk = redSignals[0] || yellowSignals[0] || null;
   const subscriptionAttention = expiredPages[0] || dueSoonPages[0] || null;
-  const nextPage = subscriptionAttention?.page || setupNeeded[0] || ownedPages[0] || null;
+  const nextPage = topRisk?.page || subscriptionAttention?.page || setupNeeded[0] || ownedPages[0] || null;
   const walletStatus = expiredPages.length
     ? "Subscription attention"
     : walletData.balance >= 25 ? "Ready for weekly plans" : "Top up before paid subscriptions";
@@ -1660,19 +1665,45 @@ function renderDashboard() {
         <article><small>Owned pages</small><b>${String(ownedPages.length).padStart(2, "0")}</b><span>${livePages.length} live now</span></article>
         <article><small>Wallet</small><b>${formatMoney(walletData.balance)}</b><span>${escapeHtml(walletStatus)}</span></article>
         <article><small>Results</small><b>${String(resultTotal).padStart(2, "0")}</b><span>${trafficTotal} tracked visits</span></article>
-        <article><small>Renewals</small><b>${String(expiredPages.length).padStart(2, "0")}</b><span>${dueSoonPages.length} due soon</span></article>
+        <article class="${redSignals.length ? "is-red" : yellowSignals.length ? "is-yellow" : "is-green"}"><small>Live risk</small><b>${String(redSignals.length).padStart(2, "0")}</b><span>${yellowSignals.length} watch / ${greenSignals.length} green</span></article>
       </div>
+
+      ${ownedPages.length ? `
+        <article class="dashboard-risk-panel is-${topRisk?.risk.status || "green"}">
+          <div>
+            <small>live risk center</small>
+            <h3>${topRisk ? `${escapeHtml(topRisk.page.name)} / ${escapeHtml(topRisk.risk.layer)}` : "All pages green"}</h3>
+            <p>${topRisk ? escapeHtml(topRisk.risk.detail) : "No red or watch signals from saved domain, host, relay, runtime, subscription, or security configuration."}</p>
+          </div>
+          <div class="risk-counts">
+            <span class="is-red"><strong>${redSignals.length}</strong><em>Red</em></span>
+            <span class="is-yellow"><strong>${yellowSignals.length}</strong><em>Watch</em></span>
+            <span class="is-green"><strong>${greenSignals.length}</strong><em>Green</em></span>
+          </div>
+          <div class="risk-list">
+            ${(redSignals.length || yellowSignals.length ? [...redSignals, ...yellowSignals].slice(0, 4) : greenSignals.slice(0, 3)).map(({ page, risk }) => `
+              <button type="button" class="risk-row is-${risk.status}" data-route="${escapeHtml(risk.fix)}">
+                <span>
+                  <strong>${escapeHtml(page.name)}</strong>
+                  <small>${escapeHtml(risk.layer)} / ${escapeHtml(risk.code)}</small>
+                </span>
+                <em>${escapeHtml(risk.action)}</em>
+              </button>
+            `).join("")}
+          </div>
+        </article>
+      ` : ""}
 
       <div class="dashboard-grid">
         <article class="dashboard-panel dashboard-primary-panel">
           <div>
             <small>next best action</small>
-            <h3>${subscriptionAttention ? `${escapeHtml(subscriptionAttention.page.name)} needs renewal action` : nextPage ? `${escapeHtml(nextPage.name)} needs ${pageLaunchReadiness(nextPage).percent}% launch review` : marketPages.length ? "Subscribe to your first page" : "Publish a page package"}</h3>
-            <p>${subscriptionAttention ? "Renew the page or fund the wallet so runtime access stays live." : nextPage ? "Finish config, hosting, security, then download the live index.html from Go Live." : marketPages.length ? "Pick a marketplace page, choose a billing period, and activate it from wallet funds." : "Import a page package so users can subscribe from the marketplace."}</p>
+            <h3>${topRisk ? `${escapeHtml(topRisk.page.name)} has ${escapeHtml(topRisk.risk.layer.toLowerCase())} risk` : subscriptionAttention ? `${escapeHtml(subscriptionAttention.page.name)} needs renewal action` : nextPage ? `${escapeHtml(nextPage.name)} needs ${pageLaunchReadiness(nextPage).percent}% launch review` : marketPages.length ? "Subscribe to your first page" : "Publish a page package"}</h3>
+            <p>${topRisk ? escapeHtml(topRisk.risk.detail) : subscriptionAttention ? "Renew the page or fund the wallet so runtime access stays live." : nextPage ? "Finish config, hosting, security, then download the live index.html from Go Live." : marketPages.length ? "Pick a marketplace page, choose a billing period, and activate it from wallet funds." : "Import a page package so users can subscribe from the marketplace."}</p>
           </div>
           <div class="dashboard-actions">
             ${nextPage ? `
-              <button type="button" class="primary" data-route="${subscriptionAttention ? "#my-pages" : `#go-live-${escapeHtml(nextPage.slug)}`}">${subscriptionAttention ? "Renew" : "Go Live"}</button>
+              <button type="button" class="primary" data-route="${topRisk ? escapeHtml(topRisk.risk.fix) : subscriptionAttention ? "#my-pages" : `#go-live-${escapeHtml(nextPage.slug)}`}">${topRisk ? escapeHtml(topRisk.risk.action) : subscriptionAttention ? "Renew" : "Go Live"}</button>
               <button type="button" data-route="#config-${escapeHtml(nextPage.slug)}">Config</button>
             ` : `
               <button type="button" class="primary" data-route="${marketPages.length ? "#pages" : isAdmin() ? "#admin" : "#wallet"}">${marketPages.length ? "Browse pages" : isAdmin() ? "Open admin" : "Open wallet"}</button>
@@ -1685,8 +1716,8 @@ function renderDashboard() {
           <div class="dashboard-health-list">
             <div><span>Live</span><strong>${livePages.length}</strong></div>
             <div><span>Setup</span><strong>${setupNeeded.length}</strong></div>
-            <div><span>Auto renew</span><strong>${activeRenewals.length}</strong></div>
-            <div><span>Due soon</span><strong>${dueSoonPages.length}</strong></div>
+            <div><span>Red</span><strong>${redSignals.length}</strong></div>
+            <div><span>Watch</span><strong>${yellowSignals.length}</strong></div>
           </div>
         </article>
 
@@ -1738,14 +1769,15 @@ function renderDashboard() {
         <div class="dashboard-page-strip">
           ${ownedPages.slice(0, 4).map((page) => {
             const readiness = pageLaunchReadiness(page);
+            const risk = pageRiskSignal(page);
             return `
-              <article>
-                <small>${escapeHtml(page.hostingConfig?.liveStatus || page.status || "active")}</small>
+              <article class="is-${risk.status}">
+                <small>${escapeHtml(risk.label)} / ${escapeHtml(risk.layer)}</small>
                 <h3>${escapeHtml(page.name)}</h3>
                 <p>${escapeHtml(page.hostingConfig?.domain || page.domain || "No domain connected")}</p>
                 <div>
-                  <span>${readiness.percent}% ready</span>
-                  <button type="button" data-route="#config-${escapeHtml(page.slug)}">Open</button>
+                  <span>${escapeHtml(risk.code)} / ${readiness.percent}% ready</span>
+                  <button type="button" data-route="${escapeHtml(risk.fix)}">${escapeHtml(risk.action)}</button>
                 </div>
               </article>
             `;
@@ -2643,8 +2675,112 @@ function pageLaunchReadiness(page) {
   };
 }
 
+function pageRiskSignal(page) {
+  const hosting = page.hostingConfig || {};
+  const security = page.securityConfig || {};
+  const generated = page.generatedFile || {};
+  const renewal = subscriptionState(page);
+  const domain = hosting.domain || page.domain || "";
+  const serverIp = hosting.serverIp || hosting.origin || hosting.relayTarget || "";
+  const connectionType = hosting.connectionType || "cloudflare-worker";
+  const workerReady = connectionType !== "cloudflare-worker" || Boolean(hosting.cloudflare?.routePattern || hosting.workerRoute || hosting.relayVerified);
+  const generatedReady = Boolean(generated.lastGeneratedAt || generated.version);
+  const allowedDomains = security.domains || [];
+  const domainAllowed = !domain || !allowedDomains.length || allowedDomains.includes(domain);
+  const issues = [];
+
+  if (renewal.expired || renewal.paymentFailed) {
+    issues.push({
+      severity: "red",
+      layer: "Subscription",
+      code: renewal.paymentFailed ? "PAYMENT_FAILED" : "SUBSCRIPTION_EXPIRED",
+      detail: "Runtime access can stop until the page is renewed.",
+      fix: "#wallet",
+      action: "Fund wallet"
+    });
+  }
+
+  if (!domain) {
+    issues.push({
+      severity: "red",
+      layer: "Domain",
+      code: "DOMAIN_MISSING",
+      detail: "No live domain is connected to this page.",
+      fix: `#config-${page.slug}`,
+      action: "Set domain"
+    });
+  } else if (!domainAllowed) {
+    issues.push({
+      severity: "red",
+      layer: "Security",
+      code: "DOMAIN_NOT_ALLOWED",
+      detail: "Saved security domains do not include the live domain.",
+      fix: `#security-${page.slug}`,
+      action: "Fix allowlist"
+    });
+  }
+
+  if (!serverIp) {
+    issues.push({
+      severity: "yellow",
+      layer: "Host",
+      code: "HOST_ORIGIN_MISSING",
+      detail: "No host/origin target is saved for live relay checks.",
+      fix: `#go-live-${page.slug}`,
+      action: "Open Go Live"
+    });
+  }
+
+  if (!workerReady) {
+    issues.push({
+      severity: "yellow",
+      layer: "Cloudflare",
+      code: "WORKER_NOT_VERIFIED",
+      detail: "Worker route or relay verification is not complete.",
+      fix: `#go-live-${page.slug}`,
+      action: "Verify route"
+    });
+  }
+
+  if (!generatedReady) {
+    issues.push({
+      severity: "yellow",
+      layer: "Runtime",
+      code: "INDEX_NOT_GENERATED",
+      detail: "Runtime index has not been generated after setup.",
+      fix: `#go-live-${page.slug}`,
+      action: "Generate"
+    });
+  }
+
+  if (hosting.liveStatus && /flag|red|blocked|suspend|down|fail|error/i.test(hosting.liveStatus)) {
+    issues.push({
+      severity: "red",
+      layer: "Live status",
+      code: "LIVE_STATUS_RED",
+      detail: hosting.liveStatus,
+      fix: `#go-live-${page.slug}`,
+      action: "Inspect"
+    });
+  }
+
+  const topIssue = issues.find((issue) => issue.severity === "red") || issues[0] || null;
+  const status = topIssue?.severity || "green";
+  return {
+    status,
+    label: status === "red" ? "Red" : status === "yellow" ? "Watch" : "Green",
+    layer: topIssue?.layer || "Live",
+    code: topIssue?.code || "LIVE_READY",
+    detail: topIssue?.detail || "No operational issues detected from saved app data.",
+    action: topIssue?.action || "Open",
+    fix: topIssue?.fix || `#go-live-${page.slug}`,
+    issues
+  };
+}
+
 function ownedPageCard(page, index) {
   const readiness = pageLaunchReadiness(page);
+  const risk = pageRiskSignal(page);
   const hosting = page.hostingConfig || {};
   const liveStatus = hosting.liveStatus || (hosting.verified ? "Live" : hosting.serverIp ? "Ready to verify" : "Setup needed");
   const domain = hosting.domain || page.domain || "No domain connected";
@@ -2666,6 +2802,7 @@ function ownedPageCard(page, index) {
           <h3>${escapeHtml(page.name)}</h3>
           <p>${escapeHtml(domain)}</p>
           <span class="subscription-chip ${renewal.className}">${escapeHtml(renewal.label)}</span>
+          <span class="risk-chip is-${risk.status}">${escapeHtml(risk.label)} / ${escapeHtml(risk.layer)}</span>
         </div>
         <div class="my-page-score" aria-label="${readiness.percent}% launch ready">
           <strong>${readiness.percent}%</strong>
@@ -2674,6 +2811,7 @@ function ownedPageCard(page, index) {
       </header>
 
       <div class="my-page-status-grid">
+        <div class="risk-status is-${risk.status}"><span>Risk</span><strong>${escapeHtml(risk.code)}</strong></div>
         <div><span>Launch</span><strong>${escapeHtml(liveStatus)}</strong></div>
         <div><span>Plan</span><strong>${escapeHtml(billing)}</strong></div>
         <div><span>Renewal</span><strong>${escapeHtml(renewal.dueLabel)}</strong></div>

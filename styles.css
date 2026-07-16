@@ -893,12 +893,27 @@ code,
 
 :root[data-theme="light"] .dashboard-pulse-card,
 :root[data-theme="light"] .dashboard-panel,
+:root[data-theme="light"] .dashboard-risk-panel,
 :root[data-theme="light"] .dashboard-page-strip article {
   border-color: rgba(16, 32, 24, 0.1);
   background:
     linear-gradient(135deg, rgba(19, 133, 78, 0.08), transparent 38%),
     rgba(255, 255, 255, 0.92);
   box-shadow: 0 18px 38px rgba(28, 45, 36, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+:root[data-theme="light"] .dashboard-risk-panel.is-red {
+  border-color: rgba(214, 55, 63, 0.32);
+  background:
+    linear-gradient(135deg, rgba(255, 95, 99, 0.13), transparent 48%),
+    rgba(255, 255, 255, 0.9);
+}
+
+:root[data-theme="light"] .dashboard-risk-panel.is-yellow {
+  border-color: rgba(191, 133, 15, 0.28);
+  background:
+    linear-gradient(135deg, rgba(245, 196, 81, 0.14), transparent 48%),
+    rgba(255, 255, 255, 0.9);
 }
 
 .dashboard-pulse-card {
@@ -931,6 +946,173 @@ code,
 
 .dashboard-kpis b {
   font-size: clamp(1.45rem, 3vw, 2.45rem);
+}
+
+.dashboard-kpis article.is-red {
+  border-color: rgba(255, 95, 99, 0.42);
+}
+
+.dashboard-kpis article.is-yellow {
+  border-color: rgba(245, 196, 81, 0.36);
+}
+
+.dashboard-kpis article.is-green {
+  border-color: rgba(124, 255, 178, 0.22);
+}
+
+.dashboard-risk-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(260px, 0.78fr);
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid rgba(124, 255, 178, 0.18);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(124, 255, 178, 0.08), transparent 42%),
+    rgba(5, 8, 8, 0.74);
+}
+
+.dashboard-risk-panel.is-red {
+  border-color: rgba(255, 95, 99, 0.5);
+  background:
+    linear-gradient(135deg, rgba(255, 95, 99, 0.14), transparent 48%),
+    rgba(5, 8, 8, 0.76);
+}
+
+.dashboard-risk-panel.is-yellow {
+  border-color: rgba(245, 196, 81, 0.42);
+  background:
+    linear-gradient(135deg, rgba(245, 196, 81, 0.12), transparent 48%),
+    rgba(5, 8, 8, 0.76);
+}
+
+.dashboard-risk-panel small,
+.risk-row small,
+.risk-chip {
+  font-family: var(--mono);
+  text-transform: uppercase;
+}
+
+.dashboard-risk-panel small {
+  color: var(--accent);
+  font-weight: 850;
+  font-size: 0.68rem;
+}
+
+.dashboard-risk-panel h3,
+.dashboard-risk-panel p {
+  margin: 0;
+}
+
+.dashboard-risk-panel h3 {
+  margin-top: 5px;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.dashboard-risk-panel p {
+  margin-top: 6px;
+  color: var(--soft);
+  line-height: 1.5;
+}
+
+.risk-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(58px, 1fr));
+  gap: 8px;
+}
+
+.risk-counts span {
+  display: grid;
+  min-height: 58px;
+  place-items: center;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.risk-counts strong {
+  color: var(--text);
+  font: 900 1.1rem var(--mono);
+}
+
+.risk-counts em {
+  color: var(--muted);
+  font: 850 0.65rem var(--mono);
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.risk-counts .is-red strong,
+.risk-row.is-red em,
+.risk-chip.is-red {
+  color: #ffb9b9;
+}
+
+.risk-counts .is-yellow strong,
+.risk-row.is-yellow em,
+.risk-chip.is-yellow {
+  color: #ffe7a3;
+}
+
+.risk-counts .is-green strong,
+.risk-row.is-green em,
+.risk-chip.is-green {
+  color: var(--accent);
+}
+
+.risk-list {
+  display: grid;
+  gap: 8px;
+}
+
+.risk-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  text-align: left;
+}
+
+.risk-row.is-red {
+  border-color: rgba(255, 95, 99, 0.34);
+}
+
+.risk-row.is-yellow {
+  border-color: rgba(245, 196, 81, 0.28);
+}
+
+.risk-row span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.risk-row strong {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.risk-row small {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.risk-row em {
+  font: 850 0.68rem var(--mono);
+  font-style: normal;
+  white-space: nowrap;
+  text-transform: uppercase;
 }
 
 .dashboard-grid {
@@ -1077,6 +1259,18 @@ code,
   display: grid;
   gap: 8px;
   padding: 14px;
+}
+
+.dashboard-page-strip article.is-red {
+  border-color: rgba(255, 95, 99, 0.34);
+}
+
+.dashboard-page-strip article.is-yellow {
+  border-color: rgba(245, 196, 81, 0.3);
+}
+
+.dashboard-page-strip article.is-green {
+  border-color: rgba(124, 255, 178, 0.2);
 }
 
 .dashboard-page-strip h3 {
@@ -3977,6 +4171,45 @@ code,
   background: #ff7a1a;
 }
 
+.risk-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 0.66rem;
+  font-weight: 850;
+}
+
+.risk-chip.is-red {
+  border-color: rgba(255, 95, 99, 0.42);
+  background: rgba(255, 95, 99, 0.1);
+}
+
+.risk-chip.is-yellow {
+  border-color: rgba(245, 196, 81, 0.34);
+  background: rgba(245, 196, 81, 0.1);
+}
+
+.risk-chip.is-green {
+  border-color: rgba(124, 255, 178, 0.26);
+  background: rgba(124, 255, 178, 0.08);
+}
+
+.my-page-status-grid .risk-status.is-red {
+  border-color: rgba(255, 95, 99, 0.34);
+}
+
+.my-page-status-grid .risk-status.is-yellow {
+  border-color: rgba(245, 196, 81, 0.28);
+}
+
+.my-page-status-grid .risk-status.is-green {
+  border-color: rgba(124, 255, 178, 0.24);
+}
+
 :root[data-theme="light"] .subscription-chip {
   border-color: rgba(16, 32, 24, 0.12);
   background: rgba(255, 255, 255, 0.76);
@@ -5060,6 +5293,7 @@ code {
   .admin-package-card,
   .market-card,
   .dashboard-hero,
+  .dashboard-risk-panel,
   .dashboard-grid,
   .dashboard-grid.secondary,
   .owned-page-card {
