@@ -3478,7 +3478,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const panels = tab === "traffic"
     ? trafficPanel
     : tab === "ips"
-        ? `${ipPanel}${devicePanel}${trafficPanel}`
+        ? `${ipPanel}${trafficPanel}`
         : `${captchaPanel}${ipPanel}${devicePanel}${trafficPanel}`;
 
   preview.innerHTML = `
