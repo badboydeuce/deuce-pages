@@ -3,6 +3,7 @@ import {
   deleteResult,
   findUserPage,
   listResults,
+  listTrafficEvents,
   listUserPages,
   markGenerated,
   updateIpRule,
@@ -87,6 +88,15 @@ userPagesRouter.post("/:id/generate-index", (req, res) => {
           configs: userPage.configs
         }
       });
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.get("/:id/traffic", (req, res) => {
+  listTrafficEvents(req.params.id, req.user.id, req.query.limit)
+    .then((trafficEvents) => {
+      if (!trafficEvents) return res.status(404).json({ error: "User page not found" });
+      res.json({ trafficEvents });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });

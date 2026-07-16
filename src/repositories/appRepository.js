@@ -123,6 +123,26 @@ function toResult(row) {
   };
 }
 
+function toTrafficEvent(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userPageId: row.user_page_id,
+    pageId: row.page_id,
+    sessionId: row.session_id,
+    event: row.event,
+    screen: row.screen,
+    hostname: row.hostname,
+    path: row.path,
+    ip: row.ip,
+    result: row.result,
+    reason: row.reason,
+    userAgent: row.user_agent,
+    metadata: row.metadata,
+    createdAt: row.created_at
+  };
+}
+
 function publicJsonUser(user) {
   if (!user) return null;
   const { passwordHash, ...safeUser } = user;
@@ -748,6 +768,26 @@ export async function deleteResult(userPageId, resultId, userId = null) {
 
   const result = await query("DELETE FROM page_results WHERE id = $1 AND user_page_id = $2", [resultId, userPage.id]);
   return result.rowCount;
+}
+
+export async function listTrafficEvents(userPageId, userId = null, limit = 100) {
+  const userPage = await findUserPage(userPageId, userId);
+  if (!userPage) return null;
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 250);
+
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    return db.trafficEvents
+      .filter((event) => event.userPageId === userPage.id)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .slice(0, safeLimit);
+  }
+
+  const result = await query(
+    "SELECT * FROM traffic_events WHERE user_page_id = $1 ORDER BY created_at DESC LIMIT $2",
+    [userPage.id, safeLimit]
+  );
+  return result.rows.map(toTrafficEvent);
 }
 
 export async function saveTrafficEvent(data, ip, userAgent) {

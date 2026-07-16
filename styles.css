@@ -2433,6 +2433,10 @@ code,
   padding: 18px;
 }
 
+.security-panel-wide {
+  grid-column: 1 / -1;
+}
+
 .wallet-balance small,
 .wallet-panel small,
 .security-panel small {
@@ -2563,6 +2567,10 @@ code,
 .traffic-log {
   display: grid;
   gap: 8px;
+}
+
+.traffic-empty {
+  margin: 0;
 }
 
 .traffic-log div {

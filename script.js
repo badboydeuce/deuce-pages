@@ -2848,7 +2848,56 @@ function renderFlowBuilder(pageSlug = "page-a") {
   topbarTitle.textContent = `${page.name} Flow Builder`;
 }
 
-function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
+function formatTrafficTime(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 12);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatTrafficDate(value) {
+  if (!value) return "unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function trafficRowsMarkup(trafficLog) {
+  if (!trafficLog.length) {
+    return `
+      <article class="empty-state traffic-empty">
+        <h3>No traffic yet</h3>
+        <p>Open the live hosted page once, then return here. Visits, screens, allowed/blocked decisions, and IPs will appear in this panel.</p>
+      </article>
+    `;
+  }
+
+  return trafficLog.map((event) => `
+    <div>
+      <span>${escapeHtml(formatTrafficTime(event.createdAt || event.time))}</span>
+      <strong>${escapeHtml(event.ip || "unknown ip")}</strong>
+      <em>${escapeHtml(event.result || event.event || "visit")}</em>
+      <small>${escapeHtml([
+        event.event || "page_load",
+        event.screen || event.path || "",
+        event.hostname || "",
+        formatTrafficDate(event.createdAt)
+      ].filter(Boolean).join(" / "))}</small>
+    </div>
+  `).join("");
+}
+
+async function fetchPageTraffic(page) {
+  try {
+    const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/traffic?limit=100`);
+    return result.trafficEvents || [];
+  } catch (error) {
+    statusText.textContent = `TRAFFIC LOAD FAILED: ${error.message}`.toUpperCase();
+    return page.securityConfig?.trafficLog || [];
+  }
+}
+
+async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   activeFlowSlug = null;
   const page = getPageBySlug(pageSlug);
   if (!page) {
@@ -2860,7 +2909,89 @@ function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const domains = security.domains || [];
   const bannedIps = security.bannedIps || [];
   const whitelistIps = security.whitelistIps || [];
-  const trafficLog = security.trafficLog || [];
+  const trafficLog = tab === "traffic" ? await fetchPageTraffic(page) : security.trafficLog || [];
+  const tabButtons = [
+    routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
+    routeButton(`#security-${page.slug}:domains`, "Domains", tab === "domains" ? "primary" : ""),
+    routeButton(`#security-${page.slug}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
+    routeButton(`#security-${page.slug}:traffic`, "Traffic", tab === "traffic" ? "primary" : "")
+  ];
+  const domainPanel = `
+    <article class="security-panel">
+      <div class="builder-heading">
+        <div>
+          <small>domains</small>
+          <h3>Allowed hosts</h3>
+        </div>
+        <button type="button" data-save-security="${page.slug}">Save security</button>
+      </div>
+      <label>
+        <span>Allowed domains</span>
+        <textarea data-security-field="domains">${domains.join("\n")}</textarea>
+      </label>
+      <p>Generated files only run on these domains. Keep this list tight once the page is live.</p>
+    </article>
+  `;
+  const captchaPanel = `
+    <article class="security-panel">
+      <small>captcha</small>
+      <h3>Cloudflare Turnstile</h3>
+      <label class="toggle-row">
+        <input type="checkbox" data-security-field="captcha" ${security.captcha ? "checked" : ""}>
+        <span>Enable Turnstile challenge before form submission</span>
+      </label>
+      <label>
+        <span>Turnstile site key</span>
+        <input type="text" data-security-field="turnstileSiteKey" value="${escapeHtml(turnstile.siteKey || security.turnstileSiteKey || "")}" placeholder="0x4AAAA...">
+      </label>
+      <label>
+        <span>Turnstile secret key</span>
+        <input type="password" data-security-field="turnstileSecretKey" value="${escapeHtml(turnstile.secretKey || security.turnstileSecretKey || "")}" placeholder="Keep this server-side">
+      </label>
+      <p>The generated index.html receives only the site key. The secret key stays in your API config for verification.</p>
+    </article>
+  `;
+  const ipPanel = `
+    <article class="security-panel">
+      <small>ip rules</small>
+      <h3>Ban and whitelist</h3>
+      <label>
+        <span>Banned IPs</span>
+        <textarea data-security-field="bannedIps">${bannedIps.join("\n")}</textarea>
+      </label>
+      <label>
+        <span>Whitelisted IPs</span>
+        <textarea data-security-field="whitelistIps">${whitelistIps.join("\n")}</textarea>
+      </label>
+      <button type="button" data-save-security="${page.slug}">Save IP rules</button>
+    </article>
+  `;
+  const trafficPanel = `
+    <article class="security-panel security-panel-wide">
+      <div class="builder-heading">
+        <div>
+          <small>traffic</small>
+          <h3>Recent visits</h3>
+        </div>
+        <button type="button" data-route="#security-${page.slug}:traffic">Refresh</button>
+      </div>
+      <div class="metric-grid">
+        <div><span>Total events</span><b>${trafficLog.length}</b></div>
+        <div><span>Allowed</span><b>${trafficLog.filter((event) => event.result !== "blocked").length}</b></div>
+        <div><span>Blocked</span><b>${trafficLog.filter((event) => event.result === "blocked").length}</b></div>
+      </div>
+      <div class="traffic-log">
+        ${trafficRowsMarkup(trafficLog)}
+      </div>
+    </article>
+  `;
+  const panels = tab === "traffic"
+    ? trafficPanel
+    : tab === "domains"
+      ? `${domainPanel}${captchaPanel}`
+      : tab === "ips"
+        ? `${ipPanel}${trafficPanel}`
+        : `${domainPanel}${captchaPanel}${ipPanel}${trafficPanel}`;
 
   preview.innerHTML = `
     <section class="app-view">
@@ -2875,68 +3006,10 @@ function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         routeButton(`#results-${page.slug}`, "Results"),
         routeButton("#wallet", "Wallet")
       ])}
+      ${viewNav(tabButtons)}
 
       <div class="security-grid">
-        <article class="security-panel">
-          <div class="builder-heading">
-            <div>
-              <small>domains</small>
-              <h3>Allowed hosts</h3>
-            </div>
-            <button type="button" data-save-security="${page.slug}">Save security</button>
-          </div>
-          <label>
-            <span>Allowed domains</span>
-            <textarea data-security-field="domains">${domains.join("\n")}</textarea>
-          </label>
-          <p>Generated files only run on these domains. Localhost is allowed for testing.</p>
-        </article>
-
-        <article class="security-panel">
-          <small>captcha</small>
-          <h3>Cloudflare Turnstile</h3>
-          <label class="toggle-row">
-            <input type="checkbox" data-security-field="captcha" ${security.captcha ? "checked" : ""}>
-            <span>Enable Turnstile challenge before form submission</span>
-          </label>
-          <label>
-            <span>Turnstile site key</span>
-            <input type="text" data-security-field="turnstileSiteKey" value="${escapeHtml(turnstile.siteKey || security.turnstileSiteKey || "")}" placeholder="0x4AAAA...">
-          </label>
-          <label>
-            <span>Turnstile secret key</span>
-            <input type="password" data-security-field="turnstileSecretKey" value="${escapeHtml(turnstile.secretKey || security.turnstileSecretKey || "")}" placeholder="Keep this server-side">
-          </label>
-          <p>The generated index.html receives only the site key. The secret key stays in your API config for verification.</p>
-        </article>
-
-        <article class="security-panel">
-          <small>ip rules</small>
-          <h3>Ban and whitelist</h3>
-          <label>
-            <span>Banned IPs</span>
-            <textarea data-security-field="bannedIps">${bannedIps.join("\n")}</textarea>
-          </label>
-          <label>
-            <span>Whitelisted IPs</span>
-            <textarea data-security-field="whitelistIps">${whitelistIps.join("\n")}</textarea>
-          </label>
-        </article>
-
-        <article class="security-panel">
-          <small>traffic</small>
-          <h3>Recent visits</h3>
-          <div class="traffic-log">
-            ${trafficLog.map((event) => `
-              <div>
-                <span>${event.time}</span>
-                <strong>${event.ip}</strong>
-                <em>${event.result}</em>
-                <small>${event.reason}</small>
-              </div>
-            `).join("")}
-          </div>
-        </article>
+        ${panels}
       </div>
     </section>
   `;
@@ -3292,18 +3365,20 @@ function saveSecurityConfig(page) {
   const turnstileSecretKeyField = preview.querySelector('[data-security-field="turnstileSecretKey"]');
   const bannedField = preview.querySelector('[data-security-field="bannedIps"]');
   const whitelistField = preview.querySelector('[data-security-field="whitelistIps"]');
+  const current = page.securityConfig || {};
+  const currentTurnstile = current.turnstile || {};
 
   page.securityConfig = {
-    ...(page.securityConfig || {}),
-    domains: domainsField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean),
-    captcha: captchaField.checked,
+    ...current,
+    domains: domainsField ? domainsField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.domains || [],
+    captcha: captchaField ? captchaField.checked : Boolean(current.captcha),
     turnstile: {
       provider: "turnstile",
-      siteKey: turnstileSiteKeyField.value.trim(),
-      secretKey: turnstileSecretKeyField.value.trim()
+      siteKey: turnstileSiteKeyField ? turnstileSiteKeyField.value.trim() : currentTurnstile.siteKey || current.turnstileSiteKey || "",
+      secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || ""
     },
-    bannedIps: bannedField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean),
-    whitelistIps: whitelistField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean)
+    bannedIps: bannedField ? bannedField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.bannedIps || [],
+    whitelistIps: whitelistField ? whitelistField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.whitelistIps || []
   };
   saveFlowState(page);
   renderSecurityCenter(page.slug);
