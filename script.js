@@ -2106,228 +2106,6 @@ function renderAdmin() {
   topbarTitle.textContent = "Admin";
 }
 
-function renderAdminLegacyReference() {
-  activeFlowSlug = null;
-  preview.innerHTML = `
-    <section class="app-view">
-      <div class="view-heading">
-        <small>admin reference</small>
-        <h2>Admin reference panels</h2>
-        <p>Legacy planning reference for package data, user config, and import workflow.</p>
-      </div>
-      ${viewNav([
-        routeButton("#admin", "&#8592; Admin Studio", "primary"),
-        routeButton("#admin-import-github", "GitHub import"),
-        routeButton("#admin-users", "User manager")
-      ])}
-
-      <details class="admin-fold" open>
-        <summary>
-          <span>Package library</span>
-          <strong>Manage imported page packages</strong>
-        </summary>
-        <article class="admin-table-card">
-          <div class="builder-heading">
-            <div>
-              <small>managed packages</small>
-              <h3>Admin page library</h3>
-            </div>
-            <button type="button" data-admin-action="PACKAGE LIBRARY REFRESHED">Refresh</button>
-          </div>
-          <div class="admin-table">
-            ${adminPackages.map((page) => `
-              <div>
-                <strong>${page.name}</strong>
-                <span>${page.source}</span>
-                <span>${page.version}</span>
-                <span>${page.cssMode}</span>
-                <em>${page.design}</em>
-                <button type="button" data-route="#admin-package-${page.slug}">Manage</button>
-              </div>
-            `).join("")}
-          </div>
-        </article>
-      </details>
-
-      <details class="admin-fold">
-        <summary>
-          <span>Package data model</span>
-          <strong>Backend-ready fields for Render/database</strong>
-        </summary>
-        <div class="model-grid">
-          ${Object.entries(packageDataModel).map(([group, fields]) => `
-            <article class="security-panel">
-              <small>${group}</small>
-              <h3>${group} fields</h3>
-              <div class="feature-row">
-                ${fields.map((field) => `<span>${field}</span>`).join("")}
-              </div>
-            </article>
-          `).join("")}
-        </div>
-        <article class="security-panel">
-          <small>sample package json</small>
-          <h3>How one package should save</h3>
-          <div class="admin-code-sample">
-            <code>{ id: "pkg_page_a", slug: "page-a", status: "Published" }</code>
-            <code>{ billingPeriods: { daily: 5, weekly: 25, biweekly: 45, monthly: 80 } }</code>
-            <code>{ sourceType: "upload", screens: ["login.html", "otp.html"], cssFiles: ["style.css"] }</code>
-            <code>{ tokens: { brand: "#7CFFB2", font: "Inter", radius: "8px" } }</code>
-          </div>
-        </article>
-      </details>
-
-      <details class="admin-fold">
-        <summary>
-          <span>User config model</span>
-          <strong>Per-subscriber settings saved for every owned page</strong>
-        </summary>
-        <div class="model-grid">
-          ${Object.entries(userPageConfigModel).map(([group, fields]) => `
-            <article class="security-panel">
-              <small>${group}</small>
-              <h3>${group} config</h3>
-              <div class="feature-row">
-                ${fields.map((field) => `<span>${field}</span>`).join("")}
-              </div>
-            </article>
-          `).join("")}
-        </div>
-        <article class="security-panel">
-          <small>sample user page config</small>
-          <h3>How a subscriber page should save</h3>
-          <div class="admin-code-sample">
-            <code>{ id: "user_page_a", userId: "user_maya", packageId: "pkg_page_a", packageVersion: "v1.4" }</code>
-            <code>{ subscription: { billingPeriod: "weekly", renewalPrice: 25, renewalDate: "2026-07-11", autoRenew: true } }</code>
-            <code>{ domain: "alpha-client.com", securityConfig: { captcha: true, bannedIps: [], whitelistIps: [] } }</code>
-            <code>{ flow: ["Login", "OTP", "Personal Info"], resultSettings: { webhook: "/api/page-results", retentionDays: 30 } }</code>
-          </div>
-        </article>
-      </details>
-
-      <details class="admin-fold">
-        <summary>
-          <span>Import and design workflow</span>
-          <strong>CSS resolver, mapping, backend plan</strong>
-        </summary>
-        <div class="admin-grid">
-        <article class="security-panel admin-upload-panel">
-          <small>local bundle</small>
-          <h3>Upload HTML, CSS, and assets</h3>
-          <p>Drop a zip or select files like index.html, login.html, style.css, app.css, images, fonts, and scripts. The system reads links and inline styles before packaging.</p>
-          <div class="upload-dropzone">
-            <strong>Drop page bundle</strong>
-            <span>.html .css .js .png .jpg .svg .zip</span>
-          </div>
-          <div class="feature-row">
-            <span>Inline CSS accepted</span>
-            <span>External CSS accepted</span>
-            <span>Assets mapped</span>
-            <span>Scripts reviewed</span>
-          </div>
-        </article>
-
-        <article class="security-panel admin-upload-panel">
-          <small>github import</small>
-          <h3>Connect repository pages</h3>
-          <p>Paste a GitHub repo URL, choose a branch, then let the deployed API scan the repository and create a real package record.</p>
-          <div class="github-import-box">
-            <span>https://github.com/you/page-templates</span>
-            <button type="button" data-admin-action="GITHUB REPO SCAN QUEUED">Scan repo</button>
-          </div>
-          <div class="feature-row">
-            <span>Branch select</span>
-            <span>Folder mapping</span>
-            <span>Version diff</span>
-            <span>Rollback ready</span>
-          </div>
-        </article>
-
-        <article class="security-panel">
-          <small>import pipeline</small>
-          <h3>What happens after upload</h3>
-          <p>The app should inspect every imported page before publishing so broken paths, missing assets, and conflicting CSS are caught early.</p>
-          <div class="pipeline-steps">
-            <span class="done">Files received</span>
-            <span class="done">CSS detected</span>
-            <span class="active">Design preview</span>
-            <span>Admin review</span>
-            <span>Publish</span>
-          </div>
-        </article>
-
-        <article class="security-panel">
-          <small>page design match</small>
-          <h3>Design normalization rules</h3>
-          <p>Use this rule order: preserve original page layout first, apply shared brand tokens second, then allow manual CSS overrides for special pages.</p>
-          <div class="admin-rule-list">
-            <div><strong>1</strong><span>Keep page structure and content intact.</span></div>
-            <div><strong>2</strong><span>Scope all imported CSS under the package wrapper.</span></div>
-            <div><strong>3</strong><span>Extract common colors, fonts, spacing, and button styles.</span></div>
-            <div><strong>4</strong><span>Let admin override per page before publishing.</span></div>
-          </div>
-        </article>
-
-        <article class="security-panel">
-          <small>css resolver</small>
-          <h3>How mixed CSS is handled</h3>
-          <p>Inline styles stay attached to their exact element when needed. External CSS is collected, scoped to the package, and merged with design tokens so the page keeps its look without breaking the app.</p>
-          <div class="traffic-log">
-            <div><span>01</span><strong>Read</strong><em>HTML</em><small>Find style tags, style attributes, and linked CSS files.</small></div>
-            <div><span>02</span><strong>Scope</strong><em>CSS</em><small>Wrap imported selectors under the package shell to avoid conflicts.</small></div>
-            <div><span>03</span><strong>Tokenize</strong><em>Design</em><small>Promote colors, fonts, spacing, and radius into editable design controls.</small></div>
-            <div><span>04</span><strong>Override</strong><em>Page</em><small>Keep page-specific CSS for special sections and animations.</small></div>
-          </div>
-        </article>
-
-        <article class="security-panel">
-          <small>design controls</small>
-          <h3>Make all pages match</h3>
-          <p>After import, use shared design controls to align each page package: brand color, font set, button style, background, form spacing, and mobile behavior.</p>
-          <div class="feature-row">
-            <span>Brand tokens</span>
-            <span>CSS overrides</span>
-            <span>Preview modes</span>
-            <span>Mobile polish</span>
-          </div>
-          <div class="admin-code-sample">
-            <code>--brand: #7CFFB2;</code>
-            <code>--button-radius: 8px;</code>
-            <code>.package-page-a .form { gap: 12px; }</code>
-          </div>
-        </article>
-
-        <article class="security-panel">
-          <small>screen mapping</small>
-          <h3>Turn pages into flow screens</h3>
-          <p>Uploaded files can become full packages or individual screens. Map login.html to Login, otp.html to OTP, info.html to Personal Info, and success.html to Success.</p>
-          <div class="feature-row">
-            <span>login.html</span>
-            <span>otp.html</span>
-            <span>info.html</span>
-            <span>success.html</span>
-          </div>
-        </article>
-
-        <article class="security-panel">
-          <small>production workflow</small>
-          <h3>Render backend plan</h3>
-          <p>Your Render app should store package metadata in the database, assets in object storage, and imported source snapshots for version control.</p>
-          <div class="traffic-log">
-            <div><span>01</span><strong>Import</strong><em>Admin</em><small>Upload files or pull from GitHub.</small></div>
-            <div><span>02</span><strong>Normalize</strong><em>CSS</em><small>Scope, tokenize, and preview design.</small></div>
-            <div><span>03</span><strong>Publish</strong><em>Live</em><small>Marketplace package becomes subscribable.</small></div>
-            <div><span>04</span><strong>Generate</strong><em>User</em><small>Subscribed users export configured index.html.</small></div>
-          </div>
-        </article>
-        </div>
-      </details>
-    </section>
-  `;
-  statusText.textContent = "ADMIN PAGE STUDIO READY";
-  topbarTitle.textContent = "Admin";
-}
-
 function getAdminPackage(packageSlug) {
   return adminPackages.find((item) => item.slug === packageSlug || item.id === packageSlug) || null;
 }
@@ -2336,17 +2114,23 @@ function renderAdminImportWizard(sourceType = "local") {
   activeFlowSlug = null;
   const isGithub = sourceType === "github";
   const sourceLabel = isGithub ? "GitHub repository" : "Local bundle";
-  const sourceHint = isGithub ? "https://github.com/relay1010/ms-live.git" : "new-page-bundle.zip";
-  const detectedFiles = isGithub
-    ? ["index.html", "home.html", "email.html", "login2.html", "otp.html", "personal.html", "c.html", "thnks.html", "style.css"]
-    : ["index.html", "login.html", "otp.html", "style.css", "assets/hero.jpg"];
+  const importChecks = [
+    ["Source", isGithub ? "Repo URL, branch, folder" : "Zip or loose files"],
+    ["Files", "HTML, CSS, JS, media"],
+    ["Preview", "Sandbox before publish"],
+    ["Package", "Name, slug, price"],
+    ["Publish", "Marketplace visibility"]
+  ];
+  const starterFiles = isGithub
+    ? ["index.html", "login.html", "otp.html", "success.html", "style.css"]
+    : ["index.html", "login.html", "otp.html", "style.css", "assets/logo.svg"];
 
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
         <small>admin import wizard</small>
         <h2>${sourceLabel}</h2>
-        <p>Import a page package, detect files and CSS, map screens, preview the result, then publish it to the marketplace.</p>
+        <p>Bring in a page, verify detected files, preview it, then save a draft or publish a package.</p>
       </div>
       ${viewNav([
         routeButton("#admin", "&#8592; Admin Studio", "primary"),
@@ -2355,123 +2139,83 @@ function renderAdminImportWizard(sourceType = "local") {
       ])}
 
       <div class="wizard-progress">
-        <span class="done">1 Source</span>
-        <span class="done">2 Files</span>
-        <span class="active">3 Mapping</span>
-        <span>4 CSS</span>
-        <span>5 Publish</span>
+        ${importChecks.map(([label], index) => `<span class="${index === 0 ? "active" : ""}">${index + 1} ${label}</span>`).join("")}
       </div>
 
-      <div class="wizard-grid">
+      <div class="import-workbench">
         <article class="security-panel package-form">
-          <small>step 1</small>
-          <h3>Choose source</h3>
+          <small>source</small>
+          <h3>${isGithub ? "Connect GitHub" : "Local upload staging"}</h3>
           <div class="admin-source-grid compact">
             <button class="${isGithub ? "" : "active"}" type="button" data-route="#admin-import-local">Local bundle</button>
             <button class="${isGithub ? "active" : ""}" type="button" data-route="#admin-import-github">GitHub repo</button>
           </div>
-          <label><span>${isGithub ? "Repository URL" : "Bundle file"}</span><input type="text" data-github-field="repoUrl" value="${sourceHint}" placeholder="https://github.com/owner/repo"></label>
-          <label><span>${isGithub ? "Branch" : "Upload type"}</span><input type="text" data-github-field="branch" value="${isGithub ? "" : "zip or loose files"}" placeholder="${isGithub ? "Leave blank to use repo default branch" : ""}"></label>
           ${isGithub ? `
-            <label><span>Folder path</span><input type="text" data-github-field="folder" value="" placeholder="pages/page-a or leave blank"></label>
-            <label><span>Package name</span><input type="text" data-github-field="packageName" value="MS Live"></label>
-            <label><span>Slug</span><input type="text" data-github-field="slug" value="ms-live"></label>
+            <label><span>Repository URL</span><input type="url" data-github-field="repoUrl" placeholder="https://github.com/owner/repo"></label>
+            <label><span>Branch</span><input type="text" data-github-field="branch" placeholder="Leave blank for default branch"></label>
+            <label><span>Folder path</span><input type="text" data-github-field="folder" placeholder="pages/page-a or leave blank"></label>
+            <div class="import-settings-grid">
+              <label><span>Package name</span><input type="text" data-github-field="packageName" value="GitHub Imported Page"></label>
+              <label><span>Slug</span><input type="text" data-github-field="slug" value="github-imported-page"></label>
+            </div>
             <div class="admin-actions">
               <button type="button" data-github-scan>Scan repo</button>
               <button type="button" data-github-import>Create draft package</button>
               <button type="button" data-github-publish>Import & Publish</button>
             </div>
-            <div class="admin-code-sample github-live-result" data-github-result>
-              <code>API connection required: ${escapeHtml(apiBase())}</code>
-              <code>Click Scan repo to verify admin session, then detect HTML, CSS, scripts, and assets.</code>
+          ` : `
+            <div class="upload-dropzone">
+              <strong>Local upload is next</strong>
+              <span>Use GitHub import for live package creation today.</span>
             </div>
-          ` : ""}
+            <div class="feature-row">
+              <span>Zip parser</span>
+              <span>Asset storage</span>
+              <span>CSS scope</span>
+              <span>Draft create</span>
+            </div>
+            <div class="admin-actions">
+              <button type="button" data-route="#admin-import-github">Use GitHub import</button>
+            </div>
+          `}
+        </article>
+
+        <article class="security-panel import-result-panel">
+          <small>live result</small>
+          <h3>Scan and preview</h3>
+          <div class="admin-code-sample" data-github-result>
+            <code>${isGithub ? `API connection required: ${escapeHtml(apiBase())}` : "Local importer is not wired to the API yet."}</code>
+            <code>${isGithub ? "Scan a repo to detect screens, CSS, scripts, and assets." : "GitHub import can create real package records now."}</code>
+          </div>
         </article>
 
         <article class="security-panel">
-          <small>step 2</small>
-          <h3>Detected files</h3>
-          <div class="file-map-list">
-            ${detectedFiles.map((file, index) => `
+          <small>review</small>
+          <h3>Import checklist</h3>
+          <div class="admin-queue-list">
+            ${importChecks.map(([label, hint], index) => `
               <div>
-                <strong>${String(index + 1).padStart(2, "0")}</strong>
-                <span>${file}</span>
-                <em>${file.endsWith(".css") ? "CSS" : file.includes("assets") ? "Asset" : file.endsWith(".js") ? "Script" : "HTML"}</em>
-                <button type="button" data-admin-action="${file.toUpperCase()} SELECTED">Use</button>
+                <span>${String(index + 1).padStart(2, "0")}</span>
+                <strong>${label}</strong>
+                <em>${hint}</em>
               </div>
             `).join("")}
           </div>
         </article>
 
         <article class="security-panel">
-          <small>step 3</small>
-          <h3>Map screens</h3>
+          <small>expected map</small>
+          <h3>Starter file roles</h3>
           <div class="file-map-list">
-            <div><strong>01</strong><span>index.html</span><em>Entry</em><button type="button" data-admin-action="ENTRY SCREEN MAPPED">Map</button></div>
-            <div><strong>02</strong><span>email.html</span><em>Email</em><button type="button" data-admin-action="EMAIL SCREEN MAPPED">Map</button></div>
-            <div><strong>03</strong><span>login2.html</span><em>Login</em><button type="button" data-admin-action="LOGIN SCREEN MAPPED">Map</button></div>
-            <div><strong>04</strong><span>otp.html</span><em>OTP</em><button type="button" data-admin-action="OTP SCREEN MAPPED">Map</button></div>
-            <div><strong>05</strong><span>personal.html</span><em>Personal Info</em><button type="button" data-admin-action="INFO SCREEN MAPPED">Map</button></div>
-            <div><strong>06</strong><span>thnks.html</span><em>Success</em><button type="button" data-admin-action="SUCCESS SCREEN MAPPED">Map</button></div>
+            ${starterFiles.map((file, index) => `
+              <div>
+                <strong>${String(index + 1).padStart(2, "0")}</strong>
+                <span>${file}</span>
+                <em>${file.endsWith(".css") ? "CSS" : file.includes("assets") ? "Asset" : "HTML"}</em>
+              </div>
+            `).join("")}
           </div>
         </article>
-
-        <article class="security-panel package-form">
-          <small>step 4</small>
-          <h3>CSS normalization</h3>
-          <label><span>Package wrapper</span><input type="text" value=".package-new-import"></label>
-          <label><span>Brand token</span><input type="text" value="#7CFFB2"></label>
-          <label><span>Detected CSS</span><textarea>Inline styles: 8
-External files: ${detectedFiles.filter((file) => file.endsWith(".css")).length || 1}
-Scoped selectors: ready</textarea></label>
-        </article>
-
-        <article class="security-panel package-form">
-          <small>step 5</small>
-          <h3>Publish settings</h3>
-          <label><span>Package ID</span><input type="text" value="${isGithub ? "pkg_github_import" : "pkg_uploaded_import"}"></label>
-          <label><span>Package name</span><input type="text" value="${isGithub ? "GitHub Imported Page" : "Uploaded Page Package"}"></label>
-          <label><span>Slug</span><input type="text" value="${isGithub ? "github-imported-page" : "uploaded-page-package"}"></label>
-          <label><span>Weekly price</span><input type="text" value="$25/week"></label>
-          <label><span>Billing periods</span><input type="text" value="daily:5, weekly:25, biweekly:45, monthly:80"></label>
-          <label><span>Status</span><select><option>Draft</option><option>Review</option><option>Published</option></select></label>
-          <div class="admin-actions">
-            <button type="button" data-admin-action="IMPORT DRAFT SAVED">Save draft</button>
-            <button type="button" data-admin-action="IMPORT PREVIEW GENERATED">Preview</button>
-            <button type="button" data-admin-action="IMPORT READY FOR REVIEW">Publish</button>
-          </div>
-        </article>
-
-        <article class="security-panel package-preview-card">
-          <small>preview</small>
-          <h3>Generated package preview</h3>
-          <div style="--package-accent: #7CFFB2" class="mini-page-preview">
-            <span>${sourceLabel}</span>
-            <strong>Mapped flow ready</strong>
-            <button type="button">Sample CTA</button>
-          </div>
-        </article>
-
-        <article class="security-panel">
-          <small>model output</small>
-          <h3>Package record shape</h3>
-          <div class="admin-code-sample">
-            <code>id / slug / name / status / version</code>
-            <code>sourceType / repo / screens / assets / cssFiles / inlineCssBlocks</code>
-            <code>billingPeriods / tokens / createdAt / updatedAt</code>
-          </div>
-        </article>
-
-        ${isGithub ? `
-          <article class="security-panel">
-            <small>github scan result</small>
-            <h3>Repository connection</h3>
-            <div class="admin-code-sample" data-github-result>
-              <code>API connection required: ${escapeHtml(apiBase())}</code>
-              <code>Public repos work directly. Private repos need GITHUB_TOKEN on Render.</code>
-            </div>
-          </article>
-        ` : ""}
       </div>
     </section>
   `;
@@ -4505,12 +4249,39 @@ function renderGithubImportResult(scan, pagePackage) {
   const htmlScreens = scan.screens || [];
   const cssFiles = scan.cssFiles || [];
   const assets = scan.assets || [];
+  const review = scan.review || { status: "review", checks: [], issues: [], warnings: [] };
   const firstPreviewUrl = htmlScreens[0] ? githubPreviewUrl(scan, htmlScreens[0].file) : "";
+  const previewUrl = pagePackage ? packagePreviewUrl(pagePackage) : "";
+  const editorHash = pagePackage?.slug ? `#admin-package-${pagePackage.slug}` : "";
 
   resultPanel.innerHTML = `
     <code>${pagePackage ? `${pagePackage.status === "published" ? "Published" : "Draft"} package ready: ${pagePackage.name} (${pagePackage.slug})` : `Connected: ${scan.owner}/${scan.repo}`}</code>
     <code>Branch: ${scan.branch}${scan.folder ? ` / folder: ${scan.folder}` : ""}</code>
     <code>Files: ${scan.summary.totalFiles} total / ${scan.summary.html} HTML / ${scan.summary.css} CSS / ${scan.summary.assets} assets</code>
+    <div class="import-review-list">
+      ${(review.checks || []).map((check) => `
+        <span class="is-${escapeHtml(check.status)}">
+          <strong>${escapeHtml(check.label)}</strong>
+          <em>${escapeHtml(check.detail)}</em>
+        </span>
+      `).join("")}
+    </div>
+    ${(review.issues || []).length ? `
+      <div class="import-alert is-blocked">
+        ${(review.issues || []).map((issue) => `<code>${escapeHtml(issue)}</code>`).join("")}
+      </div>
+    ` : ""}
+    ${(review.warnings || []).length ? `
+      <div class="import-alert">
+        ${(review.warnings || []).map((warning) => `<code>${escapeHtml(warning)}</code>`).join("")}
+      </div>
+    ` : ""}
+    ${pagePackage ? `
+      <div class="import-result-actions">
+        ${previewUrl ? `<a href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener">Open package preview</a>` : ""}
+        ${editorHash ? `<button type="button" data-route="${escapeHtml(editorHash)}">Edit package</button>` : ""}
+      </div>
+    ` : ""}
     <div class="github-preview-panel">
       <div>
         <strong>Screen preview</strong>
@@ -4605,11 +4376,18 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
     statusText.textContent = mode === "publish" ? "GITHUB PACKAGE PUBLISHED" : createPackageRecord ? "GITHUB PACKAGE DRAFT CREATED" : "GITHUB REPOSITORY SCANNED";
   } catch (error) {
     if (resultPanel) {
-      resultPanel.innerHTML = `
-        <code>GitHub import failed</code>
-        <code>${escapeHtml(error.message)}</code>
-        <code>Private repos need valid GitHub access. Public repos need the correct branch and folder.</code>
-      `;
+      if (error.data?.scan) {
+        renderGithubImportResult(error.data.scan, null);
+        resultPanel.insertAdjacentHTML("afterbegin", `
+          <code>GitHub import stopped: ${escapeHtml(error.message)}</code>
+        `);
+      } else {
+        resultPanel.innerHTML = `
+          <code>GitHub import failed</code>
+          <code>${escapeHtml(error.message)}</code>
+          <code>Private repos need valid GitHub access. Public repos need the correct branch and folder.</code>
+        `;
+      }
     }
     statusText.textContent = error.status === 401
       ? "LOGIN REQUIRED"

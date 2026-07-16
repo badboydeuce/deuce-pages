@@ -117,6 +117,6 @@ export function rewritePreviewAssets(html, { token, file }) {
 
 export function findPackageByPreviewToken(packages, token) {
   return packages.find((pagePackage) => (
-    pagePackage.status === "published" && previewTokenForPackage(pagePackage) === token
+    previewTokenForPackage(pagePackage) === token
   )) || null;
 }

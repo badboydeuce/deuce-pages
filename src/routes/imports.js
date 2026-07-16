@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createPackage, findPackage, publishPackage, updatePackage } from "../repositories/appRepository.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { classifyFile, githubRawUrl, normalizeRepoUrl, scanGitHubRepository } from "../services/githubImport.js";
+import { withPreviewToken } from "../services/packagePreview.js";
 import { injectPreviewTurnstile } from "../services/turnstile.js";
 
 export const importsRouter = Router();
@@ -131,6 +132,15 @@ importsRouter.get("/github/asset", async (req, res) => {
 importsRouter.post("/github/package", requireAdmin, async (req, res) => {
   try {
     const scan = await scanGitHubRepository(req.body);
+    if (req.body.publish && !scan.review?.publishable) {
+      res.status(400).json({
+        error: "GitHub package is not publishable yet",
+        scan,
+        review: scan.review
+      });
+      return;
+    }
+
     const packageData = {
       slug: scan.slug,
       name: scan.packageName,
@@ -153,6 +163,7 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
         files: scan.files,
         screens: scan.screens,
         scripts: scan.scripts,
+        review: scan.review,
         importedAt: new Date().toISOString()
       }
     };
@@ -163,7 +174,7 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
       : await createPackage(packageData);
     const finalPackage = req.body.publish ? await publishPackage(pagePackage.id) : pagePackage;
 
-    res.status(201).json({ package: finalPackage, scan });
+    res.status(201).json({ package: withPreviewToken(finalPackage), scan });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

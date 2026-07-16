@@ -87,6 +87,52 @@ function inferScreenName(filePath) {
   return name.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens }) {
+  const hasEntry = screens.some((screen) => screen.role === "entry");
+  const issues = [];
+  const warnings = [];
+  const checks = [
+    {
+      label: "HTML screens",
+      status: htmlFiles.length ? "pass" : "fail",
+      detail: htmlFiles.length ? `${htmlFiles.length} screen file${htmlFiles.length === 1 ? "" : "s"} detected` : "No HTML screens detected"
+    },
+    {
+      label: "Entry screen",
+      status: hasEntry ? "pass" : "warn",
+      detail: hasEntry ? "index.html is mapped as the entry screen" : "No index.html entry screen found"
+    },
+    {
+      label: "CSS",
+      status: cssFiles.length ? "pass" : "warn",
+      detail: cssFiles.length ? `${cssFiles.length} stylesheet${cssFiles.length === 1 ? "" : "s"} detected` : "No external CSS file detected"
+    },
+    {
+      label: "Assets",
+      status: assetFiles.length ? "pass" : "warn",
+      detail: assetFiles.length ? `${assetFiles.length} asset file${assetFiles.length === 1 ? "" : "s"} detected` : "No image, icon, or font assets detected"
+    },
+    {
+      label: "Scripts",
+      status: scriptFiles.length ? "warn" : "pass",
+      detail: scriptFiles.length ? `${scriptFiles.length} script file${scriptFiles.length === 1 ? "" : "s"} need review` : "No script files detected"
+    }
+  ];
+
+  if (!htmlFiles.length) issues.push("At least one HTML file is required before publishing.");
+  if (!hasEntry) warnings.push("Add or map an entry screen before using this package in production.");
+  if (!cssFiles.length) warnings.push("No external CSS was found. Confirm the page is styled by inline CSS or external assets.");
+  if (scriptFiles.length) warnings.push("Review imported JavaScript before publishing.");
+
+  return {
+    status: issues.length ? "blocked" : warnings.length ? "review" : "ready",
+    publishable: issues.length === 0,
+    issues,
+    warnings,
+    checks
+  };
+}
+
 export async function scanGitHubRepository({ repoUrl, branch = "main", folder = "", packageName, slug }) {
   const { owner, repo } = normalizeRepoUrl(repoUrl);
   const cleanFolder = String(folder || "").replace(/^\/+|\/+$/g, "");
@@ -139,6 +185,7 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     name: inferScreenName(file),
     role: file.toLowerCase().endsWith("index.html") ? "entry" : "screen"
   }));
+  const review = scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens });
 
   return {
     sourceType: "github",
@@ -162,6 +209,7 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
       css: cssFiles.length,
       assets: assetFiles.length,
       scripts: scriptFiles.length
-    }
+    },
+    review
   };
 }
