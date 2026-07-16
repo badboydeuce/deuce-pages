@@ -2601,7 +2601,6 @@ function renderMyPages() {
       <div class="view-heading">
         <small>my pages</small>
         <h2>Page control room</h2>
-        <p>Manage each subscribed page from a compact control panel. Use Config for domain and page behavior, Go Live for hosting and download, and Security or Results when you need operations.</p>
       </div>
       ${viewNav([
         routeButton("#dashboard", "&#8592; Dashboard"),
@@ -2616,11 +2615,6 @@ function renderMyPages() {
       </div>
 
       <article class="my-pages-brief">
-        <div>
-          <small>workspace flow</small>
-          <h3>Configure, secure, monitor, then go live.</h3>
-          <p>Each card below is one owned page. Open its controls for the few actions that matter most.</p>
-        </div>
         <div class="feature-row">
           <span>${captchaCount} captcha enabled</span>
           <span>${ownedPages.filter((page) => page.subscription?.autoRenew).length} auto-renewing</span>
