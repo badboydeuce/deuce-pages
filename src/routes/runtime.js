@@ -401,7 +401,11 @@ runtimeRouter.post("/traffic", async (req, res) => {
     pageId: context.page.slug,
     hostname: context.clientHost || req.body?.hostname,
     result: req.body?.result || (decision.allowed ? "allowed" : "blocked"),
-    reason: req.body?.reason || decision.reason
+    reason: req.body?.reason || decision.reason,
+    metadata: {
+      ...(req.body?.metadata || {}),
+      deviceType: decision.deviceType || null
+    }
   }, context.ip, req.headers["user-agent"]);
   res.status(201).json({ event, allowed: decision.allowed, reason: decision.reason });
 });

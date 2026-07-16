@@ -3241,6 +3241,89 @@ function formatTrafficDate(value) {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+const trafficDeviceLabels = {
+  mobile: "Mobile",
+  desktop: "PC",
+  tablet: "Tablet",
+  bot: "Bot / crawler",
+  other: "Other"
+};
+
+function detectTrafficDeviceType(event = {}) {
+  const storedType = event.metadata?.deviceType || event.deviceType;
+  if (trafficDeviceLabels[storedType]) return storedType;
+  const agent = String(event.userAgent || "").toLowerCase();
+  if (!agent) return "other";
+  if (/bot|crawler|spider|slurp|headless|preview|scanner|curl|wget|python-requests|httpclient/.test(agent)) return "bot";
+  if (/ipad|tablet|kindle|silk|playbook/.test(agent)) return "tablet";
+  if (/mobi|android|iphone|ipod|phone|blackberry|opera mini|windows phone/.test(agent)) return "mobile";
+  if (/windows nt|macintosh|linux x86_64|x11|cros/.test(agent)) return "desktop";
+  return "other";
+}
+
+function trafficInsights(trafficLog = []) {
+  const counts = { mobile: 0, desktop: 0, tablet: 0, bot: 0, other: 0 };
+  const buckets = new Map();
+  let allowed = 0;
+  let blocked = 0;
+
+  trafficLog.forEach((event) => {
+    const deviceType = detectTrafficDeviceType(event);
+    counts[deviceType] = (counts[deviceType] || 0) + 1;
+    if (event.result === "blocked") blocked += 1;
+    else allowed += 1;
+
+    const date = new Date(event.createdAt || event.time);
+    if (Number.isNaN(date.getTime())) return;
+    const hour = new Date(date);
+    hour.setMinutes(0, 0, 0);
+    const key = hour.toISOString();
+    const label = hour.toLocaleTimeString([], { hour: "2-digit" });
+    const current = buckets.get(key) || { key, label, total: 0 };
+    current.total += 1;
+    buckets.set(key, current);
+  });
+
+  const graph = [...buckets.values()]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .slice(-10);
+  const maxGraphValue = Math.max(1, ...graph.map((bucket) => bucket.total));
+
+  return {
+    counts,
+    allowed,
+    blocked,
+    graph,
+    maxGraphValue,
+    total: trafficLog.length
+  };
+}
+
+function trafficCategoryCardsMarkup(insights) {
+  return Object.entries(trafficDeviceLabels).map(([type, label]) => `
+    <article class="traffic-category-card ${type}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${insights.counts[type] || 0}</strong>
+    </article>
+  `).join("");
+}
+
+function trafficGraphMarkup(insights) {
+  if (!insights.graph.length) {
+    return `<div class="traffic-chart empty"><span>No graph data yet</span></div>`;
+  }
+  return `
+    <div class="traffic-chart" aria-label="Traffic graph">
+      ${insights.graph.map((bucket) => `
+        <div class="traffic-bar" title="${escapeHtml(bucket.label)} / ${bucket.total}">
+          <i style="height: ${Math.max(8, Math.round((bucket.total / insights.maxGraphValue) * 100))}%"></i>
+          <span>${escapeHtml(bucket.label)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function trafficRowsMarkup(trafficLog, pageSlug, bannedIps = [], whitelistIps = []) {
   if (!trafficLog.length) {
     return `
@@ -3253,6 +3336,7 @@ function trafficRowsMarkup(trafficLog, pageSlug, bannedIps = [], whitelistIps = 
 
   return trafficLog.map((event) => {
     const ip = event.ip || "";
+    const deviceType = detectTrafficDeviceType(event);
     const isBanned = bannedIps.includes(ip);
     const isWhitelisted = whitelistIps.includes(ip);
     const status = isBanned ? "Banned" : isWhitelisted ? "Whitelisted" : event.result || event.event || "Visit";
@@ -3260,6 +3344,7 @@ function trafficRowsMarkup(trafficLog, pageSlug, bannedIps = [], whitelistIps = 
       <div>
         <span>${escapeHtml(formatTrafficTime(event.createdAt || event.time))}</span>
         <strong>${escapeHtml(ip || "unknown ip")}</strong>
+        <mark class="traffic-device ${escapeHtml(deviceType)}">${escapeHtml(trafficDeviceLabels[deviceType] || "Other")}</mark>
         <em class="${isBanned ? "is-banned" : isWhitelisted ? "is-whitelisted" : ""}">${escapeHtml(status)}</em>
         <section class="traffic-actions" aria-label="Traffic IP actions">
           <button type="button" data-traffic-ban-ip="${escapeHtml(ip)}" data-traffic-page="${escapeHtml(pageSlug)}" ${ip && !isBanned ? "" : "disabled"}>Ban</button>
@@ -3300,6 +3385,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const whitelistIps = security.whitelistIps || [];
   const blockedDevices = security.blockedDevices || [];
   const trafficLog = tab === "traffic" ? await fetchPageTraffic(page) : security.trafficLog || [];
+  const trafficStats = trafficInsights(trafficLog);
   const tabButtons = [
     routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
     routeButton(`#security-${page.slug}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
@@ -3374,9 +3460,15 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <button type="button" data-route="#security-${page.slug}:traffic">Refresh</button>
       </div>
       <div class="metric-grid">
-        <div><span>Total events</span><b>${trafficLog.length}</b></div>
-        <div><span>Allowed</span><b>${trafficLog.filter((event) => event.result !== "blocked").length}</b></div>
-        <div><span>Blocked</span><b>${trafficLog.filter((event) => event.result === "blocked").length}</b></div>
+        <div><span>Total events</span><b>${trafficStats.total}</b></div>
+        <div><span>Allowed</span><b>${trafficStats.allowed}</b></div>
+        <div><span>Blocked</span><b>${trafficStats.blocked}</b></div>
+      </div>
+      <div class="traffic-dashboard">
+        <section class="traffic-category-grid" aria-label="Traffic categories">
+          ${trafficCategoryCardsMarkup(trafficStats)}
+        </section>
+        ${trafficGraphMarkup(trafficStats)}
       </div>
       <div class="traffic-log">
         ${trafficRowsMarkup(trafficLog, page.slug, bannedIps, whitelistIps)}
