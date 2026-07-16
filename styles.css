@@ -1638,8 +1638,9 @@ code,
 
 .session-command {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+  align-items: start;
 }
 
 .session-command input {
@@ -1668,7 +1669,24 @@ code,
   font-weight: 800;
 }
 
-.session-command button:first-of-type {
+.session-route-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-route-buttons button {
+  min-width: 78px;
+}
+
+.session-route-buttons span {
+  color: var(--muted);
+  font: 800 0.7rem var(--mono);
+  text-transform: uppercase;
+}
+
+.session-route-buttons button:first-of-type {
   color: var(--bg-deep);
   border-color: var(--accent);
   background: var(--accent);
@@ -5020,6 +5038,14 @@ code {
 
   .active-session-card {
     grid-template-columns: 1fr;
+  }
+
+  .session-command {
+    grid-template-columns: 1fr;
+  }
+
+  .session-route-buttons button {
+    flex: 1 1 110px;
   }
 
   .traffic-log div {

