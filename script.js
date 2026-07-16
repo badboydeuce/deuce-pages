@@ -573,7 +573,146 @@ function setupStepClass(done, active = false) {
   return active ? "active" : "";
 }
 
+function packageForUserPage(page) {
+  const packages = [...marketPages, ...adminPackages];
+  return packages.find((pagePackage) => (
+    pagePackage.id === page.packageId
+    || pagePackage.slug === page.slug
+    || pagePackage.slug === page.pageId
+  )) || null;
+}
+
+function packageEntryFile(pagePackage) {
+  const screens = pagePackage?.packageManifest?.screens || [];
+  return screens.find((screen) => screen.role === "entry")?.file || screens[0]?.file || "";
+}
+
+function shouldUsePackageRuntime(page, pagePackage) {
+  return Boolean(
+    pagePackage?.sourceType === "github"
+    && pagePackage?.packageManifest?.github
+    && packageEntryFile(pagePackage)
+    && (page.hostingConfig?.connectionType || "cloudflare-worker") === "cloudflare-worker"
+  );
+}
+
+function createPackageRuntimeIndex(page, pagePackage) {
+  const serverApiBase = page.generatedFile?.apiBase || "https://your-render-app.onrender.com";
+  const hostingConfig = page.hostingConfig || {};
+  const usesCloudflareRelay = hostingConfig.connectionType === "cloudflare-worker";
+  const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
+  const liveDomain = hostingConfig.domain || page.domain || "";
+  const strictAllowedDomains = [liveDomain].filter(Boolean);
+  const entryFile = packageEntryFile(pagePackage);
+  const payload = {
+    id: page.id,
+    userId: page.userId,
+    packageId: page.packageId,
+    packageVersion: page.packageVersion,
+    pageId: page.slug,
+    pageName: page.name,
+    source: {
+      type: pagePackage.sourceType,
+      entryFile,
+      screens: pagePackage.packageManifest?.screens || []
+    },
+    apiBase: runtimeApiBase,
+    generatedAt: new Date().toISOString(),
+    domain: liveDomain,
+    hosting: hostingConfig,
+    allowedDomains: strictAllowedDomains,
+    subscription: page.subscription,
+    resultSettings: page.resultSettings,
+    security: {
+      ...(page.securityConfig || {}),
+      turnstile: {
+        enabled: Boolean(page.securityConfig?.captcha),
+        provider: "turnstile",
+        siteKey: page.securityConfig?.turnstile?.siteKey || page.securityConfig?.turnstileSiteKey || ""
+      }
+    },
+    generatedFile: page.generatedFile,
+    runtime: {
+      configEndpoint: `${runtimeApiBase}/config?userPageId=${encodeURIComponent(page.id)}`,
+      sourceEndpoint: `${runtimeApiBase}/source?userPageId=${encodeURIComponent(page.id)}`
+    }
+  };
+  delete payload.security.turnstileSecretKey;
+  delete payload.security.secretKey;
+  const configJson = JSON.stringify(payload, null, 8).replace(/<\//g, "<\\/");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(page.name)}</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; min-height: 100%; margin: 0; background: #050607; }
+      body { overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; }
+      #deuceBlock {
+        min-height: 100vh;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        color: #eef8f2;
+        background: #050607;
+      }
+      #deuceBlock.active { display: grid; }
+      #deuceBlock article {
+        max-width: 520px;
+        border: 1px solid rgba(124,255,178,.24);
+        border-radius: 10px;
+        padding: 28px;
+        background: #0d1112;
+      }
+      #deuceBlock small { color: #7cffb2; font-weight: 800; text-transform: uppercase; }
+      #deuceBlock h1 { margin: 10px 0; font-size: 1.7rem; }
+      #deuceBlock p { color: #8da199; line-height: 1.55; }
+    </style>
+  </head>
+  <body>
+    <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
+    <section id="deuceBlock">
+      <article>
+        <small>access blocked</small>
+        <h1 id="deuceBlockTitle">Domain not authorized</h1>
+        <p id="deuceBlockCopy">This generated page is not allowed to run on this domain.</p>
+      </article>
+    </section>
+    <script>
+      window.DEUCE_PAGE_CONFIG = ${configJson};
+      const config = window.DEUCE_PAGE_CONFIG;
+      const allowed = config.allowedDomains || [];
+      const host = window.location.hostname;
+      const frame = document.getElementById("deuceFrame");
+      const block = document.getElementById("deuceBlock");
+      const blockCopy = document.getElementById("deuceBlockCopy");
+
+      function blockPage(message) {
+        frame.remove();
+        block.classList.add("active");
+        blockCopy.textContent = message;
+      }
+
+      if (allowed.length && !allowed.includes(host)) {
+        blockPage("This page is only configured for " + allowed.join(", ") + ".");
+      } else {
+        frame.src = config.runtime.sourceEndpoint;
+      }
+    <\/script>
+  </body>
+</html>`;
+}
+
 function createGeneratedIndex(page) {
+  const pagePackage = packageForUserPage(page);
+  if (shouldUsePackageRuntime(page, pagePackage)) {
+    return createPackageRuntimeIndex(page, pagePackage);
+  }
+
   const screens = page.flow.map((screenName) => {
     const screen = screenLibrary.find((item) => item.name === screenName);
     return {

@@ -1,10 +1,18 @@
 import { Router } from "express";
 import {
+  findPackage,
   findUserPage,
   savePageResult,
   saveTrafficEvent,
   updateUserPageConfig
 } from "../repositories/appRepository.js";
+import {
+  contentTypeFor,
+  fetchGitHubPackageFile,
+  previewFileForPackage,
+  previewSourceForPackage,
+  resolveRelativePath
+} from "../services/packagePreview.js";
 import {
   publicTurnstileConfig,
   turnstileSecretFor,
@@ -110,6 +118,111 @@ function securityDecision(page, ip) {
   return { allowed: true, reason: "Allowed" };
 }
 
+function packageContainsFile(pagePackage, file) {
+  const cleanFile = String(file || "").replace(/^\/+/, "");
+  const files = pagePackage.packageManifest?.files || [];
+  return files.some((item) => (item.path || item) === cleanFile);
+}
+
+function runtimeAssetUrl(userPageId, file) {
+  const params = new URLSearchParams({ userPageId, file });
+  return `/api/source/asset?${params.toString()}`;
+}
+
+function runtimePageUrl(userPageId, file) {
+  const params = new URLSearchParams({ userPageId, file });
+  return `/api/source?${params.toString()}`;
+}
+
+function rewriteRuntimeHtml(html, { userPageId, file }) {
+  const rewritten = html.replace(/\b(src|href|action)=["']([^"']+)["']/gi, (match, attr, value) => {
+    const resolved = resolveRelativePath(file, value);
+    if (!resolved) return match;
+    if (/\.html?$/i.test(resolved)) {
+      return `${attr}="${runtimePageUrl(userPageId, resolved)}"`;
+    }
+    return `${attr}="${runtimeAssetUrl(userPageId, resolved)}"`;
+  });
+
+  const bridge = `<script>
+(function () {
+  const runtime = {
+    userPageId: ${JSON.stringify(userPageId)},
+    pageId: ${JSON.stringify(file)},
+    sessionId: "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8)
+  };
+
+  function send(path, payload) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userPageId: runtime.userPageId,
+        pageId: runtime.pageId,
+        sessionId: runtime.sessionId,
+        hostname: window.location.hostname,
+        path: window.location.pathname,
+        createdAt: new Date().toISOString(),
+        ...payload
+      })
+    }).catch(function () {});
+  }
+
+  send("/api/traffic", { event: "page_load", screen: runtime.pageId });
+
+  document.addEventListener("submit", function (event) {
+    const form = event.target;
+    if (!form || !(form instanceof HTMLFormElement)) return;
+    const data = Object.fromEntries(new FormData(form).entries());
+    send("/api/results", {
+      screen: runtime.pageId,
+      data: data,
+      flow: [runtime.pageId],
+      userAgent: navigator.userAgent
+    });
+  }, true);
+})();
+<\/script>`;
+
+  if (rewritten.includes("</body>")) return rewritten.replace("</body>", `${bridge}</body>`);
+  return `${rewritten}${bridge}`;
+}
+
+async function packageForRuntimePage(page) {
+  const pagePackage = await findPackage(page.packageId || page.slug);
+  if (!pagePackage) throw new Error("Runtime package not found");
+  return pagePackage;
+}
+
+async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
+  const context = await runtimeContext(req, res);
+  if (!context) return;
+
+  const pagePackage = await packageForRuntimePage(context.page);
+  const requestedFile = String(req.query?.file || "");
+  const file = requestedFile || previewFileForPackage(pagePackage);
+  if (!file || !packageContainsFile(pagePackage, file)) {
+    res.status(404).send("Package file not found");
+    return;
+  }
+
+  const source = previewSourceForPackage(pagePackage, file);
+  const response = await fetchGitHubPackageFile(source);
+  if (asAsset || !/\.html?$/i.test(file)) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.setHeader("Content-Type", contentTypeFor(file));
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.send(buffer);
+    return;
+  }
+
+  const html = await response.text();
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "private, max-age=60");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.send(rewriteRuntimeHtml(html, { userPageId: context.page.id, file }));
+}
+
 runtimeRouter.get("/config", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
@@ -120,6 +233,22 @@ runtimeRouter.post("/config", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
   res.json({ config: publicPageConfig(context.page) });
+});
+
+runtimeRouter.get("/source", async (req, res) => {
+  try {
+    await sendRuntimePackageFile(req, res);
+  } catch (error) {
+    res.status(400).send(String(error.message || error));
+  }
+});
+
+runtimeRouter.get("/source/asset", async (req, res) => {
+  try {
+    await sendRuntimePackageFile(req, res, { asAsset: true });
+  } catch (error) {
+    res.status(404).send(String(error.message || error));
+  }
 });
 
 runtimeRouter.post("/security/check", async (req, res) => {
