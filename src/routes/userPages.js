@@ -7,6 +7,7 @@ import {
   listTrafficEvents,
   listUserPages,
   markGenerated,
+  renewUserPage,
   setSessionCommand,
   updateIpRule,
   updateSecurityConfig,
@@ -39,6 +40,15 @@ userPagesRouter.patch("/:id/config", (req, res) => {
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
       res.json({ userPage });
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.post("/:id/renew", (req, res) => {
+  renewUserPage(req.params.id, req.user.id)
+    .then((result) => {
+      if (result?.error) return res.status(result.status || 400).json(result);
+      res.json(result);
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });

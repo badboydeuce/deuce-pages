@@ -575,7 +575,7 @@ function buildUserPage(userId, pagePackage, period, price, data) {
     subscription: {
       billingPeriod: period,
       renewalPrice: price,
-      renewalDate: data.renewalDate || null,
+      renewalDate: data.renewalDate || (data.adminFreeSubscription ? null : nextRenewalDate(period)),
       autoRenew: !data.adminFreeSubscription,
       walletSource: data.adminFreeSubscription ? "admin-free" : "main-wallet",
       adminFreeSubscription: Boolean(data.adminFreeSubscription)
@@ -610,6 +610,26 @@ function buildUserPage(userId, pagePackage, period, price, data) {
 
 function buildTransaction(userId, type, amount, description, metadata = {}) {
   return { id: createId("txn"), userId, type, amount, description, metadata, createdAt: new Date().toISOString() };
+}
+
+const billingPeriodDays = {
+  daily: 1,
+  weekly: 7,
+  biweekly: 14,
+  monthly: 30
+};
+
+function isoDateOnly(date = new Date()) {
+  return new Date(date).toISOString().slice(0, 10);
+}
+
+function nextRenewalDate(period = "weekly", fromDate = null) {
+  const today = new Date(`${isoDateOnly()}T00:00:00Z`);
+  const current = fromDate ? new Date(`${fromDate}T00:00:00Z`) : null;
+  const base = current && !Number.isNaN(current.getTime()) && current > today ? current : today;
+  const next = new Date(base);
+  next.setUTCDate(next.getUTCDate() + (billingPeriodDays[period] || billingPeriodDays.weekly));
+  return isoDateOnly(next);
 }
 
 export async function listUserPages(userId) {
@@ -679,6 +699,116 @@ export async function updateUserPageConfig(id, data, userId = null) {
     ]
   );
   return toUserPage(result.rows[0]);
+}
+
+export async function renewUserPage(id, userId) {
+  if (!userId) return { error: "Authentication required", status: 401 };
+  const current = await findUserPage(id, userId);
+  if (!current) return { error: "User page not found", status: 404 };
+
+  const period = current.subscription?.billingPeriod || "weekly";
+  const price = Number(current.subscription?.renewalPrice || 0);
+  const renewalDate = nextRenewalDate(period, current.subscription?.renewalDate);
+  const renewedAt = new Date().toISOString();
+
+  if (current.subscription?.adminFreeSubscription || price <= 0) {
+    const userPage = await updateUserPageConfig(current.id, {
+      subscription: {
+        ...(current.subscription || {}),
+        renewalDate: current.subscription?.adminFreeSubscription ? null : renewalDate,
+        lastRenewedAt: renewedAt,
+        renewalStatus: "active",
+        autoRenew: false
+      }
+    }, userId);
+    return { userPage, walletBalance: null, adminFreeSubscription: Boolean(current.subscription?.adminFreeSubscription) };
+  }
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const user = db.users.find((item) => item.id === userId);
+      const index = db.userPages.findIndex((page) => (page.id === current.id || page.slug === id) && page.userId === userId);
+      if (!user || index === -1) return { error: "User page not found", status: 404 };
+      if (Number(user.walletBalance || 0) < price) {
+        return { error: "Insufficient wallet balance", status: 402, walletBalance: Number(user.walletBalance || 0), price };
+      }
+
+      user.walletBalance = Number(user.walletBalance || 0) - price;
+      user.updatedAt = renewedAt;
+      db.userPages[index] = {
+        ...db.userPages[index],
+        status: "active",
+        subscription: {
+          ...(db.userPages[index].subscription || {}),
+          billingPeriod: period,
+          renewalPrice: price,
+          renewalDate,
+          lastRenewedAt: renewedAt,
+          renewalStatus: "active",
+          walletSource: "main-wallet"
+        },
+        updatedAt: renewedAt
+      };
+      const transaction = buildTransaction(
+        user.id,
+        "subscription_renewal",
+        -price,
+        `${db.userPages[index].name} ${period} renewal`,
+        { userPageId: db.userPages[index].id, billingPeriod: period, renewalDate }
+      );
+      db.walletTransactions.push(transaction);
+      return { userPage: db.userPages[index], walletBalance: user.walletBalance, transaction };
+    });
+  }
+
+  return withTransaction(async (client) => {
+    const pageResult = await client.query(
+      "SELECT * FROM user_pages WHERE (id = $1 OR slug = $1) AND user_id = $2 FOR UPDATE",
+      [id, userId]
+    );
+    const row = pageResult.rows[0];
+    if (!row) return { error: "User page not found", status: 404 };
+
+    const userResult = await client.query("SELECT * FROM users WHERE id = $1 FOR UPDATE", [userId]);
+    const user = userResult.rows[0];
+    if (!user) return { error: "User not found", status: 404 };
+    if (Number(user.wallet_balance || 0) < price) {
+      return { error: "Insufficient wallet balance", status: 402, walletBalance: Number(user.wallet_balance || 0), price };
+    }
+
+    const nextSubscription = {
+      ...(row.subscription || {}),
+      billingPeriod: period,
+      renewalPrice: price,
+      renewalDate,
+      lastRenewedAt: renewedAt,
+      renewalStatus: "active",
+      walletSource: "main-wallet"
+    };
+    const nextBalance = Number(user.wallet_balance || 0) - price;
+    await client.query("UPDATE users SET wallet_balance = wallet_balance - $1, updated_at = now() WHERE id = $2", [price, userId]);
+    const updatedPage = await client.query(
+      `UPDATE user_pages
+       SET status = 'active', subscription = $2::jsonb, updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [row.id, JSON.stringify(nextSubscription)]
+    );
+    const txnResult = await client.query(
+      `INSERT INTO wallet_transactions (id, user_id, type, amount, description, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+       RETURNING *`,
+      [
+        createId("txn"),
+        userId,
+        "subscription_renewal",
+        -price,
+        `${row.name} ${period} renewal`,
+        JSON.stringify({ userPageId: row.id, billingPeriod: period, renewalDate })
+      ]
+    );
+    return { userPage: toUserPage(updatedPage.rows[0]), walletBalance: nextBalance, transaction: toTransaction(txnResult.rows[0]) };
+  });
 }
 
 export async function updateSecurityConfig(id, securityConfig, userId = null) {

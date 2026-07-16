@@ -3602,6 +3602,7 @@ code,
 .owned-main {
   display: grid;
   gap: 6px;
+  justify-items: start;
 }
 
 .owned-meta {
@@ -3677,7 +3678,7 @@ code,
 
 .my-page-status-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 
@@ -3705,6 +3706,49 @@ code,
   font-size: 0.82rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.subscription-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+  font: 850 0.68rem var(--mono);
+  text-transform: uppercase;
+}
+
+.subscription-chip.is-auto,
+.subscription-chip.is-free {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.subscription-chip.is-due {
+  color: #140f05;
+  border-color: #f5c451;
+  background: #f5c451;
+}
+
+.subscription-chip.is-expired {
+  color: #ffffff;
+  border-color: #ff5f63;
+  background: #ff5f63;
+}
+
+:root[data-theme="light"] .subscription-chip {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+:root[data-theme="light"] .subscription-chip.is-auto,
+:root[data-theme="light"] .subscription-chip.is-free {
+  color: #ffffff;
+  background: var(--accent);
 }
 
 .my-page-tools {

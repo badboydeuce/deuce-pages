@@ -389,6 +389,37 @@ function marketSubscribeLabel(pagePackage, period) {
   return isAdmin() ? "Activate free" : `Subscribe - ${formatMoney(billingPrice(pagePackage, period))}`;
 }
 
+function subscriptionState(page) {
+  const subscription = page.subscription || {};
+  if (subscription.adminFreeSubscription) {
+    return {
+      label: "Admin free",
+      className: "is-free",
+      dueLabel: "No renewal charge",
+      canRenew: false
+    };
+  }
+
+  const renewalDate = subscription.renewalDate || "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const renewal = renewalDate ? new Date(`${renewalDate}T00:00:00`) : null;
+  const daysLeft = renewal && !Number.isNaN(renewal.getTime())
+    ? Math.ceil((renewal.getTime() - today.getTime()) / 86400000)
+    : null;
+  const expired = daysLeft !== null && daysLeft < 0;
+  const dueSoon = daysLeft !== null && daysLeft <= 3 && daysLeft >= 0;
+
+  return {
+    label: expired ? "Expired" : dueSoon ? "Due soon" : subscription.autoRenew ? "Auto renew" : "Manual renew",
+    className: expired ? "is-expired" : dueSoon ? "is-due" : subscription.autoRenew ? "is-auto" : "is-manual",
+    dueLabel: renewalDate || "Not scheduled",
+    canRenew: true,
+    expired,
+    dueSoon
+  };
+}
+
 function findPackageThumbnail(pagePackage) {
   if (pagePackage.packageManifest?.thumbnailPath) return pagePackage.packageManifest.thumbnailPath;
   const files = [
@@ -2668,9 +2699,7 @@ function ownedPageCard(page, index) {
   const billing = page.subscription?.billingPeriod
     ? `${billingLabel(page.subscription.billingPeriod)} / ${formatMoney(page.subscription.renewalPrice || 0)}`
     : "Billing not set";
-  const renewal = page.subscription?.adminFreeSubscription
-    ? "Admin free access"
-    : page.subscription?.renewalDate || "Renewal not scheduled";
+  const renewal = subscriptionState(page);
   const securityLabel = page.securityConfig?.captcha ? "Captcha on" : "Captcha off";
   const trafficCount = pageTrafficCount(page);
   const resultCount = page.results?.length || 0;
@@ -2683,6 +2712,7 @@ function ownedPageCard(page, index) {
           <small>${escapeHtml(page.status || "active")}</small>
           <h3>${escapeHtml(page.name)}</h3>
           <p>${escapeHtml(domain)}</p>
+          <span class="subscription-chip ${renewal.className}">${escapeHtml(renewal.label)}</span>
         </div>
         <div class="my-page-score" aria-label="${readiness.percent}% launch ready">
           <strong>${readiness.percent}%</strong>
@@ -2693,6 +2723,7 @@ function ownedPageCard(page, index) {
       <div class="my-page-status-grid">
         <div><span>Launch</span><strong>${escapeHtml(liveStatus)}</strong></div>
         <div><span>Plan</span><strong>${escapeHtml(billing)}</strong></div>
+        <div><span>Renewal</span><strong>${escapeHtml(renewal.dueLabel)}</strong></div>
         <div><span>Results</span><strong>${resultCount}</strong></div>
         <div><span>Traffic</span><strong>${trafficCount}</strong></div>
       </div>
@@ -2700,7 +2731,7 @@ function ownedPageCard(page, index) {
       <details class="my-page-tools" ${index === 0 ? "open" : ""}>
         <summary>
           <span>Manage page</span>
-          <strong>${escapeHtml(renewal)} / ${escapeHtml(securityLabel)} / ${escapeHtml(generatedLabel)}</strong>
+          <strong>${escapeHtml(renewal.dueLabel)} / ${escapeHtml(securityLabel)} / ${escapeHtml(generatedLabel)}</strong>
         </summary>
         <div class="my-page-tool-grid" aria-label="${escapeHtml(page.name)} management tools">
           <section>
@@ -2710,6 +2741,7 @@ function ownedPageCard(page, index) {
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="security">&#128737; Security</button>
             <button type="button" data-results="${escapeHtml(page.slug)}">&#128193; Results</button>
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="traffic">&#128200; Traffic</button>
+            <button type="button" data-renew-page="${escapeHtml(page.slug)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; Renew now</button>
           </section>
         </div>
       </details>
@@ -3948,6 +3980,44 @@ async function subscribeToMarketPackage(button) {
   }
 }
 
+async function renewPageFromWallet(page) {
+  if (!page) {
+    statusText.textContent = "PAGE RECORD NOT FOUND";
+    return;
+  }
+  if (!isLoggedIn()) {
+    window.location.hash = "#login";
+    statusText.textContent = "LOGIN REQUIRED TO RENEW";
+    return;
+  }
+
+  try {
+    const result = await requestApi(`/api/user-pages/${page.id}/renew`, { method: "POST" });
+    const updated = normalizeUserPage(result.userPage);
+    ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+    if (typeof result.walletBalance === "number") walletData.balance = result.walletBalance;
+    await loadAppData();
+    renderMyPages();
+    statusText.textContent = `${updated.name.toUpperCase()} RENEWED`;
+  } catch (error) {
+    if (error.status === 402) {
+      const required = formatMoney(error.data?.price || page.subscription?.renewalPrice || 0);
+      const balance = formatMoney(error.data?.walletBalance || walletData.balance || 0);
+      statusText.textContent = `WALLET TOO LOW: ${balance} AVAILABLE, ${required} REQUIRED`;
+      window.setTimeout(() => {
+        window.location.hash = "#wallet";
+      }, 700);
+      return;
+    }
+    if (error.status === 401) {
+      window.location.hash = "#login";
+      statusText.textContent = "LOGIN REQUIRED TO RENEW";
+      return;
+    }
+    statusText.textContent = `RENEWAL FAILED: ${error.message}`.toUpperCase();
+  }
+}
+
 async function submitWalletFundRequest() {
   const field = (name) => preview.querySelector(`[data-wallet-fund="${name}"]`)?.value.trim() || "";
   const selected = walletFundingOptionByValue(field("crypto"));
@@ -4417,6 +4487,12 @@ preview.addEventListener("click", async (event) => {
   const saveUserConfigButton = event.target.closest("[data-save-user-config]");
   if (saveUserConfigButton) {
     saveUserConfig(getPageBySlug(saveUserConfigButton.dataset.saveUserConfig));
+    return;
+  }
+
+  const renewPageButton = event.target.closest("[data-renew-page]");
+  if (renewPageButton) {
+    await withButtonBusy(renewPageButton, "Renewing", () => renewPageFromWallet(getPageBySlug(renewPageButton.dataset.renewPage)));
     return;
   }
 
