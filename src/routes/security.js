@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { findUserPage, saveTrafficEvent } from "../repositories/appRepository.js";
 import { turnstileSecretFor, verifyTurnstileToken } from "../services/turnstile.js";
+import { deviceBlocked } from "../services/deviceRules.js";
 
 export const securityRouter = Router();
 
@@ -22,7 +23,9 @@ securityRouter.post("/check", async (req, res) => {
     const allowedDomains = security.domains || [];
     const localHosts = ["", "localhost", "127.0.0.1"];
     const banned = (security.bannedIps || []).includes(ip) || (security.bannedIps || []).includes(req.body.ip);
+    const device = deviceBlocked(security, req.headers["user-agent"]);
     const domainAllowed = !allowedDomains.length || allowedDomains.includes(hostname) || localHosts.includes(hostname);
+    const blocked = banned || device.blocked || !domainAllowed;
 
     const event = await saveTrafficEvent({
       userPageId: userPage.id,
@@ -30,14 +33,16 @@ securityRouter.post("/check", async (req, res) => {
       sessionId: req.body.sessionId,
       event: req.body.event || "security_check",
       hostname,
-      result: banned || !domainAllowed ? "blocked" : "allowed",
-      reason: banned ? "Banned IP" : !domainAllowed ? "Domain not allowed" : "Passed rules"
+      result: blocked ? "blocked" : "allowed",
+      reason: banned ? "Banned IP" : device.blocked ? `${device.deviceType} devices are blocked` : !domainAllowed ? "Domain not allowed" : "Passed rules",
+      metadata: { deviceType: device.deviceType }
     }, ip, req.headers["user-agent"]);
 
     if (banned) return res.status(403).json({ allowed: false, reason: "IP address is banned" });
+    if (device.blocked) return res.status(403).json({ allowed: false, reason: `${device.deviceType} devices are blocked`, deviceType: device.deviceType });
     if (!domainAllowed) return res.status(403).json({ allowed: false, reason: "Domain is not allowed" });
 
-    res.json({ allowed: true, captchaRequired: Boolean(security.captcha), event });
+    res.json({ allowed: true, captchaRequired: Boolean(security.captcha), deviceType: device.deviceType, event });
   } catch (error) {
     res.status(400).json({ allowed: false, reason: error.message });
   }

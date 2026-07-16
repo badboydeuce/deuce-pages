@@ -2659,6 +2659,47 @@ code,
   gap: 8px;
 }
 
+.device-rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.device-rule {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+:root[data-theme="light"] .device-rule {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(19, 133, 78, 0.055);
+}
+
+.device-rule input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.device-rule span {
+  display: grid;
+  gap: 3px;
+}
+
+.device-rule strong {
+  font-size: 0.86rem;
+}
+
+.device-rule small {
+  color: var(--muted);
+  font: 700 0.7rem var(--mono);
+}
+
 .traffic-empty {
   margin: 0;
 }

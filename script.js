@@ -384,7 +384,7 @@ function normalizeUserPage(page) {
     generatedFile: page.generatedFile || {},
     resultSettings: page.resultSettings || {},
     hostingConfig: page.hostingConfig || {},
-    securityConfig: page.securityConfig || { domains: [], captcha: false, turnstile: { siteKey: "", secretKey: "" }, bannedIps: [], whitelistIps: [], trafficLog: [] }
+    securityConfig: page.securityConfig || { domains: [], captcha: false, turnstile: { siteKey: "", secretKey: "" }, bannedIps: [], whitelistIps: [], blockedDevices: [], trafficLog: [] }
   };
 }
 
@@ -2842,6 +2842,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const domains = security.domains || [];
   const bannedIps = security.bannedIps || [];
   const whitelistIps = security.whitelistIps || [];
+  const blockedDevices = security.blockedDevices || [];
   const trafficLog = tab === "traffic" ? await fetchPageTraffic(page) : security.trafficLog || [];
   const tabButtons = [
     routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
@@ -2899,6 +2900,31 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       <button type="button" data-save-security="${page.slug}">Save IP rules</button>
     </article>
   `;
+  const devicePanel = `
+    <article class="security-panel">
+      <small>device rules</small>
+      <h3>Block device types</h3>
+      <div class="device-rule-list">
+        ${[
+          ["mobile", "Mobile users", "Phones and small mobile browsers"],
+          ["desktop", "PC users", "Windows, macOS, Linux desktop browsers"],
+          ["tablet", "Tablet users", "iPad, Android tablets, Kindle/Silk"],
+          ["bot", "Bots and scanners", "Crawler, spider, headless, scanner user agents"],
+          ["other", "Other devices", "Unknown or unclassified user agents"]
+        ].map(([value, label, hint]) => `
+          <label class="device-rule">
+            <input type="checkbox" data-security-device="${value}" ${blockedDevices.includes(value) ? "checked" : ""}>
+            <span>
+              <strong>${label}</strong>
+              <small>${hint}</small>
+            </span>
+          </label>
+        `).join("")}
+      </div>
+      <p>Best protection is server-side User-Agent detection through your runtime API. It blocks common device classes, but advanced users can spoof their browser, so pair this with IP rules and captcha for stronger control.</p>
+      <button type="button" data-save-security="${page.slug}">Save device rules</button>
+    </article>
+  `;
   const trafficPanel = `
     <article class="security-panel security-panel-wide">
       <div class="builder-heading">
@@ -2922,9 +2948,9 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
     ? trafficPanel
     : tab === "domains"
       ? `${domainPanel}${captchaPanel}`
-      : tab === "ips"
-        ? `${ipPanel}${trafficPanel}`
-        : `${domainPanel}${captchaPanel}${ipPanel}${trafficPanel}`;
+    : tab === "ips"
+        ? `${ipPanel}${devicePanel}${trafficPanel}`
+        : `${domainPanel}${captchaPanel}${ipPanel}${devicePanel}${trafficPanel}`;
 
   preview.innerHTML = `
     <section class="app-view">
@@ -3272,6 +3298,7 @@ function saveSecurityConfig(page) {
   const turnstileSecretKeyField = preview.querySelector('[data-security-field="turnstileSecretKey"]');
   const bannedField = preview.querySelector('[data-security-field="bannedIps"]');
   const whitelistField = preview.querySelector('[data-security-field="whitelistIps"]');
+  const blockedDevices = [...preview.querySelectorAll("[data-security-device]:checked")].map((field) => field.dataset.securityDevice);
   const current = page.securityConfig || {};
   const currentTurnstile = current.turnstile || {};
 
@@ -3285,7 +3312,8 @@ function saveSecurityConfig(page) {
       secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || ""
     },
     bannedIps: bannedField ? bannedField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.bannedIps || [],
-    whitelistIps: whitelistField ? whitelistField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.whitelistIps || []
+    whitelistIps: whitelistField ? whitelistField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.whitelistIps || [],
+    blockedDevices: preview.querySelector("[data-security-device]") ? blockedDevices : current.blockedDevices || []
   };
   saveFlowState(page);
   renderSecurityCenter(page.slug);

@@ -19,6 +19,7 @@ import {
   turnstileSecretFor,
   verifyTurnstileToken
 } from "../services/turnstile.js";
+import { deviceBlocked } from "../services/deviceRules.js";
 
 export const runtimeRouter = Router();
 
@@ -75,7 +76,8 @@ function publicPageConfig(page) {
       captcha: Boolean(security.captcha),
       turnstile: publicTurnstileConfig(security),
       bannedIps: security.bannedIps || [],
-      whitelistIps: security.whitelistIps || []
+      whitelistIps: security.whitelistIps || [],
+      blockedDevices: security.blockedDevices || []
     },
     resultSettings: page.resultSettings || {},
     generatedFile: page.generatedFile || {},
@@ -109,14 +111,16 @@ async function runtimeContext(req, res) {
   return { page, clientHost, ip: requestIp(req) };
 }
 
-function securityDecision(page, ip) {
+function securityDecision(page, ip, userAgent = "") {
   const security = page.securityConfig || {};
   const bannedIps = security.bannedIps || [];
   const whitelistIps = security.whitelistIps || [];
   if (whitelistIps.includes(ip)) return { allowed: true, reason: "IP whitelisted" };
   if (bannedIps.includes(ip)) return { allowed: false, reason: "IP blocked by page security rules" };
+  const device = deviceBlocked(security, userAgent);
+  if (device.blocked) return { allowed: false, reason: `${device.deviceType} devices are blocked`, deviceType: device.deviceType };
   if (page.status && page.status !== "active") return { allowed: false, reason: "Page subscription is not active" };
-  return { allowed: true, reason: "Allowed" };
+  return { allowed: true, reason: "Allowed", deviceType: device.deviceType };
 }
 
 function packageContainsFile(pagePackage, file) {
@@ -273,14 +277,14 @@ runtimeRouter.get("/source/asset", async (req, res) => {
 runtimeRouter.post("/security/check", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip);
+  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
   res.json({ ...decision, ip: context.ip, host: context.clientHost });
 });
 
 runtimeRouter.post("/verify-human", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip);
+  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
   if (!decision.allowed) {
     res.status(403).json({ verified: false, reason: decision.reason });
     return;
@@ -306,7 +310,7 @@ runtimeRouter.post("/verify-human", async (req, res) => {
 runtimeRouter.post("/traffic", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip);
+  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
   const event = await saveTrafficEvent({
     ...req.body,
     userPageId: context.page.id,
@@ -336,7 +340,7 @@ runtimeRouter.post("/session-command", async (req, res) => {
 runtimeRouter.post("/results", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip);
+  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
   if (!decision.allowed) {
     res.status(403).json({ error: decision.reason });
     return;
