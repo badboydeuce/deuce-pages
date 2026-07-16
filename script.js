@@ -59,6 +59,7 @@ let walletData = { balance: 0, currency: "USD", transactions: [] };
 let walletDepositRequests = [];
 let adminDepositRequests = [];
 let walletFundOpen = false;
+let walletHistoryOpen = false;
 let walletFundingOptions = [];
 const selectedMarketPlans = {};
 const billingPeriodLabels = {
@@ -625,6 +626,7 @@ function clearAuthState() {
   walletDepositRequests = [];
   adminDepositRequests = [];
   walletFundOpen = false;
+  walletHistoryOpen = false;
   walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
   syncAdminVisibility();
 }
@@ -3373,9 +3375,39 @@ function updateWalletFundingAddress(select) {
   card.outerHTML = walletFundingAddressMarkup(walletFundingOptionByValue(select.value));
 }
 
+function walletHistoryDate(value) {
+  if (!value) return "wallet";
+  return `${formatTrafficDate(value)} ${formatTrafficTime(value)}`.trim();
+}
+
+function walletFundingRowMarkup(request) {
+  return `
+    <div class="wallet-history-row">
+      <span>${escapeHtml(request.cryptoType || "Crypto")} ${escapeHtml(request.network || "")}</span>
+      <b>${formatMoney(request.amount)}</b>
+      <small class="fund-status fund-status-${escapeHtml(request.status || "pending")}">${escapeHtml(request.status || "pending")}</small>
+      <code>${escapeHtml(request.txHash || "no hash")}</code>
+      <em>${escapeHtml(walletHistoryDate(request.createdAt))}</em>
+    </div>
+  `;
+}
+
+function walletTransactionRowMarkup(transaction) {
+  const amount = Number(transaction.amount || 0);
+  return `
+    <div class="wallet-history-row wallet-transaction-row">
+      <span>${escapeHtml(String(transaction.type || "wallet").replace(/_/g, " "))}</span>
+      <b class="${amount < 0 ? "is-negative" : "is-positive"}">${amount < 0 ? "-" : "+"}${formatMoney(Math.abs(amount))}</b>
+      <small>${escapeHtml(walletHistoryDate(transaction.createdAt))}</small>
+      <code>${escapeHtml(transaction.description || "Wallet activity")}</code>
+    </div>
+  `;
+}
+
 function renderWallet() {
   activeFlowSlug = null;
   const recentRequests = walletDepositRequests.slice(0, 5);
+  const recentTransactions = (walletData.transactions || []).slice(0, 6);
   const selectedFundingOption = walletFundingOptionByValue(walletFundingOptions[0]?.value);
   preview.innerHTML = `
     <section class="app-view wallet-view">
@@ -3389,6 +3421,7 @@ function renderWallet() {
           <strong>${formatMoney(walletData.balance)}</strong>
           <div class="wallet-actions">
             <button type="button" data-wallet-fund-toggle>${walletFundOpen ? "Close funding" : "Fund wallet"}</button>
+            <button type="button" data-wallet-history-toggle>${walletHistoryOpen ? "Hide history" : "History"}</button>
           </div>
           ${walletFundOpen ? `
             <div class="wallet-fund-panel">
@@ -3414,15 +3447,26 @@ function renderWallet() {
               </div>
             </div>
           ` : ""}
-          ${recentRequests.length ? `
-            <div class="wallet-pending-list">
-              ${recentRequests.map((request) => `
-                <div>
-                  <span>${escapeHtml(request.cryptoType)} ${escapeHtml(request.network)}</span>
-                  <b>${formatMoney(request.amount)}</b>
-                  <small class="fund-status fund-status-${escapeHtml(request.status)}">${escapeHtml(request.status)}</small>
+          ${walletHistoryOpen ? `
+            <div class="wallet-history-panel">
+              <section>
+                <div class="wallet-history-heading">
+                  <span>Funding requests</span>
+                  <small>${walletDepositRequests.length} total</small>
                 </div>
-              `).join("")}
+                <div class="wallet-history-list">
+                  ${recentRequests.length ? recentRequests.map(walletFundingRowMarkup).join("") : `<div class="wallet-history-empty">No funding requests yet</div>`}
+                </div>
+              </section>
+              <section>
+                <div class="wallet-history-heading">
+                  <span>Transactions</span>
+                  <small>${recentTransactions.length} recent</small>
+                </div>
+                <div class="wallet-history-list">
+                  ${recentTransactions.length ? recentTransactions.map(walletTransactionRowMarkup).join("") : `<div class="wallet-history-empty">No wallet transactions yet</div>`}
+                </div>
+              </section>
             </div>
           ` : ""}
         </article>
@@ -4261,6 +4305,13 @@ preview.addEventListener("click", async (event) => {
   const walletFundToggle = event.target.closest("[data-wallet-fund-toggle]");
   if (walletFundToggle) {
     walletFundOpen = !walletFundOpen;
+    renderWallet();
+    return;
+  }
+
+  const walletHistoryToggle = event.target.closest("[data-wallet-history-toggle]");
+  if (walletHistoryToggle) {
+    walletHistoryOpen = !walletHistoryOpen;
     renderWallet();
     return;
   }

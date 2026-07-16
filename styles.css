@@ -3288,6 +3288,98 @@ code,
   gap: 8px;
 }
 
+.wallet-history-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wallet-history-panel section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wallet-history-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.wallet-history-heading span,
+.wallet-history-heading small {
+  color: var(--muted);
+  font: 850 0.68rem var(--mono);
+  text-transform: uppercase;
+}
+
+.wallet-history-list {
+  display: grid;
+  gap: 7px;
+}
+
+.wallet-history-row,
+.wallet-history-empty {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.wallet-history-row code,
+.wallet-history-row em {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-history-row span,
+.wallet-history-row b,
+.wallet-history-empty {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-history-row span {
+  color: var(--soft);
+  font-weight: 800;
+}
+
+.wallet-history-row b {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.wallet-history-row b.is-negative {
+  color: #ffb9b9;
+}
+
+.wallet-history-row b.is-positive {
+  color: var(--accent);
+}
+
+.wallet-history-row em,
+.wallet-history-empty {
+  font: 750 0.68rem var(--mono);
+  font-style: normal;
+}
+
+.wallet-transaction-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .wallet-pending-list div,
 .fund-request-list article {
   display: grid;
@@ -3446,6 +3538,8 @@ code,
 }
 
 :root[data-theme="light"] .wallet-pending-list div,
+:root[data-theme="light"] .wallet-history-row,
+:root[data-theme="light"] .wallet-history-empty,
 :root[data-theme="light"] .wallet-address-card,
 :root[data-theme="light"] .fund-request-list article,
 :root[data-theme="light"] .fund-history-list div {
@@ -4917,6 +5011,8 @@ code {
   .wallet-actions,
   .wallet-fund-grid,
   .wallet-address-card,
+  .wallet-history-panel,
+  .wallet-history-row,
   .fund-request-list article,
   .fund-review-actions,
   .fund-history-list div,
