@@ -4060,7 +4060,7 @@ code {
 }
 
 .auth-view {
-  width: min(980px, 100%);
+  width: min(520px, 100%);
 }
 
 .app-loading-view {
@@ -4154,7 +4154,7 @@ code {
 
 .auth-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
+  grid-template-columns: 1fr;
   gap: 14px;
   align-items: stretch;
 }

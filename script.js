@@ -1576,8 +1576,7 @@ function renderLogin() {
     <section class="app-view auth-view">
       <div class="view-heading">
         <small>secure access</small>
-        <h2>Welcome back</h2>
-        <p>Sign in to manage subscribed pages, hosting setup, security rules, results, wallet activity, and generated index files.</p>
+        <h2>Login</h2>
       </div>
       ${viewNav([
         routeButton("#signup", "Create account")
@@ -1586,8 +1585,7 @@ function renderLogin() {
         <article class="auth-card package-form">
           <div>
             <small>account login</small>
-            <h3>Access your workspace</h3>
-            <p>Use the email tied to your page subscriptions. Sign-in now requires the API and database so account access matches the production system.</p>
+            <h3>Access</h3>
           </div>
           <label>
             <span>Email address</span>
@@ -1602,16 +1600,6 @@ function renderLogin() {
             <button type="button" data-route="#signup">New account</button>
           </div>
         </article>
-        <aside class="security-panel auth-side">
-          <small>session scope</small>
-          <h3>One control room</h3>
-          <p>After login, users can subscribe to pages, connect hosting, download index.html, monitor results, and tune each page without touching package source files.</p>
-          <div class="auth-checklist">
-            <span>Wallet powered subscriptions</span>
-            <span>Per-page domain and security controls</span>
-            <span>Generated files connected to your API</span>
-          </div>
-        </aside>
       </div>
     </section>
   `;
@@ -1627,7 +1615,6 @@ function renderSignup() {
       <div class="view-heading">
         <small>new workspace</small>
         <h2>Create account</h2>
-        <p>Open a user workspace for page subscriptions, hosting connection, results review, and subscription renewals from wallet funds.</p>
       </div>
       ${viewNav([
         routeButton("#login", "Back to login")
@@ -1636,8 +1623,7 @@ function renderSignup() {
         <article class="auth-card package-form">
           <div>
             <small>subscriber profile</small>
-            <h3>Start managing pages</h3>
-            <p>This creates the account that owns subscribed page instances and their domains, security settings, traffic logs, and result controls.</p>
+            <h3>Signup</h3>
           </div>
           <label>
             <span>Full name</span>
@@ -1660,15 +1646,6 @@ function renderSignup() {
             <button type="button" data-route="#login">Sign in</button>
           </div>
         </article>
-        <aside class="security-panel auth-side">
-          <small>what the user gets</small>
-          <h3>Managed page ownership</h3>
-          <p>Each account can hold multiple page subscriptions. Every page keeps its own generated file, hosting connection, rules, logs, and renewal schedule.</p>
-          <div class="auth-metrics">
-            <article><b>$25+</b><span>weekly page plans</span></article>
-            <article><b>24/7</b><span>traffic logging</span></article>
-          </div>
-        </aside>
       </div>
     </section>
   `;
