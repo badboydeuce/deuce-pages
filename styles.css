@@ -3628,6 +3628,68 @@ code,
   background: rgba(255, 255, 255, 0.78);
 }
 
+.page-log-list {
+  display: grid;
+  gap: 10px;
+}
+
+.page-log-entry {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 4px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+:root[data-theme="light"] .page-log-entry {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(19, 133, 78, 0.055);
+}
+
+.page-log-entry.blocked {
+  border-left-color: #ff7070;
+}
+
+.page-log-entry.allowed {
+  border-left-color: var(--accent);
+}
+
+.page-log-entry time {
+  color: var(--muted);
+  font: 900 0.72rem var(--mono);
+}
+
+.page-log-entry div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.page-log-entry strong {
+  color: var(--text);
+  font: 900 0.84rem var(--mono);
+  text-transform: uppercase;
+}
+
+.page-log-entry.blocked strong {
+  color: #ffb0b0;
+}
+
+.page-log-entry p {
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.88rem;
+}
+
+.page-log-entry small {
+  color: var(--muted);
+  font: 800 0.68rem var(--mono);
+  overflow-wrap: anywhere;
+}
+
 .wallet-actions {
   display: flex;
   flex-wrap: wrap;
@@ -5435,6 +5497,10 @@ code {
 
   .traffic-log em {
     grid-column: 2 / -1;
+  }
+
+  .page-log-entry {
+    grid-template-columns: 1fr;
   }
 
   .intel-strip {

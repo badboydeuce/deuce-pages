@@ -3305,6 +3305,93 @@ function trafficRowsMarkup(trafficLog, pageSlug, bannedIps = [], whitelistIps = 
   }).join("");
 }
 
+function pageLogStatus(event = {}) {
+  const reason = String(event.reason || "").toLowerCase();
+  if (event.result === "blocked" || reason.includes("blocked") || reason.includes("banned")) return "blocked";
+  if (reason.includes("verified") || reason.includes("passed") || reason.includes("allowed") || reason.includes("whitelisted")) return "allowed";
+  return event.result || "event";
+}
+
+function pageLogExplanation(event = {}) {
+  const reason = String(event.reason || "").trim();
+  const reasonLower = reason.toLowerCase();
+  const deviceType = detectTrafficDeviceType(event);
+  const deviceLabel = trafficDeviceLabels[deviceType] || "Other";
+  const proxyType = event.metadata?.proxyType;
+  const ip = event.ip || "unknown IP";
+
+  if (reasonLower.includes("banned ip") || reasonLower.includes("ip blocked")) {
+    return `Blocked because ${ip} is on this page's banned IP list.`;
+  }
+  if (reasonLower.includes("whitelisted")) {
+    return `Allowed because ${ip} is on this page's whitelist.`;
+  }
+  if (reasonLower.includes("devices are blocked")) {
+    return `Blocked because ${deviceLabel.toLowerCase()} traffic is disabled for this page.`;
+  }
+  if (reasonLower.includes("vpn") || reasonLower.includes("proxy")) {
+    return `Blocked because the request looked like VPN or proxy traffic${proxyType ? ` (${proxyType})` : ""}.`;
+  }
+  if (reasonLower.includes("tor")) {
+    return "Blocked because the request looked like Tor traffic.";
+  }
+  if (reasonLower.includes("hosting provider")) {
+    return "Blocked because the request came from a hosting or datacenter network.";
+  }
+  if (reasonLower.includes("subscription")) {
+    return "Blocked because the page subscription is not active.";
+  }
+  if (reasonLower.includes("turnstile") || reasonLower.includes("verified")) {
+    return reasonLower.includes("passed") || reasonLower.includes("verified")
+      ? "Human verification passed."
+      : "Human verification did not pass.";
+  }
+  if (event.result === "blocked") {
+    return reason && reason !== "ACCESS DENIED"
+      ? `Blocked by page security: ${reason}.`
+      : "Blocked by page security. Visitors only see ACCESS DENIED.";
+  }
+  if (event.event === "page_load") {
+    return "Page loaded and the visitor passed the current access checks.";
+  }
+  if (event.event === "security_check") {
+    return "Security check completed for this visitor.";
+  }
+  return reason && reason !== "ACCESS DENIED" ? reason : "Page activity recorded.";
+}
+
+function pageLogRowsMarkup(trafficLog) {
+  if (!trafficLog.length) {
+    return `
+      <article class="empty-state traffic-empty">
+        <h3>No page log yet</h3>
+        <p>Open the hosted page once. Access checks, denied visits, device blocks, IP decisions, and verification events will appear here.</p>
+      </article>
+    `;
+  }
+
+  return trafficLog.map((event) => {
+    const status = pageLogStatus(event);
+    const deviceType = detectTrafficDeviceType(event);
+    const detailLine = [
+      event.ip || "unknown ip",
+      trafficDeviceLabels[deviceType] || "Other",
+      event.hostname || "unknown host",
+      event.path || event.screen || event.event || "page event"
+    ].filter(Boolean).join(" / ");
+    return `
+      <article class="page-log-entry ${escapeHtml(status)}">
+        <time>${escapeHtml(formatTrafficTime(event.createdAt || event.time))}</time>
+        <div>
+          <strong>${escapeHtml(status === "blocked" ? "Access denied" : status === "allowed" ? "Allowed" : "Activity")}</strong>
+          <p>${escapeHtml(pageLogExplanation(event))}</p>
+          <small>${escapeHtml(detailLine)} / ${escapeHtml(formatTrafficDate(event.createdAt))}</small>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
 async function fetchPageTraffic(page) {
   try {
     const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/traffic?limit=100`);
@@ -3318,6 +3405,7 @@ async function fetchPageTraffic(page) {
 async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   activeFlowSlug = null;
   tab = tab === "domains" ? "security" : tab;
+  tab = tab === "page-log" ? "log" : tab;
   const page = getPageBySlug(pageSlug);
   if (!page) {
     renderMissingPage();
@@ -3329,12 +3417,13 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const whitelistIps = security.whitelistIps || [];
   const blockedDevices = security.blockedDevices || [];
   const vpnProxyRules = security.vpnProxyRules || {};
-  const trafficLog = tab === "traffic" ? await fetchPageTraffic(page) : security.trafficLog || [];
+  const trafficLog = ["traffic", "log"].includes(tab) ? await fetchPageTraffic(page) : security.trafficLog || [];
   const trafficStats = trafficInsights(trafficLog);
   const tabButtons = [
     routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
     routeButton(`#security-${page.slug}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:traffic`, "Page Log", tab === "traffic" ? "primary" : "")
+    routeButton(`#security-${page.slug}:traffic`, "Traffic", tab === "traffic" ? "primary" : ""),
+    routeButton(`#security-${page.slug}:log`, "Log", tab === "log" ? "primary" : "")
   ];
   const captchaPanel = `
     <article class="security-panel">
@@ -3421,8 +3510,8 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
     <article class="security-panel security-panel-wide">
       <div class="builder-heading">
         <div>
-          <small>page log</small>
-          <h3>Recent page events</h3>
+          <small>traffic</small>
+          <h3>Visits and block counts</h3>
         </div>
         <button type="button" data-route="#security-${page.slug}:traffic">Refresh</button>
       </div>
@@ -3442,8 +3531,30 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       </div>
     </article>
   `;
+  const pageLogPanel = `
+    <article class="security-panel security-panel-wide">
+      <div class="builder-heading">
+        <div>
+          <small>page log</small>
+          <h3>What happened on this page</h3>
+        </div>
+        <button type="button" data-route="#security-${page.slug}:log">Refresh</button>
+      </div>
+      <p>This log explains the real owner-side reason behind page activity. Visitors still only see ACCESS DENIED when a rule blocks them.</p>
+      <div class="metric-grid">
+        <div><span>Total events</span><b>${trafficStats.total}</b></div>
+        <div><span>Allowed</span><b>${trafficStats.allowed}</b></div>
+        <div><span>Denied</span><b>${trafficStats.blocked}</b></div>
+      </div>
+      <div class="page-log-list">
+        ${pageLogRowsMarkup(trafficLog)}
+      </div>
+    </article>
+  `;
   const panels = tab === "traffic"
     ? trafficPanel
+    : tab === "log"
+        ? pageLogPanel
     : tab === "ips"
         ? ipPanel
         : `${captchaPanel}${devicePanel}${proxyPanel}`;
@@ -4849,7 +4960,7 @@ preview.addEventListener("click", async (event) => {
   const pageLogButton = event.target.closest("[data-page-log]");
   if (pageLogButton) {
     setAppBusy(true, "Opening page log");
-    window.location.hash = `security-${pageLogButton.dataset.pageLog}:traffic`;
+    window.location.hash = `security-${pageLogButton.dataset.pageLog}:log`;
     return;
   }
 
