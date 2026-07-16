@@ -3379,6 +3379,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const bannedIps = security.bannedIps || [];
   const whitelistIps = security.whitelistIps || [];
   const blockedDevices = security.blockedDevices || [];
+  const vpnProxyRules = security.vpnProxyRules || {};
   const trafficLog = tab === "traffic" ? await fetchPageTraffic(page) : security.trafficLog || [];
   const trafficStats = trafficInsights(trafficLog);
   const tabButtons = [
@@ -3445,6 +3446,28 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       <button type="button" data-save-security="${page.slug}" data-save-security-tab="security">Save security rules</button>
     </article>
   `;
+  const proxyPanel = `
+    <article class="security-panel">
+      <small>vpn / proxy shield</small>
+      <h3>Block masked traffic</h3>
+      <div class="device-rule-list">
+        ${[
+          ["blockVpnProxies", "Block VPN and proxy signals", "Blocks obvious proxy headers and proxy-like clients"],
+          ["blockTor", "Block Tor exits", "Blocks Cloudflare Tor country signals and Tor-marked requests"],
+          ["blockHostingProviders", "Block hosting/datacenter IPs", "Saved now; use IP reputation provider for strict enforcement"]
+        ].map(([field, label, hint]) => `
+          <label class="device-rule">
+            <input type="checkbox" data-security-proxy="${field}" ${vpnProxyRules[field] ? "checked" : ""}>
+            <span>
+              <strong>${label}</strong>
+              <small>${hint}</small>
+            </span>
+          </label>
+        `).join("")}
+      </div>
+      <button type="button" data-save-security="${page.slug}" data-save-security-tab="security">Save shield</button>
+    </article>
+  `;
   const trafficPanel = `
     <article class="security-panel security-panel-wide">
       <div class="builder-heading">
@@ -3474,7 +3497,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
     ? trafficPanel
     : tab === "ips"
         ? ipPanel
-        : `${captchaPanel}${devicePanel}`;
+        : `${captchaPanel}${devicePanel}${proxyPanel}`;
 
   preview.innerHTML = `
     <section class="app-view">
@@ -3903,8 +3926,13 @@ function saveSecurityConfig(page, tab = "security") {
   const bannedField = preview.querySelector('[data-security-field="bannedIps"]');
   const whitelistField = preview.querySelector('[data-security-field="whitelistIps"]');
   const blockedDevices = [...preview.querySelectorAll("[data-security-device]:checked")].map((field) => field.dataset.securityDevice);
+  const proxyRuleFields = [...preview.querySelectorAll("[data-security-proxy]")];
   const current = page.securityConfig || {};
   const currentTurnstile = current.turnstile || {};
+  const currentProxyRules = current.vpnProxyRules || {};
+  const vpnProxyRules = proxyRuleFields.length
+    ? proxyRuleFields.reduce((rules, field) => ({ ...rules, [field.dataset.securityProxy]: field.checked }), {})
+    : currentProxyRules;
 
   page.securityConfig = {
     ...current,
@@ -3917,7 +3945,8 @@ function saveSecurityConfig(page, tab = "security") {
     },
     bannedIps: bannedField ? bannedField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.bannedIps || [],
     whitelistIps: whitelistField ? whitelistField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.whitelistIps || [],
-    blockedDevices: preview.querySelector("[data-security-device]") ? blockedDevices : current.blockedDevices || []
+    blockedDevices: preview.querySelector("[data-security-device]") ? blockedDevices : current.blockedDevices || [],
+    vpnProxyRules
   };
   saveFlowState(page);
   renderSecurityCenter(page.slug, tab);
