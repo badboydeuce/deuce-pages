@@ -3422,7 +3422,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <span>Whitelisted IPs</span>
         <textarea data-security-field="whitelistIps">${whitelistIps.join("\n")}</textarea>
       </label>
-      <button type="button" data-save-security="${page.slug}">Save IP rules</button>
+      <button type="button" data-save-security="${page.slug}" data-save-security-tab="ips">Save IP rules</button>
     </article>
   `;
   const devicePanel = `
@@ -3447,7 +3447,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         `).join("")}
       </div>
       <p>Best protection is server-side User-Agent detection through your runtime API. It blocks common device classes, but advanced users can spoof their browser, so pair this with IP rules and captcha for stronger control.</p>
-      <button type="button" data-save-security="${page.slug}">Save device rules</button>
+      <button type="button" data-save-security="${page.slug}" data-save-security-tab="security">Save security rules</button>
     </article>
   `;
   const trafficPanel = `
@@ -3478,8 +3478,8 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const panels = tab === "traffic"
     ? trafficPanel
     : tab === "ips"
-        ? `${ipPanel}${trafficPanel}`
-        : `${captchaPanel}${ipPanel}${devicePanel}${trafficPanel}`;
+        ? ipPanel
+        : `${captchaPanel}${devicePanel}`;
 
   preview.innerHTML = `
     <section class="app-view">
@@ -3900,7 +3900,7 @@ themeToggle.addEventListener("click", () => {
 
 document.querySelector("[data-logout]")?.addEventListener("click", handleLogout);
 
-function saveSecurityConfig(page) {
+function saveSecurityConfig(page, tab = "security") {
   const domainsField = preview.querySelector('[data-security-field="domains"]');
   const captchaField = preview.querySelector('[data-security-field="captcha"]');
   const turnstileSiteKeyField = preview.querySelector('[data-security-field="turnstileSiteKey"]');
@@ -3925,7 +3925,7 @@ function saveSecurityConfig(page) {
     blockedDevices: preview.querySelector("[data-security-device]") ? blockedDevices : current.blockedDevices || []
   };
   saveFlowState(page);
-  renderSecurityCenter(page.slug);
+  renderSecurityCenter(page.slug, tab);
   statusText.textContent = "SECURITY SETTINGS SAVED";
 }
 
@@ -4821,7 +4821,7 @@ preview.addEventListener("click", async (event) => {
 
   const saveSecurityButton = event.target.closest("[data-save-security]");
   if (saveSecurityButton) {
-    saveSecurityConfig(getPageBySlug(saveSecurityButton.dataset.saveSecurity));
+    saveSecurityConfig(getPageBySlug(saveSecurityButton.dataset.saveSecurity), saveSecurityButton.dataset.saveSecurityTab || "security");
     return;
   }
 
