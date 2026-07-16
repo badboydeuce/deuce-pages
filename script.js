@@ -1780,7 +1780,7 @@ function renderAdminImportWizard(sourceType = "local") {
             <button class="${isGithub ? "active" : ""}" type="button" data-route="#admin-import-github">GitHub repo</button>
           </div>
           <label><span>${isGithub ? "Repository URL" : "Bundle file"}</span><input type="text" data-github-field="repoUrl" value="${sourceHint}" placeholder="https://github.com/owner/repo"></label>
-          <label><span>${isGithub ? "Branch" : "Upload type"}</span><input type="text" data-github-field="branch" value="${isGithub ? "main" : "zip or loose files"}"></label>
+          <label><span>${isGithub ? "Branch" : "Upload type"}</span><input type="text" data-github-field="branch" value="${isGithub ? "" : "zip or loose files"}" placeholder="${isGithub ? "Leave blank to use repo default branch" : ""}"></label>
           ${isGithub ? `
             <label><span>Folder path</span><input type="text" data-github-field="folder" value="" placeholder="pages/page-a or leave blank"></label>
             <label><span>Package name</span><input type="text" data-github-field="packageName" value="MS Live"></label>
@@ -3264,7 +3264,7 @@ function collectGithubImportFields() {
   const field = (name) => preview.querySelector(`[data-github-field="${name}"]`)?.value.trim() || "";
   return {
     repoUrl: field("repoUrl"),
-    branch: field("branch") || "main",
+    branch: field("branch"),
     folder: field("folder"),
     packageName: field("packageName") || "GitHub Imported Page",
     slug: field("slug") || "github-imported-page"

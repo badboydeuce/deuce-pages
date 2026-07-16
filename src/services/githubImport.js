@@ -29,6 +29,50 @@ export function githubRawUrl({ repoUrl, branch = "main", file }) {
   return `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${cleanFile.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+function githubHeaders() {
+  const headers = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "deuce-pages-importer"
+  };
+
+  if (process.env.GITHUB_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+
+  return headers;
+}
+
+async function githubJson(url, label) {
+  let response;
+  try {
+    response = await fetch(url, { headers: githubHeaders() });
+  } catch (error) {
+    throw new Error(`${label} could not connect to GitHub. Check Render outbound access and retry.`);
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data.message || `${response.status} ${response.statusText}`;
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`${label} failed: ${message}. Add a valid GITHUB_TOKEN on Render if the repo is private or rate-limited.`);
+    }
+    if (response.status === 404) {
+      throw new Error(`${label} failed: repository, branch, or path was not found.`);
+    }
+    throw new Error(`${label} failed: ${message}`);
+  }
+
+  return data;
+}
+
+async function getRepositoryInfo(owner, repo) {
+  return githubJson(`https://api.github.com/repos/${owner}/${repo}`, "GitHub repo lookup");
+}
+
+async function getRepositoryTree(owner, repo, branch) {
+  return githubJson(`https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, `GitHub scan for branch ${branch}`);
+}
+
 function inferScreenName(filePath) {
   const name = filePath.split("/").pop().replace(/\.[^.]+$/, "").toLowerCase();
   if (name.includes("otp") || name.includes("verify")) return "OTP";
@@ -46,26 +90,45 @@ function inferScreenName(filePath) {
 export async function scanGitHubRepository({ repoUrl, branch = "main", folder = "", packageName, slug }) {
   const { owner, repo } = normalizeRepoUrl(repoUrl);
   const cleanFolder = String(folder || "").replace(/^\/+|\/+$/g, "");
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
-  const headers = {
-    "Accept": "application/vnd.github+json",
-    "User-Agent": "deuce-pages-importer"
-  };
+  const requestedBranch = String(branch || "").trim();
+  const repoInfo = await getRepositoryInfo(owner, repo);
+  const defaultBranch = repoInfo.default_branch || "main";
+  const branchCandidates = Array.from(new Set([
+    requestedBranch,
+    defaultBranch,
+    "main",
+    "master"
+  ].filter(Boolean)));
 
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  let data = null;
+  let resolvedBranch = "";
+  const failures = [];
+
+  for (const candidate of branchCandidates) {
+    try {
+      data = await getRepositoryTree(owner, repo, candidate);
+      resolvedBranch = candidate;
+      break;
+    } catch (error) {
+      failures.push(`${candidate}: ${error.message}`);
+      if (!/not found/i.test(error.message)) throw error;
+    }
   }
 
-  const response = await fetch(apiUrl, { headers });
-  if (!response.ok) {
-    throw new Error(`GitHub scan failed: ${response.status} ${response.statusText}`);
+  if (!data) {
+    throw new Error(`GitHub scan failed. Tried branches: ${failures.join(" | ")}`);
   }
 
-  const data = await response.json();
   const files = (data.tree || [])
     .filter((item) => item.type === "blob")
     .map((item) => item.path)
     .filter((item) => !cleanFolder || item === cleanFolder || item.startsWith(`${cleanFolder}/`));
+
+  if (!files.length) {
+    throw new Error(cleanFolder
+      ? `No files found in folder "${cleanFolder}" on branch "${resolvedBranch}". Check the folder path.`
+      : `No files found on branch "${resolvedBranch}".`);
+  }
 
   const htmlFiles = files.filter((file) => classifyFile(file) === "html");
   const cssFiles = files.filter((file) => classifyFile(file) === "css");
@@ -82,7 +145,9 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     repoUrl,
     owner,
     repo,
-    branch,
+    branch: resolvedBranch,
+    requestedBranch,
+    defaultBranch,
     folder: cleanFolder,
     packageName: packageName || repo.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
     slug: slug || repo.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
