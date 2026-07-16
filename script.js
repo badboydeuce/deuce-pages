@@ -1295,41 +1295,157 @@ function setActiveNav(hash) {
 function renderDashboard() {
   activeFlowSlug = null;
   const auth = getAuthState();
-  const systemAction = isAdmin()
-    ? '<button type="button" data-route="#admin">Open admin</button>'
-    : '<button type="button" data-route="#pages">Browse pages</button>';
+  const isSignedIn = Boolean(auth.user);
+  const livePages = ownedPages.filter((page) => page.hostingConfig?.verified || page.hostingConfig?.liveStatus === "Live");
+  const setupNeeded = ownedPages.filter((page) => pageLaunchReadiness(page).percent < 100);
+  const resultTotal = ownedPages.reduce((sum, page) => sum + (page.results?.length || 0), 0);
+  const trafficTotal = ownedPages.reduce((sum, page) => sum + pageTrafficCount(page), 0);
+  const activeRenewals = ownedPages.filter((page) => page.subscription?.autoRenew);
+  const bannedTotal = ownedPages.reduce((sum, page) => sum + (page.securityConfig?.bannedIps?.length || 0), 0);
+  const whitelistTotal = ownedPages.reduce((sum, page) => sum + (page.securityConfig?.whitelistIps?.length || 0), 0);
+  const captchaTotal = ownedPages.filter((page) => page.securityConfig?.captcha).length;
+  const securityTotal = bannedTotal + whitelistTotal + captchaTotal;
+  const nextPage = setupNeeded[0] || ownedPages[0] || null;
+  const walletStatus = walletData.balance >= 25 ? "Ready for weekly plans" : "Top up before paid subscriptions";
+  const recentPages = ownedPages.slice(0, 3);
+  const recentTransactions = (walletData.transactions || []).slice(0, 3);
+  const recentActivity = [
+    ...recentPages.map((page) => ({
+      title: page.name,
+      meta: page.hostingConfig?.liveStatus || page.status || "active",
+      value: `${pageLaunchReadiness(page).percent}% ready`,
+      route: `#config-${page.slug}`
+    })),
+    ...recentTransactions.map((transaction) => ({
+      title: transaction.description || transaction.type || "Wallet activity",
+      meta: transaction.createdAt || transaction.date || "wallet",
+      value: formatMoney(transaction.amount),
+      route: "#wallet"
+    }))
+  ].slice(0, 5);
   preview.innerHTML = `
-    <section class="app-view">
-      <div class="view-heading">
-        <small>dashboard</small>
-        <h2>Workspace overview</h2>
-        <p>Track active page subscriptions, wallet activity, traffic, and security events from one clear operating view.</p>
+    <section class="app-view dashboard-view">
+      <div class="dashboard-hero">
+        <div class="view-heading">
+          <small>dashboard</small>
+          <h2>${isSignedIn ? "Command center" : "Start your page workspace"}</h2>
+          <p>${isSignedIn ? "Watch subscriptions, launch status, wallet balance, results, and security signals from one compact control view." : "Login or create an account to subscribe to pages, connect your domain, download index.html, and monitor live results."}</p>
+        </div>
+        <div class="dashboard-pulse-card">
+          <span>${apiLoadError ? "API attention" : "System online"}</span>
+          <strong>${isSignedIn ? escapeHtml(auth.user.email) : "Guest mode"}</strong>
+          <small>${apiLoadError ? escapeHtml(apiLoadError) : `${ownedPages.length} owned / ${marketPages.length} available`}</small>
+        </div>
       </div>
-      ${viewNav(auth.user ? [
+      ${viewNav(isSignedIn ? [
         routeButton("#pages", "Browse pages"),
         routeButton("#my-pages", "My Pages"),
-        routeButton("#wallet", "Wallet")
+        routeButton("#wallet", "Wallet"),
+        ...(isAdmin() ? [routeButton("#admin", "Admin")] : [])
       ] : [
         routeButton("#login", "Login"),
         routeButton("#signup", "Create account")
       ])}
-      <div class="summary-grid">
-        <article><small>Owned pages</small><b>${String(ownedPages.length).padStart(2, "0")}</b><span>From database</span></article>
-        <article><small>Available pages</small><b>${String(marketPages.length).padStart(2, "0")}</b><span>Published packages</span></article>
-        <article><small>Monthly traffic</small><b>0</b><span>Awaiting live events</span></article>
-        <article><small>Security events</small><b>0</b><span>Awaiting live rules</span></article>
+
+      <div class="summary-grid dashboard-kpis">
+        <article><small>Owned pages</small><b>${String(ownedPages.length).padStart(2, "0")}</b><span>${livePages.length} live now</span></article>
+        <article><small>Wallet</small><b>${formatMoney(walletData.balance)}</b><span>${escapeHtml(walletStatus)}</span></article>
+        <article><small>Results</small><b>${String(resultTotal).padStart(2, "0")}</b><span>${trafficTotal} tracked visits</span></article>
+        <article><small>Security</small><b>${String(securityTotal).padStart(2, "0")}</b><span>${bannedTotal} banned / ${whitelistTotal} trusted</span></article>
       </div>
-      <div class="owned-page-card">
-        <div>
-          <small>live system</small>
+
+      <div class="dashboard-grid">
+        <article class="dashboard-panel dashboard-primary-panel">
+          <div>
+            <small>next best action</small>
+            <h3>${nextPage ? `${escapeHtml(nextPage.name)} needs ${pageLaunchReadiness(nextPage).percent}% launch review` : marketPages.length ? "Subscribe to your first page" : "Publish a page package"}</h3>
+            <p>${nextPage ? "Finish config, hosting, security, then download the live index.html from Go Live." : marketPages.length ? "Pick a marketplace page, choose a billing period, and activate it from wallet funds." : "Import a page package so users can subscribe from the marketplace."}</p>
+          </div>
+          <div class="dashboard-actions">
+            ${nextPage ? `
+              <button type="button" class="primary" data-route="#go-live-${escapeHtml(nextPage.slug)}">Go Live</button>
+              <button type="button" data-route="#config-${escapeHtml(nextPage.slug)}">Config</button>
+            ` : `
+              <button type="button" class="primary" data-route="${marketPages.length ? "#pages" : isAdmin() ? "#admin" : "#wallet"}">${marketPages.length ? "Browse pages" : isAdmin() ? "Open admin" : "Open wallet"}</button>
+            `}
+          </div>
+        </article>
+
+        <article class="dashboard-panel">
+          <small>launch health</small>
+          <div class="dashboard-health-list">
+            <div><span>Live</span><strong>${livePages.length}</strong></div>
+            <div><span>Setup</span><strong>${setupNeeded.length}</strong></div>
+            <div><span>Auto renew</span><strong>${activeRenewals.length}</strong></div>
+            <div><span>Captcha</span><strong>${captchaTotal}</strong></div>
+          </div>
+        </article>
+
+        <article class="dashboard-panel">
+          <small>quick actions</small>
+          <div class="dashboard-action-grid">
+            <button type="button" data-route="#pages">Subscribe</button>
+            <button type="button" data-route="#my-pages">Manage</button>
+            <button type="button" data-route="#wallet">Wallet</button>
+            ${isAdmin() ? '<button type="button" data-route="#admin">Admin</button>' : '<button type="button" data-route="#my-pages">Results</button>'}
+          </div>
+        </article>
+      </div>
+
+      <div class="dashboard-grid secondary">
+        <article class="dashboard-panel">
+          <small>recent activity</small>
+          <div class="dashboard-activity">
+            ${recentActivity.length ? recentActivity.map((item) => `
+              <button type="button" data-route="${escapeHtml(item.route)}">
+                <span>
+                  <strong>${escapeHtml(item.title)}</strong>
+                  <small>${escapeHtml(item.meta)}</small>
+                </span>
+                <b>${escapeHtml(item.value)}</b>
+              </button>
+            `).join("") : `
+              <div class="dashboard-empty">
+                <strong>No activity yet</strong>
+                <span>Subscribe to a page or publish a package to start filling this feed.</span>
+              </div>
+            `}
+          </div>
+        </article>
+
+        <article class="dashboard-panel">
+          <small>workspace status</small>
           <h3>${apiLoadError ? "API connection needs attention" : "Database-backed workspace"}</h3>
-          <p>${apiLoadError ? `Connect the backend and database to load live records. ${escapeHtml(apiLoadError)}` : "The dashboard is now reading packages and user pages from the API instead of frontend seed data."}</p>
-        </div>
-        ${systemAction}
+          <p>${apiLoadError ? `Connect the backend and database to load live records. ${escapeHtml(apiLoadError)}` : "Packages, user pages, wallet balance, config, and results are loaded from the API."}</p>
+          <div class="feature-row">
+            <span>${marketPages.length} marketplace pages</span>
+            <span>${ownedPages.length} subscriptions</span>
+            <span>${formatMoney(walletData.balance)} wallet</span>
+          </div>
+        </article>
       </div>
+
+      ${ownedPages.length ? `
+        <div class="dashboard-page-strip">
+          ${ownedPages.slice(0, 4).map((page) => {
+            const readiness = pageLaunchReadiness(page);
+            return `
+              <article>
+                <small>${escapeHtml(page.hostingConfig?.liveStatus || page.status || "active")}</small>
+                <h3>${escapeHtml(page.name)}</h3>
+                <p>${escapeHtml(page.hostingConfig?.domain || page.domain || "No domain connected")}</p>
+                <div>
+                  <span>${readiness.percent}% ready</span>
+                  <button type="button" data-route="#config-${escapeHtml(page.slug)}">Open</button>
+                </div>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      ` : ""}
     </section>
   `;
-  statusText.textContent = "DASHBOARD OVERVIEW ONLINE";
+  statusText.textContent = isSignedIn ? "COMMAND CENTER ONLINE" : "LOGIN REQUIRED FOR LIVE WORKSPACE";
   topbarTitle.textContent = "Dashboard";
 }
 
