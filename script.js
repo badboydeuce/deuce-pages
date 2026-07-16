@@ -377,6 +377,7 @@ function marketSubscribeLabel(pagePackage, period) {
 }
 
 function findPackageThumbnail(pagePackage) {
+  if (pagePackage.packageManifest?.thumbnailPath) return pagePackage.packageManifest.thumbnailPath;
   const files = [
     ...(pagePackage.packageManifest?.files || []).map((file) => file.path || file),
     ...(pagePackage.assets || [])
@@ -430,6 +431,7 @@ function normalizePackage(pagePackage) {
     tokens: pagePackage.designTokens || {},
     inlineCssBlocks: pagePackage.packageManifest?.inlineCssBlocks || 0,
     previewFile,
+    thumbnailDataUrl: pagePackage.packageManifest?.thumbnailDataUrl || "",
     thumbnailPath: findPackageThumbnail(pagePackage),
     previewReady: Boolean(pagePackage.packageManifest?.github && previewFile && pagePackage.previewToken)
   };
@@ -482,6 +484,58 @@ async function loadResultsControlData(page) {
     statusText.textContent = `RESULTS LOAD WARNING: ${error.message}`.toUpperCase();
   }
   return page;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Thumbnail read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadPackageThumbnail(input) {
+  const page = getAdminPackage(input.dataset.packageThumbnail);
+  const file = input.files?.[0];
+  if (!page || !file) return;
+
+  const allowedTypes = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+  if (!allowedTypes.includes(file.type)) {
+    statusText.textContent = "UPLOAD PNG, JPG, WEBP, OR SVG";
+    input.value = "";
+    return;
+  }
+
+  if (file.size > 500 * 1024) {
+    statusText.textContent = "THUMBNAIL MUST BE UNDER 500KB";
+    input.value = "";
+    return;
+  }
+
+  setAppBusy(true, "Uploading thumbnail");
+  try {
+    const thumbnailDataUrl = await readFileAsDataUrl(file);
+    const packageManifest = {
+      ...(page.packageManifest || {}),
+      thumbnailDataUrl,
+      thumbnailFileName: file.name,
+      thumbnailUpdatedAt: new Date().toISOString()
+    };
+    const result = await requestApi(`/api/packages/${page.id || page.slug}`, {
+      method: "PATCH",
+      body: JSON.stringify({ packageManifest })
+    });
+    const updated = normalizePackage(result.package);
+    adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
+    marketPages = marketPages.map((item) => item.id === updated.id ? updated : item);
+    renderAdminPackageEditor(updated.slug);
+    statusText.textContent = `${updated.name.toUpperCase()} THUMBNAIL UPDATED`;
+  } catch (error) {
+    statusText.textContent = `THUMBNAIL UPLOAD FAILED: ${error.message}`.toUpperCase();
+  } finally {
+    clearAppBusySoon();
+  }
 }
 
 async function loadAppData() {
@@ -2279,6 +2333,9 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
     return;
   }
 
+  const thumbnailUrl = packageThumbnailUrl(page);
+  const thumbnailLabel = page.thumbnailDataUrl ? "Manual thumbnail active" : page.thumbnailPath ? page.thumbnailPath : "No thumbnail override";
+
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
@@ -2317,6 +2374,19 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
           <label><span>Source type</span><input type="text" value="${page.sourceType}"></label>
           <label><span>Source path</span><input type="text" value="${page.repo}"></label>
           <label><span>Status</span><select><option>${page.status}</option><option>Draft</option><option>Review</option><option>Published</option></select></label>
+        </article>
+
+        <article class="security-panel package-form thumbnail-uploader">
+          <small>thumbnail</small>
+          <h3>Marketplace image</h3>
+          <div class="thumbnail-preview">
+            ${thumbnailUrl ? `<img src="${escapeHtml(thumbnailUrl)}" alt="${escapeHtml(page.name)} thumbnail">` : `<span>${escapeHtml(pageInitials(page.name))}</span>`}
+          </div>
+          <label>
+            <span>Upload thumbnail</span>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" data-package-thumbnail="${escapeHtml(page.slug)}">
+          </label>
+          <code>${escapeHtml(thumbnailLabel)}</code>
         </article>
 
         <article class="security-panel package-form">
@@ -3671,6 +3741,10 @@ function packageAssetUrl(pagePackage, filePath) {
   return `${apiBase()}/preview/${encodeURIComponent(pagePackage.previewToken)}/asset?${params.toString()}`;
 }
 
+function packageThumbnailUrl(pagePackage) {
+  return pagePackage.thumbnailDataUrl || pagePackage.packageManifest?.thumbnailDataUrl || packageAssetUrl(pagePackage, pagePackage.thumbnailPath);
+}
+
 function pageInitials(name) {
   const initials = String(name || "PG")
     .trim()
@@ -3683,7 +3757,7 @@ function pageInitials(name) {
 }
 
 function pageIconMarkup(pagePackage) {
-  const thumbnailUrl = packageAssetUrl(pagePackage, pagePackage.thumbnailPath);
+  const thumbnailUrl = packageThumbnailUrl(pagePackage);
   const fallback = `<span class="market-icon-fallback">${escapeHtml(pageInitials(pagePackage.name))}</span>`;
   if (!thumbnailUrl) return `<span class="market-icon">${fallback}</span>`;
   return `
@@ -3955,6 +4029,12 @@ window.addEventListener("hashchange", () => {
 });
 
 preview.addEventListener("change", (event) => {
+  const packageThumbnailInput = event.target.closest("[data-package-thumbnail]");
+  if (packageThumbnailInput) {
+    uploadPackageThumbnail(packageThumbnailInput);
+    return;
+  }
+
   const marketPlanSelect = event.target.closest("[data-market-plan]");
   if (marketPlanSelect) {
     updateMarketPlanCard(marketPlanSelect);

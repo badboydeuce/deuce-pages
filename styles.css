@@ -2575,11 +2575,57 @@ code,
   resize: vertical;
 }
 
+.thumbnail-uploader {
+  align-content: start;
+}
+
+.thumbnail-preview {
+  display: grid;
+  width: min(160px, 100%);
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(124, 255, 178, 0.08), transparent 42%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.thumbnail-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.thumbnail-preview span {
+  color: var(--accent);
+  font: 900 1.1rem var(--mono);
+}
+
+.thumbnail-uploader code {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  overflow-wrap: anywhere;
+}
+
 :root[data-theme="light"] .package-form input,
 :root[data-theme="light"] .package-form select,
 :root[data-theme="light"] .package-form textarea {
   border-color: rgba(16, 32, 24, 0.12);
   background: rgba(255, 255, 255, 0.82);
+}
+
+:root[data-theme="light"] .thumbnail-preview,
+:root[data-theme="light"] .thumbnail-uploader code {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(19, 133, 78, 0.055);
 }
 
 .file-map-list {
