@@ -14,6 +14,7 @@ function emptyDb() {
     packages: [],
     userPages: [],
     walletTransactions: [],
+    walletDepositRequests: [],
     pageResults: [],
     trafficEvents: []
   };

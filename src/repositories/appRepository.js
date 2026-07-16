@@ -100,6 +100,26 @@ function toTransaction(row) {
   };
 }
 
+function toDepositRequest(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    userEmail: row.user_email || row.email || "",
+    userName: row.user_name || row.name || "",
+    amount: Number(row.amount || 0),
+    cryptoType: row.crypto_type,
+    network: row.network,
+    txHash: row.tx_hash,
+    status: row.status,
+    adminNote: row.admin_note || "",
+    reviewedBy: row.reviewed_by || "",
+    reviewedAt: row.reviewed_at || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function toResult(row) {
   if (!row) return null;
   return {
@@ -740,6 +760,177 @@ export async function adjustWallet({ userId, amount, type = "deposit", descripti
       [createId("txn"), user.id, type, value, description]
     );
     return { balance: Number(user.wallet_balance), transaction: toTransaction(txnResult.rows[0]) };
+  });
+}
+
+function buildDepositRequest(userId, amount, cryptoType, network, txHash) {
+  const now = new Date().toISOString();
+  return {
+    id: createId("dep"),
+    userId,
+    amount,
+    cryptoType,
+    network,
+    txHash,
+    status: "pending",
+    adminNote: "",
+    reviewedBy: "",
+    reviewedAt: null,
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function validateDepositPayload({ userId, amount, cryptoType, network, txHash }) {
+  const value = Number(amount || 0);
+  if (!userId) throw new Error("Authentication required");
+  if (!Number.isFinite(value) || value <= 0) throw new Error("Funding amount is required");
+  if (!cryptoType) throw new Error("Crypto type is required");
+  if (!network) throw new Error("Crypto network is required");
+  if (!txHash || String(txHash).trim().length < 8) throw new Error("Transaction hash is required");
+  return {
+    amount: value,
+    cryptoType: String(cryptoType).trim(),
+    network: String(network).trim(),
+    txHash: String(txHash).trim()
+  };
+}
+
+function jsonDepositToApi(request, user = null) {
+  return {
+    ...request,
+    userEmail: user?.email || request.userEmail || "",
+    userName: user?.name || request.userName || ""
+  };
+}
+
+export async function createWalletDepositRequest(data) {
+  const clean = validateDepositPayload(data);
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      db.walletDepositRequests ||= [];
+      const user = db.users.find((item) => item.id === data.userId);
+      if (!user) return { error: "User not found", status: 404 };
+      const request = buildDepositRequest(user.id, clean.amount, clean.cryptoType, clean.network, clean.txHash);
+      db.walletDepositRequests.push(request);
+      return { request: jsonDepositToApi(request, user) };
+    });
+  }
+
+  const result = await query(
+    `INSERT INTO wallet_deposit_requests (id, user_id, amount, crypto_type, network, tx_hash)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [createId("dep"), data.userId, clean.amount, clean.cryptoType, clean.network, clean.txHash]
+  );
+  return { request: toDepositRequest(result.rows[0]) };
+}
+
+export async function listWalletDepositRequests({ userId = null, status = null } = {}) {
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const requests = (db.walletDepositRequests || [])
+      .filter((request) => (!userId || request.userId === userId) && (!status || request.status === status))
+      .map((request) => jsonDepositToApi(request, db.users.find((user) => user.id === request.userId)))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return requests;
+  }
+
+  const clauses = [];
+  const values = [];
+  if (userId) {
+    values.push(userId);
+    clauses.push(`wdr.user_id = $${values.length}`);
+  }
+  if (status) {
+    values.push(status);
+    clauses.push(`wdr.status = $${values.length}`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const result = await query(
+    `SELECT wdr.*, users.email AS user_email, users.name AS user_name
+     FROM wallet_deposit_requests wdr
+     JOIN users ON users.id = wdr.user_id
+     ${where}
+     ORDER BY wdr.created_at DESC`,
+    values
+  );
+  return result.rows.map(toDepositRequest);
+}
+
+export async function approveWalletDepositRequest({ requestId, adminUserId, amount = null, adminNote = "" }) {
+  if (!requestId) throw new Error("Deposit request is required");
+  const overrideAmount = amount === null || amount === undefined || amount === "" ? null : Number(amount);
+  if (overrideAmount !== null && (!Number.isFinite(overrideAmount) || overrideAmount <= 0)) {
+    throw new Error("Credit amount must be greater than zero");
+  }
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      db.walletDepositRequests ||= [];
+      const request = db.walletDepositRequests.find((item) => item.id === requestId);
+      if (!request) return { error: "Deposit request not found", status: 404 };
+      if (request.status !== "pending") return { error: "Deposit request already reviewed", status: 400 };
+      const user = db.users.find((item) => item.id === request.userId);
+      if (!user) return { error: "User not found", status: 404 };
+      const creditAmount = overrideAmount || Number(request.amount || 0);
+      user.walletBalance = Number(user.walletBalance || 0) + creditAmount;
+      user.updatedAt = new Date().toISOString();
+      request.status = "approved";
+      request.adminNote = adminNote || "";
+      request.reviewedBy = adminUserId;
+      request.reviewedAt = new Date().toISOString();
+      request.updatedAt = request.reviewedAt;
+      const transaction = buildTransaction(
+        user.id,
+        "crypto_deposit",
+        creditAmount,
+        `Crypto deposit approved (${request.cryptoType} ${request.network})`,
+        { depositRequestId: request.id, txHash: request.txHash, cryptoType: request.cryptoType, network: request.network }
+      );
+      db.walletTransactions.push(transaction);
+      return { request: jsonDepositToApi(request, user), balance: user.walletBalance, transaction };
+    });
+  }
+
+  return withTransaction(async (client) => {
+    const requestResult = await client.query("SELECT * FROM wallet_deposit_requests WHERE id = $1 FOR UPDATE", [requestId]);
+    const request = requestResult.rows[0];
+    if (!request) return { error: "Deposit request not found", status: 404 };
+    if (request.status !== "pending") return { error: "Deposit request already reviewed", status: 400 };
+    const creditAmount = overrideAmount || Number(request.amount || 0);
+    const userResult = await client.query(
+      "UPDATE users SET wallet_balance = wallet_balance + $1, updated_at = now() WHERE id = $2 RETURNING *",
+      [creditAmount, request.user_id]
+    );
+    const user = userResult.rows[0];
+    if (!user) return { error: "User not found", status: 404 };
+    const updatedRequestResult = await client.query(
+      `UPDATE wallet_deposit_requests
+       SET status = 'approved', admin_note = $1, reviewed_by = $2, reviewed_at = now(), updated_at = now()
+       WHERE id = $3
+       RETURNING *`,
+      [adminNote || "", adminUserId, requestId]
+    );
+    const txnResult = await client.query(
+      `INSERT INTO wallet_transactions (id, user_id, type, amount, description, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        createId("txn"),
+        request.user_id,
+        "crypto_deposit",
+        creditAmount,
+        `Crypto deposit approved (${request.crypto_type} ${request.network})`,
+        { depositRequestId: request.id, txHash: request.tx_hash, cryptoType: request.crypto_type, network: request.network }
+      ]
+    );
+    return {
+      request: toDepositRequest({ ...updatedRequestResult.rows[0], user_email: user.email, user_name: user.name }),
+      balance: Number(user.wallet_balance),
+      transaction: toTransaction(txnResult.rows[0])
+    };
   });
 }
 

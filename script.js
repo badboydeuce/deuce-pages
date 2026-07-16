@@ -56,6 +56,9 @@ const userPageConfigModel = {
 let adminUsers = [];
 let ownedPages = [];
 let walletData = { balance: 0, currency: "USD", transactions: [] };
+let walletDepositRequests = [];
+let adminDepositRequests = [];
+let walletFundOpen = false;
 const selectedMarketPlans = {};
 const billingPeriodLabels = {
   daily: "Daily",
@@ -63,6 +66,13 @@ const billingPeriodLabels = {
   biweekly: "Biweekly",
   monthly: "Monthly"
 };
+const cryptoFundingOptions = [
+  { value: "USDT_TRC20", asset: "USDT", network: "TRC20", label: "USDT - TRC20" },
+  { value: "USDT_ERC20", asset: "USDT", network: "ERC20", label: "USDT - ERC20" },
+  { value: "BTC_BTC", asset: "BTC", network: "BTC", label: "Bitcoin - BTC" },
+  { value: "ETH_ERC20", asset: "ETH", network: "ERC20", label: "Ethereum - ERC20" },
+  { value: "BNB_BEP20", asset: "BNB", network: "BEP20", label: "BNB - BEP20" }
+];
 
 const screenLibrary = [
   {
@@ -543,17 +553,23 @@ async function loadAppData() {
   try {
     const auth = getAuthState();
     const packagesResult = await requestApi("/api/packages");
-    const [userPagesResult, walletResult] = auth.token
+    const [userPagesResult, walletResult, depositRequestsResult, adminDepositRequestsResult] = auth.token
       ? await Promise.all([
         requestApi("/api/user-pages"),
-        requestApi("/api/wallet")
+        requestApi("/api/wallet"),
+        requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
+        isAdmin()
+          ? requestApi("/api/wallet/admin/fund-requests?status=pending").catch(() => ({ requests: [] }))
+          : Promise.resolve({ requests: [] })
       ])
-      : [{ userPages: [] }, { balance: 0, currency: "USD", transactions: [] }];
+      : [{ userPages: [] }, { balance: 0, currency: "USD", transactions: [] }, { requests: [] }, { requests: [] }];
     const packages = packagesResult.packages || [];
     marketPages = packages.filter((pagePackage) => pagePackage.status === "published").map(normalizePackage);
     adminPackages = packages.map(normalizePackage);
     ownedPages = (userPagesResult.userPages || []).map(normalizeUserPage);
     walletData = walletResult || { balance: 0, currency: "USD", transactions: [] };
+    walletDepositRequests = depositRequestsResult.requests || [];
+    adminDepositRequests = adminDepositRequestsResult.requests || [];
   } catch (error) {
     apiLoadError = error.message;
     marketPages = [];
@@ -561,6 +577,8 @@ async function loadAppData() {
     ownedPages = [];
     adminUsers = [];
     walletData = { balance: 0, currency: "USD", transactions: [] };
+    walletDepositRequests = [];
+    adminDepositRequests = [];
   }
 }
 
@@ -595,6 +613,9 @@ function clearAuthState() {
   adminUsers = [];
   ownedPages = [];
   walletData = { balance: 0, currency: "USD", transactions: [] };
+  walletDepositRequests = [];
+  adminDepositRequests = [];
+  walletFundOpen = false;
   syncAdminVisibility();
 }
 
@@ -2454,6 +2475,7 @@ function renderAdminUsers() {
   activeFlowSlug = null;
   const activeCount = adminUsers.filter((user) => user.status === "Active").length;
   const reviewCount = adminUsers.filter((user) => user.status === "Review").length;
+  const pendingFunding = adminDepositRequests.filter((request) => request.status === "pending");
 
   preview.innerHTML = `
     <section class="app-view">
@@ -2472,7 +2494,7 @@ function renderAdminUsers() {
         <article><small>Total users</small><b>${String(adminUsers.length).padStart(2, "0")}</b><span>User accounts</span></article>
         <article><small>Active</small><b>${String(activeCount).padStart(2, "0")}</b><span>Allowed access</span></article>
         <article><small>Review</small><b>${String(reviewCount).padStart(2, "0")}</b><span>Needs attention</span></article>
-        <article><small>Managed pages</small><b>${String(adminUsers.reduce((sum, user) => sum + user.pages, 0)).padStart(2, "0")}</b><span>Across users</span></article>
+        <article><small>Funding</small><b>${String(pendingFunding.length).padStart(2, "0")}</b><span>Pending crypto</span></article>
       </div>
 
       <article class="admin-package-card">
@@ -2485,6 +2507,35 @@ function renderAdminUsers() {
           <button type="button" data-admin-action="NEW USER INVITE READY">Invite user</button>
           <button type="button" data-admin-action="USER EXPORT QUEUED">Export users</button>
           <button type="button" data-admin-action="BULK REVIEW OPENED">Bulk review</button>
+        </div>
+      </article>
+
+      <article class="admin-table-card">
+        <div class="builder-heading">
+          <div>
+            <small>crypto funding</small>
+            <h3>Pending wallet credits</h3>
+          </div>
+          <button type="button" data-admin-action="FUNDING QUEUE REFRESHED">Refresh</button>
+        </div>
+        <div class="fund-request-list">
+          ${pendingFunding.length ? pendingFunding.map((request) => `
+            <article>
+              <div>
+                <strong>${escapeHtml(request.userEmail || request.userName || request.userId)}</strong>
+                <span>${escapeHtml(request.cryptoType)} / ${escapeHtml(request.network)} - ${formatMoney(request.amount)}</span>
+                <code>${escapeHtml(request.txHash)}</code>
+              </div>
+              <button type="button" data-approve-wallet-fund="${escapeHtml(request.id)}">Approve credit</button>
+            </article>
+          `).join("") : `
+            <article>
+              <div>
+                <strong>No pending funding</strong>
+                <span>Submitted crypto payments will appear here.</span>
+              </div>
+            </article>
+          `}
         </div>
       </article>
 
@@ -3275,6 +3326,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
 
 function renderWallet() {
   activeFlowSlug = null;
+  const pendingRequests = walletDepositRequests.filter((request) => request.status === "pending").slice(0, 3);
   preview.innerHTML = `
     <section class="app-view wallet-view">
       <div class="view-heading">
@@ -3282,9 +3334,46 @@ function renderWallet() {
         <h2>Wallet</h2>
       </div>
       <div class="wallet-grid">
-        <article class="wallet-balance">
+        <article class="wallet-balance package-form">
           <small>available wallet balance</small>
           <strong>${formatMoney(walletData.balance)}</strong>
+          <div class="wallet-actions">
+            <button type="button" data-wallet-fund-toggle>${walletFundOpen ? "Close funding" : "Fund wallet"}</button>
+          </div>
+          ${walletFundOpen ? `
+            <div class="wallet-fund-panel">
+              <div class="wallet-fund-grid">
+                <label>
+                  <span>Amount USD</span>
+                  <input type="number" min="1" step="0.01" data-wallet-fund="amount" placeholder="100">
+                </label>
+                <label>
+                  <span>Crypto</span>
+                  <select data-wallet-fund="crypto">
+                    ${cryptoFundingOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}
+                  </select>
+                </label>
+              </div>
+              <label>
+                <span>Transaction hash</span>
+                <input type="text" data-wallet-fund="txHash" placeholder="Paste payment hash">
+              </label>
+              <div class="wallet-actions">
+                <button type="button" data-submit-wallet-fund>Submit hash</button>
+              </div>
+            </div>
+          ` : ""}
+          ${pendingRequests.length ? `
+            <div class="wallet-pending-list">
+              ${pendingRequests.map((request) => `
+                <div>
+                  <span>${escapeHtml(request.cryptoType)} ${escapeHtml(request.network)}</span>
+                  <b>${formatMoney(request.amount)}</b>
+                  <small>pending</small>
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
         </article>
       </div>
     </section>
@@ -3764,6 +3853,57 @@ async function subscribeToMarketPackage(button) {
   }
 }
 
+async function submitWalletFundRequest() {
+  const field = (name) => preview.querySelector(`[data-wallet-fund="${name}"]`)?.value.trim() || "";
+  const selected = cryptoFundingOptions.find((option) => option.value === field("crypto")) || cryptoFundingOptions[0];
+  const payload = {
+    amount: field("amount"),
+    cryptoType: selected.asset,
+    network: selected.network,
+    txHash: field("txHash")
+  };
+  if (!payload.amount || Number(payload.amount) <= 0) {
+    statusText.textContent = "FUNDING AMOUNT REQUIRED";
+    return;
+  }
+  if (!payload.txHash || payload.txHash.length < 8) {
+    statusText.textContent = "TRANSACTION HASH REQUIRED";
+    return;
+  }
+  try {
+    await requestApi("/api/wallet/fund-request", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    walletFundOpen = false;
+    await loadAppData();
+    renderWallet();
+    statusText.textContent = "FUNDING REQUEST SUBMITTED";
+  } catch (error) {
+    if (error.status === 401) {
+      window.location.hash = "#login";
+      return;
+    }
+    statusText.textContent = `FUNDING FAILED: ${error.message}`.toUpperCase();
+  }
+}
+
+async function approveWalletFundRequest(button) {
+  const requestId = button.dataset.approveWalletFund;
+  if (!requestId) return;
+  try {
+    await requestApi(`/api/wallet/admin/fund-requests/${encodeURIComponent(requestId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    await loadAppData();
+    renderAdminUsers();
+    statusText.textContent = "WALLET CREDIT APPROVED";
+  } catch (error) {
+    statusText.textContent = `APPROVAL FAILED: ${error.message}`.toUpperCase();
+  }
+}
+
 function renderGithubImportResult(scan, pagePackage) {
   const resultPanel = preview.querySelector("[data-github-result]");
   if (!resultPanel) return;
@@ -4039,6 +4179,19 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const walletFundToggle = event.target.closest("[data-wallet-fund-toggle]");
+  if (walletFundToggle) {
+    walletFundOpen = !walletFundOpen;
+    renderWallet();
+    return;
+  }
+
+  const walletFundSubmit = event.target.closest("[data-submit-wallet-fund]");
+  if (walletFundSubmit) {
+    await withButtonBusy(walletFundSubmit, "Submitting", submitWalletFundRequest);
+    return;
+  }
+
   const githubPreviewButton = event.target.closest("[data-github-preview-url]");
   if (githubPreviewButton) {
     const frame = preview.querySelector("[data-github-preview-frame]");
@@ -4058,6 +4211,12 @@ preview.addEventListener("click", async (event) => {
   const adminActionButton = event.target.closest("[data-admin-action]");
   if (adminActionButton) {
     statusText.textContent = adminActionButton.dataset.adminAction;
+    return;
+  }
+
+  const approveWalletFundButton = event.target.closest("[data-approve-wallet-fund]");
+  if (approveWalletFundButton) {
+    await withButtonBusy(approveWalletFundButton, "Approving", () => approveWalletFundRequest(approveWalletFundButton));
     return;
   }
 

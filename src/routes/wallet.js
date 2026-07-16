@@ -1,5 +1,11 @@
 import { Router } from "express";
-import { adjustWallet, getWallet } from "../repositories/appRepository.js";
+import {
+  adjustWallet,
+  approveWalletDepositRequest,
+  createWalletDepositRequest,
+  getWallet,
+  listWalletDepositRequests
+} from "../repositories/appRepository.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
 
 export const walletRouter = Router();
@@ -12,14 +18,28 @@ walletRouter.get("/", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-walletRouter.post("/deposit", (req, res) => {
-  adjustWallet({
-      userId: req.user.id,
-      amount: req.body.amount,
-      type: "deposit",
-      description: req.body.description || "Wallet deposit"
+function submitDepositRequest(req, res) {
+  createWalletDepositRequest({
+    userId: req.user.id,
+    amount: req.body.amount,
+    cryptoType: req.body.cryptoType,
+    network: req.body.network,
+    txHash: req.body.txHash
+  })
+    .then((result) => {
+      if (result.error) return res.status(result.status || 400).json(result);
+      res.status(201).json(result);
     })
-    .then((result) => res.status(201).json(result))
+    .catch((error) => res.status(400).json({ error: error.message }));
+}
+
+walletRouter.post("/deposit", submitDepositRequest);
+
+walletRouter.post("/fund-request", submitDepositRequest);
+
+walletRouter.get("/fund-requests", (req, res) => {
+  listWalletDepositRequests({ userId: req.user.id })
+    .then((requests) => res.json({ requests }))
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
@@ -35,6 +55,26 @@ walletRouter.post("/admin-adjust", requireAdmin, (req, res) => {
     amount: req.body.amount,
     type: "admin_adjustment",
     description: req.body.description || "Admin wallet adjustment"
+  })
+    .then((result) => {
+      if (result.error) return res.status(result.status || 400).json(result);
+      res.status(201).json(result);
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+walletRouter.get("/admin/fund-requests", requireAdmin, (req, res) => {
+  listWalletDepositRequests({ status: req.query.status || null })
+    .then((requests) => res.json({ requests }))
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+walletRouter.post("/admin/fund-requests/:id/approve", requireAdmin, (req, res) => {
+  approveWalletDepositRequest({
+    requestId: req.params.id,
+    adminUserId: req.user.id,
+    amount: req.body.amount,
+    adminNote: req.body.adminNote
   })
     .then((result) => {
       if (result.error) return res.status(result.status || 400).json(result);

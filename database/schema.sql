@@ -82,6 +82,21 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS wallet_deposit_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount NUMERIC(12, 2) NOT NULL,
+  crypto_type TEXT NOT NULL,
+  network TEXT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  admin_note TEXT,
+  reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS page_results (
   id TEXT PRIMARY KEY,
   user_page_id TEXT REFERENCES user_pages(id) ON DELETE CASCADE,

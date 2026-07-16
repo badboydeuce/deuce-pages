@@ -3230,10 +3230,98 @@ code,
   background: var(--accent);
 }
 
+.wallet-fund-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.wallet-fund-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wallet-pending-list {
+  display: grid;
+  gap: 8px;
+}
+
+.wallet-pending-list div,
+.fund-request-list article {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.wallet-pending-list div {
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+}
+
+.wallet-pending-list span,
+.wallet-pending-list small {
+  color: var(--muted);
+  font: 800 0.68rem var(--mono);
+  text-transform: uppercase;
+}
+
+.wallet-pending-list b {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
+.fund-request-list {
+  display: grid;
+  gap: 8px;
+}
+
+.fund-request-list article {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.fund-request-list article > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.fund-request-list span,
+.fund-request-list code {
+  color: var(--muted);
+}
+
+.fund-request-list code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fund-request-list button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--bg-deep);
+  background: var(--accent);
+  cursor: pointer;
+  font-weight: 850;
+}
+
 :root[data-theme="light"] .wallet-actions button {
   border-color: rgba(16, 32, 24, 0.12);
   color: var(--soft);
   background: rgba(255, 255, 255, 0.76);
+}
+
+:root[data-theme="light"] .wallet-pending-list div,
+:root[data-theme="light"] .fund-request-list article {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 :root[data-theme="light"] .wallet-actions button:first-child {
@@ -4692,6 +4780,8 @@ code {
   }
 
   .wallet-actions,
+  .wallet-fund-grid,
+  .fund-request-list article,
   .card-footer,
   .view-nav,
   .admin-module-bar,
