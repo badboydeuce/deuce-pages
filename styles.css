@@ -1788,6 +1788,14 @@ code,
   gap: 14px;
 }
 
+.wallet-view {
+  width: min(560px, 100%);
+}
+
+.wallet-view .wallet-grid {
+  grid-template-columns: 1fr;
+}
+
 .security-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

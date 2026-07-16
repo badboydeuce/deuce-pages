@@ -3275,52 +3275,21 @@ async function renderResultsCenter(pageSlug = "page-a") {
 
 function renderWallet() {
   activeFlowSlug = null;
-  const transactions = walletData.transactions || [];
-  const activeRenewals = ownedPages.filter((page) => page.subscription?.autoRenew);
   preview.innerHTML = `
-    <section class="app-view">
+    <section class="app-view wallet-view">
       <div class="view-heading">
         <small>wallet / subscription</small>
-        <h2>Wallet and renewals</h2>
-        <p>Users keep funds in their wallet and spend that balance on subscriptions, renewals, downloads, and premium actions.</p>
+        <h2>Wallet</h2>
       </div>
       <div class="wallet-grid">
         <article class="wallet-balance">
           <small>available wallet balance</small>
           <strong>${formatMoney(walletData.balance)}</strong>
-          <p>This balance pays for new subscriptions, recurring renewals, and paid actions inside the app.</p>
-          <div class="wallet-actions">
-            <button type="button">Add funds</button>
-            <button type="button">${activeRenewals.length ? "Auto-renew on" : "No renewals"}</button>
-          </div>
         </article>
-        <article class="wallet-panel">
-          <small>billing periods</small>
-          <div class="pricing-grid">
-            <span>Daily</span>
-            <span>Weekly from $25</span>
-            <span>Biweekly</span>
-            <span>Monthly</span>
-          </div>
-          <p>Each page can renew on its own billing period using wallet funds.</p>
-        </article>
-      </div>
-      <div class="owned-page-card">
-        <div>
-          <small>active renewals</small>
-          <h3>${activeRenewals.length} page subscriptions funded by wallet</h3>
-          <p>${activeRenewals.length ? "Low-balance alerts appear before renewal." : "Subscribe to a page and enable auto-renew to see renewal records here."}</p>
-        </div>
-        <button type="button">Manage renewals</button>
-      </div>
-      <div class="activity-list">
-        ${transactions.length ? transactions.map((transaction) => `
-          <article><span>${escapeHtml(transaction.description || transaction.type)}</span><strong>${formatMoney(transaction.amount)}</strong></article>
-        `).join("") : emptyState("No wallet activity", "Wallet transactions will appear here after deposits, subscriptions, and renewals.", "#pages")}
       </div>
     </section>
   `;
-  statusText.textContent = "SUBSCRIPTION VAULT ONLINE";
+  statusText.textContent = "WALLET READY";
   topbarTitle.textContent = "Wallet / Subscription";
 }
 
