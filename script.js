@@ -2293,7 +2293,6 @@ function pageLaunchReadiness(page) {
     Boolean(page.subscription?.billingPeriod),
     Boolean(page.hostingConfig?.domain || page.domain),
     Boolean(page.hostingConfig?.serverIp),
-    Boolean(page.flow?.length),
     Boolean(page.generatedFile?.lastGeneratedAt || page.generatedFile?.version)
   ];
   const passed = checks.filter(Boolean).length;
@@ -2355,7 +2354,7 @@ function ownedPageCard(page, index) {
           </section>
           <section>
             <h4>Operate</h4>
-            <button type="button" data-flow="${escapeHtml(page.slug)}">&#129513; Flow Builder</button>
+            <button type="button" data-config-page="${escapeHtml(page.slug)}">&#9881; Config</button>
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="security">&#128737; Security</button>
             <button type="button" data-results="${escapeHtml(page.slug)}">&#128193; Results</button>
           </section>
@@ -2383,7 +2382,7 @@ function renderMyPages() {
       <div class="view-heading">
         <small>my pages</small>
         <h2>Page control room</h2>
-        <p>Manage every subscribed page from one place: launch setup, flow order, security rules, saved results, traffic, billing, and the final index.html file.</p>
+        <p>Manage every subscribed page from one place: launch setup, configuration, security rules, saved results, traffic, billing, and the final index.html file.</p>
       </div>
       ${viewNav([
         routeButton("#dashboard", "&#8592; Dashboard"),
@@ -2464,8 +2463,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
         routeButton(`#config-${page.slug}`, "Config"),
-        routeButton(`#security-${page.slug}:domains`, "Domains"),
-        routeButton(`#flow-${page.slug}`, "Flow")
+        routeButton(`#security-${page.slug}:domains`, "Domains")
       ])}
 
       <div class="summary-grid">
@@ -2654,7 +2652,6 @@ function renderUserConfigCenter(pageSlug = "page-a") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#flow-${page.slug}`, "Flow"),
         routeButton(`#security-${page.slug}:security`, "Security"),
         routeButton(`#results-${page.slug}`, "Results")
       ])}
@@ -2724,128 +2721,6 @@ function renderUserConfigCenter(pageSlug = "page-a") {
 
   statusText.textContent = `${page.name.toUpperCase()} USER CONFIG READY`;
   topbarTitle.textContent = `${page.name} Config`;
-}
-
-function renderFlowBuilder(pageSlug = "page-a") {
-  activeFlowSlug = pageSlug;
-  const page = getPageBySlug(pageSlug);
-  if (!page) {
-    renderMissingPage();
-    return;
-  }
-  const activeScreens = page.flow.map((screenName) => screenLibrary.find((screen) => screen.name === screenName)).filter(Boolean);
-  const inactiveScreens = screenLibrary.filter((screen) => !page.flow.includes(screen.name));
-  const selectedScreenName = activeScreens[0]?.name || screenLibrary[0].name;
-  const selectedConfig = getScreenConfig(page, selectedScreenName);
-
-  preview.innerHTML = `
-    <section class="app-view">
-      <div class="view-heading">
-        <small>flow builder</small>
-        <h2>${page.name} flow builder</h2>
-        <p>Arrange the session, edit screen settings, enable optional steps, and save the flow used to generate the final index.html.</p>
-      </div>
-      ${viewNav([
-        routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#results-${page.slug}`, "Results"),
-        routeButton(`#security-${page.slug}:security`, "Security"),
-        routeButton("#wallet", "Wallet")
-      ])}
-
-      <div class="builder-grid">
-        <article class="flow-board">
-          <div class="builder-heading">
-            <div>
-              <small>active session order</small>
-              <h3>Session order</h3>
-            </div>
-            <div class="builder-heading-actions">
-              <button type="button" data-save-flow="${page.slug}">Save flow</button>
-              <button type="button" data-download-index="${page.slug}">Generate index.html</button>
-            </div>
-          </div>
-
-          <div class="screen-stack" data-screen-stack="${page.slug}" aria-label="${page.name} screen order">
-            ${activeScreens.map((screen, index) => `
-              <article class="screen-card" draggable="true" data-screen-name="${screen.name}">
-                <span class="drag-handle" aria-hidden="true">::</span>
-                <div class="screen-index">${String(index + 1).padStart(2, "0")}</div>
-                <div class="screen-copy">
-                  <small>${screen.type}</small>
-                  <h4>${getScreenConfig(page, screen.name).title}</h4>
-                  <p>${getScreenConfig(page, screen.name).fields || screen.fields.join(" / ")}</p>
-                </div>
-                <div class="screen-actions">
-                  <button type="button" data-edit-screen="${screen.name}">Edit</button>
-                  <button type="button" data-disable-screen="${screen.name}">Disable</button>
-                  <button type="button" data-preview-screen="${screen.name}">Preview</button>
-                </div>
-              </article>
-            `).join("")}
-          </div>
-        </article>
-
-        <aside class="builder-side">
-          <article>
-            <small>available screens</small>
-            <h3>Add screens</h3>
-            <div class="available-screens">
-              ${inactiveScreens.map((screen) => `
-                <button type="button" data-add-screen="${screen.name}">
-                  <strong>${screen.name}</strong>
-                  <span>${screen.type}</span>
-                </button>
-              `).join("") || "<p>All screens are active in this flow.</p>"}
-            </div>
-          </article>
-
-          <article class="screen-editor" data-screen-editor>
-            <small>screen settings</small>
-            <h3>${selectedScreenName} Page</h3>
-            <label>
-              <span>Screen title</span>
-              <input type="text" data-config-field="title" value="${selectedConfig.title}">
-            </label>
-            <label>
-              <span>Button text</span>
-              <input type="text" data-config-field="buttonText" value="${selectedConfig.buttonText}">
-            </label>
-            <label>
-              <span>Fields</span>
-              <textarea data-config-field="fields">${selectedConfig.fields}</textarea>
-            </label>
-            <label>
-              <span>Redirect URL</span>
-              <input type="text" data-config-field="redirectUrl" value="${selectedConfig.redirectUrl}" placeholder="https://example.com/success">
-            </label>
-            <div class="admin-actions">
-              <button type="button" data-save-config="${selectedScreenName}">Save settings</button>
-              <button type="button" data-preview-screen="${selectedScreenName}">Preview</button>
-            </div>
-          </article>
-
-          <article class="generated-file-card">
-            <small>generated file</small>
-            <h3>Standalone index.html</h3>
-            <p>The download includes this page's saved flow, user config, subscription state, domain rules, license key, and relay mode.</p>
-            <div class="feature-row">
-              <span>${page.flow.length} active screens</span>
-              <span>${page.packageVersion}</span>
-              <span>${page.generatedFile.version}</span>
-              <span>${page.subscription.billingPeriod} billing</span>
-              <span>${page.generatedFile.apiBase}</span>
-            </div>
-            <div class="admin-actions">
-              <button type="button" data-download-index="${page.slug}">Download index.html</button>
-            </div>
-          </article>
-        </aside>
-      </div>
-    </section>
-  `;
-
-  statusText.textContent = "FLOW BUILDER ACTIVE";
-  topbarTitle.textContent = `${page.name} Flow Builder`;
 }
 
 function formatTrafficTime(value) {
@@ -3002,7 +2877,6 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#flow-${page.slug}`, "Configure flow"),
         routeButton(`#results-${page.slug}`, "Results"),
         routeButton("#wallet", "Wallet")
       ])}
@@ -3038,7 +2912,6 @@ function renderResultsCenter(pageSlug = "page-a") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#flow-${page.slug}`, "Configure flow"),
         routeButton(`#security-${page.slug}:security`, "Security"),
         routeButton("#wallet", "Wallet")
       ])}
@@ -3212,7 +3085,8 @@ function renderRoute() {
 
   if (hash.startsWith("#flow-")) {
     setActiveNav("#my-pages");
-    renderFlowBuilder(hash.replace("#flow-", ""));
+    window.location.hash = "#my-pages";
+    statusText.textContent = "PAGE BUILDER REMOVED";
     return;
   }
 
@@ -3288,75 +3162,6 @@ themeToggle.addEventListener("click", () => {
 });
 
 document.querySelector("[data-logout]")?.addEventListener("click", handleLogout);
-
-function updateScreenIndexes() {
-  preview.querySelectorAll(".screen-card").forEach((card, index) => {
-    const indexNode = card.querySelector(".screen-index");
-    if (indexNode) indexNode.textContent = String(index + 1).padStart(2, "0");
-  });
-}
-
-function persistOrderFromDom(page) {
-  const orderedNames = [...preview.querySelectorAll(".screen-card")].map((card) => card.dataset.screenName);
-  page.flow = orderedNames;
-  saveFlowState(page);
-}
-
-function renderScreenEditor(page, screenName) {
-  const screen = screenLibrary.find((item) => item.name === screenName);
-  if (!screen) return;
-
-  const config = getScreenConfig(page, screenName);
-  const editor = preview.querySelector("[data-screen-editor]");
-  if (!editor) return;
-
-  editor.innerHTML = `
-    <small>screen settings</small>
-    <h3>${screenName} Page</h3>
-    <label>
-      <span>Screen title</span>
-      <input type="text" data-config-field="title" value="${config.title}">
-    </label>
-    <label>
-      <span>Button text</span>
-      <input type="text" data-config-field="buttonText" value="${config.buttonText}">
-    </label>
-    <label>
-      <span>Fields</span>
-      <textarea data-config-field="fields">${config.fields}</textarea>
-    </label>
-    <label>
-      <span>Redirect URL</span>
-      <input type="text" data-config-field="redirectUrl" value="${config.redirectUrl}" placeholder="https://example.com/success">
-    </label>
-    <div class="admin-actions">
-      <button type="button" data-save-config="${screenName}">Save settings</button>
-      <button type="button" data-preview-screen="${screenName}">Preview</button>
-    </div>
-  `;
-
-  preview.querySelectorAll(".screen-card").forEach((card) => {
-    card.classList.toggle("selected", card.dataset.screenName === screenName);
-  });
-}
-
-function saveScreenConfig(page, screenName) {
-  const editor = preview.querySelector("[data-screen-editor]");
-  if (!editor) return;
-
-  const nextConfig = {};
-  editor.querySelectorAll("[data-config-field]").forEach((field) => {
-    nextConfig[field.dataset.configField] = field.value;
-  });
-
-  page.configs = {
-    ...(page.configs || {}),
-    [screenName]: nextConfig
-  };
-  saveFlowState(page);
-  renderFlowBuilder(page.slug);
-  statusText.textContent = `${screenName.toUpperCase()} SETTINGS SAVED`;
-}
 
 function saveSecurityConfig(page) {
   const domainsField = preview.querySelector('[data-security-field="domains"]');
@@ -3804,24 +3609,6 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
   }
 }
 
-function moveScreenBefore(targetCard) {
-  const stack = preview.querySelector("[data-screen-stack]");
-  const draggedCard = preview.querySelector(`[data-screen-name="${draggedScreenName}"]`);
-  if (!stack || !draggedCard || !targetCard || draggedCard === targetCard) return;
-
-  const cards = [...stack.querySelectorAll(".screen-card")];
-  const draggedIndex = cards.indexOf(draggedCard);
-  const targetIndex = cards.indexOf(targetCard);
-
-  if (draggedIndex < targetIndex) {
-    targetCard.after(draggedCard);
-  } else {
-    targetCard.before(draggedCard);
-  }
-
-  updateScreenIndexes();
-}
-
 function sizeMatrix() {
   matrix.width = window.innerWidth * window.devicePixelRatio;
   matrix.height = window.innerHeight * window.devicePixelRatio;
@@ -3877,36 +3664,6 @@ async function initApp() {
 
 initApp();
 window.addEventListener("hashchange", renderRoute);
-
-preview.addEventListener("dragstart", (event) => {
-  const card = event.target.closest(".screen-card");
-  if (!card) return;
-  draggedScreenName = card.dataset.screenName;
-  card.classList.add("dragging");
-  event.dataTransfer.effectAllowed = "move";
-});
-
-preview.addEventListener("dragend", (event) => {
-  const card = event.target.closest(".screen-card");
-  if (card) card.classList.remove("dragging");
-  draggedScreenName = null;
-});
-
-preview.addEventListener("dragover", (event) => {
-  const targetCard = event.target.closest(".screen-card");
-  if (!targetCard || !draggedScreenName) return;
-  event.preventDefault();
-  moveScreenBefore(targetCard);
-});
-
-preview.addEventListener("drop", (event) => {
-  const stack = event.target.closest("[data-screen-stack]");
-  if (!stack || !activeFlowSlug) return;
-  event.preventDefault();
-  const page = getPageBySlug(activeFlowSlug);
-  persistOrderFromDom(page);
-  statusText.textContent = "FLOW ORDER UPDATED";
-});
 
 preview.addEventListener("change", (event) => {
   const marketPlanSelect = event.target.closest("[data-market-plan]");
@@ -4000,12 +3757,6 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
-  const flowButton = event.target.closest("[data-flow]");
-  if (flowButton) {
-    window.location.hash = `flow-${flowButton.dataset.flow}`;
-    return;
-  }
-
   const configButton = event.target.closest("[data-config-page]");
   if (configButton) {
     window.location.hash = `config-${configButton.dataset.configPage}`;
@@ -4029,8 +3780,6 @@ preview.addEventListener("click", async (event) => {
     window.location.hash = `results-${resultsButton.dataset.results}`;
     return;
   }
-
-  const page = activeFlowSlug ? getPageBySlug(activeFlowSlug) : null;
 
   const downloadButton = event.target.closest("[data-download-index]");
   if (downloadButton) {
@@ -4131,53 +3880,4 @@ preview.addEventListener("click", async (event) => {
     }
   }
 
-  if (!page) return;
-
-  const card = event.target.closest(".screen-card");
-  if (card && !event.target.closest("button")) {
-    renderScreenEditor(page, card.dataset.screenName);
-    return;
-  }
-
-  const saveFlowButton = event.target.closest("[data-save-flow]");
-  if (saveFlowButton) {
-    persistOrderFromDom(page);
-    statusText.textContent = "FLOW ORDER SAVED";
-    return;
-  }
-
-  const addButton = event.target.closest("[data-add-screen]");
-  if (addButton) {
-    page.flow.push(addButton.dataset.addScreen);
-    saveFlowState(page);
-    renderFlowBuilder(page.slug);
-    statusText.textContent = `${addButton.dataset.addScreen.toUpperCase()} SCREEN ADDED`;
-    return;
-  }
-
-  const disableButton = event.target.closest("[data-disable-screen]");
-  if (disableButton) {
-    page.flow = page.flow.filter((screenName) => screenName !== disableButton.dataset.disableScreen);
-    saveFlowState(page);
-    renderFlowBuilder(page.slug);
-    statusText.textContent = `${disableButton.dataset.disableScreen.toUpperCase()} SCREEN DISABLED`;
-    return;
-  }
-
-  const editButton = event.target.closest("[data-edit-screen]");
-  if (editButton) {
-    renderScreenEditor(page, editButton.dataset.editScreen);
-    return;
-  }
-
-  const saveConfigButton = event.target.closest("[data-save-config]");
-  if (saveConfigButton) {
-    saveScreenConfig(page, saveConfigButton.dataset.saveConfig);
-    return;
-  }
-
-  const previewButton = event.target.closest("[data-preview-screen]");
-  if (previewButton) {
-    statusText.textContent = `PREVIEWING ${previewButton.dataset.previewScreen.toUpperCase()} SCREEN`;
-  }
 });
