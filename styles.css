@@ -3322,7 +3322,7 @@ code,
 
 .fund-request-list article {
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: start;
 }
 
 .fund-request-list article > div {
@@ -3342,6 +3342,23 @@ code,
   white-space: nowrap;
 }
 
+.fund-request-list textarea {
+  width: 100%;
+  min-height: 54px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.045);
+  resize: vertical;
+}
+
+.fund-review-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 116px;
+}
+
 .fund-request-list button {
   min-height: 36px;
   padding: 0 12px;
@@ -3353,6 +3370,75 @@ code,
   font-weight: 850;
 }
 
+.fund-review-actions button:first-child {
+  color: var(--soft);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.fund-review-actions button:last-child {
+  color: #ffd8d8;
+  border-color: rgba(255, 97, 97, 0.35);
+  background: rgba(255, 97, 97, 0.12);
+}
+
+.fund-status {
+  width: fit-content;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  font: 850 0.66rem var(--mono);
+  text-transform: uppercase;
+}
+
+.fund-status-approved {
+  color: var(--accent);
+  border-color: rgba(124, 255, 178, 0.28);
+  background: rgba(124, 255, 178, 0.08);
+}
+
+.fund-status-rejected {
+  color: #ffb9b9;
+  border-color: rgba(255, 97, 97, 0.32);
+  background: rgba(255, 97, 97, 0.1);
+}
+
+.fund-status-reviewing {
+  color: #ffe7a3;
+  border-color: rgba(255, 210, 88, 0.32);
+  background: rgba(255, 210, 88, 0.09);
+}
+
+.fund-history-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fund-history-list div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.fund-history-list span,
+.fund-history-list b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fund-history-list b {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+
 :root[data-theme="light"] .wallet-actions button {
   border-color: rgba(16, 32, 24, 0.12);
   color: var(--soft);
@@ -3361,9 +3447,16 @@ code,
 
 :root[data-theme="light"] .wallet-pending-list div,
 :root[data-theme="light"] .wallet-address-card,
-:root[data-theme="light"] .fund-request-list article {
+:root[data-theme="light"] .fund-request-list article,
+:root[data-theme="light"] .fund-history-list div {
   border-color: rgba(16, 32, 24, 0.1);
   background: rgba(255, 255, 255, 0.72);
+}
+
+:root[data-theme="light"] .fund-request-list textarea,
+:root[data-theme="light"] .fund-review-actions button:first-child {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.76);
 }
 
 :root[data-theme="light"] .wallet-actions button:first-child {
@@ -4825,6 +4918,8 @@ code {
   .wallet-fund-grid,
   .wallet-address-card,
   .fund-request-list article,
+  .fund-review-actions,
+  .fund-history-list div,
   .card-footer,
   .view-nav,
   .admin-module-bar,

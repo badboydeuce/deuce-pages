@@ -4,7 +4,8 @@ import {
   approveWalletDepositRequest,
   createWalletDepositRequest,
   getWallet,
-  listWalletDepositRequests
+  listWalletDepositRequests,
+  updateWalletDepositRequestStatus
 } from "../repositories/appRepository.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
 
@@ -105,6 +106,34 @@ walletRouter.post("/admin/fund-requests/:id/approve", requireAdmin, (req, res) =
     .then((result) => {
       if (result.error) return res.status(result.status || 400).json(result);
       res.status(201).json(result);
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+walletRouter.post("/admin/fund-requests/:id/reviewing", requireAdmin, (req, res) => {
+  updateWalletDepositRequestStatus({
+    requestId: req.params.id,
+    adminUserId: req.user.id,
+    status: "reviewing",
+    adminNote: req.body.adminNote
+  })
+    .then((result) => {
+      if (result.error) return res.status(result.status || 400).json(result);
+      res.status(200).json(result);
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+walletRouter.post("/admin/fund-requests/:id/reject", requireAdmin, (req, res) => {
+  updateWalletDepositRequestStatus({
+    requestId: req.params.id,
+    adminUserId: req.user.id,
+    status: "rejected",
+    adminNote: req.body.adminNote
+  })
+    .then((result) => {
+      if (result.error) return res.status(result.status || 400).json(result);
+      res.status(200).json(result);
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });

@@ -806,25 +806,33 @@ function jsonDepositToApi(request, user = null) {
 
 export async function createWalletDepositRequest(data) {
   const clean = validateDepositPayload(data);
+  const normalizedTxHash = clean.txHash.toLowerCase();
 
   if (useJsonDb()) {
     return updateJsonDb((db) => {
       db.walletDepositRequests ||= [];
       const user = db.users.find((item) => item.id === data.userId);
       if (!user) return { error: "User not found", status: 404 };
+      const duplicate = db.walletDepositRequests.find((item) => String(item.txHash || "").toLowerCase() === normalizedTxHash);
+      if (duplicate) return { error: "Transaction hash already submitted", status: 409 };
       const request = buildDepositRequest(user.id, clean.amount, clean.cryptoType, clean.network, clean.txHash);
       db.walletDepositRequests.push(request);
       return { request: jsonDepositToApi(request, user) };
     });
   }
 
-  const result = await query(
-    `INSERT INTO wallet_deposit_requests (id, user_id, amount, crypto_type, network, tx_hash)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING *`,
-    [createId("dep"), data.userId, clean.amount, clean.cryptoType, clean.network, clean.txHash]
-  );
-  return { request: toDepositRequest(result.rows[0]) };
+  try {
+    const result = await query(
+      `INSERT INTO wallet_deposit_requests (id, user_id, amount, crypto_type, network, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [createId("dep"), data.userId, clean.amount, clean.cryptoType, clean.network, clean.txHash]
+    );
+    return { request: toDepositRequest(result.rows[0]) };
+  } catch (error) {
+    if (error.code === "23505") return { error: "Transaction hash already submitted", status: 409 };
+    throw error;
+  }
 }
 
 export async function listWalletDepositRequests({ userId = null, status = null } = {}) {
@@ -871,7 +879,7 @@ export async function approveWalletDepositRequest({ requestId, adminUserId, amou
       db.walletDepositRequests ||= [];
       const request = db.walletDepositRequests.find((item) => item.id === requestId);
       if (!request) return { error: "Deposit request not found", status: 404 };
-      if (request.status !== "pending") return { error: "Deposit request already reviewed", status: 400 };
+      if (!["pending", "reviewing"].includes(request.status)) return { error: "Deposit request already reviewed", status: 400 };
       const user = db.users.find((item) => item.id === request.userId);
       if (!user) return { error: "User not found", status: 404 };
       const creditAmount = overrideAmount || Number(request.amount || 0);
@@ -898,7 +906,7 @@ export async function approveWalletDepositRequest({ requestId, adminUserId, amou
     const requestResult = await client.query("SELECT * FROM wallet_deposit_requests WHERE id = $1 FOR UPDATE", [requestId]);
     const request = requestResult.rows[0];
     if (!request) return { error: "Deposit request not found", status: 404 };
-    if (request.status !== "pending") return { error: "Deposit request already reviewed", status: 400 };
+    if (!["pending", "reviewing"].includes(request.status)) return { error: "Deposit request already reviewed", status: 400 };
     const creditAmount = overrideAmount || Number(request.amount || 0);
     const userResult = await client.query(
       "UPDATE users SET wallet_balance = wallet_balance + $1, updated_at = now() WHERE id = $2 RETURNING *",
@@ -932,6 +940,43 @@ export async function approveWalletDepositRequest({ requestId, adminUserId, amou
       transaction: toTransaction(txnResult.rows[0])
     };
   });
+}
+
+export async function updateWalletDepositRequestStatus({ requestId, adminUserId, status, adminNote = "" }) {
+  if (!requestId) throw new Error("Deposit request is required");
+  const nextStatus = String(status || "").toLowerCase();
+  if (!["reviewing", "rejected"].includes(nextStatus)) throw new Error("Unsupported funding status");
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      db.walletDepositRequests ||= [];
+      const request = db.walletDepositRequests.find((item) => item.id === requestId);
+      if (!request) return { error: "Deposit request not found", status: 404 };
+      if (["approved", "rejected"].includes(request.status)) return { error: "Deposit request already reviewed", status: 400 };
+      request.status = nextStatus;
+      request.adminNote = adminNote || request.adminNote || "";
+      request.reviewedBy = nextStatus === "rejected" ? adminUserId : request.reviewedBy || "";
+      request.reviewedAt = nextStatus === "rejected" ? new Date().toISOString() : request.reviewedAt || null;
+      request.updatedAt = new Date().toISOString();
+      const user = db.users.find((item) => item.id === request.userId);
+      return { request: jsonDepositToApi(request, user) };
+    });
+  }
+
+  const reviewedBySql = nextStatus === "rejected" ? ", reviewed_by = $3, reviewed_at = now()" : "";
+  const values = nextStatus === "rejected"
+    ? [nextStatus, adminNote || "", adminUserId, requestId]
+    : [nextStatus, adminNote || "", requestId];
+  const idParam = nextStatus === "rejected" ? "$4" : "$3";
+  const result = await query(
+    `UPDATE wallet_deposit_requests
+     SET status = $1, admin_note = COALESCE(NULLIF($2, ''), admin_note), updated_at = now()${reviewedBySql}
+     WHERE id = ${idParam} AND status NOT IN ('approved', 'rejected')
+     RETURNING *`,
+    values
+  );
+  if (!result.rows[0]) return { error: "Deposit request not found or already reviewed", status: 404 };
+  return { request: toDepositRequest(result.rows[0]) };
 }
 
 export async function listResults(userPageId, userId = null) {

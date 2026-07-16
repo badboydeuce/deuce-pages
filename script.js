@@ -562,7 +562,7 @@ async function loadAppData() {
         requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
         requestApi("/api/wallet/funding-options").catch(() => ({ options: walletFundingOptions })),
         isAdmin()
-          ? requestApi("/api/wallet/admin/fund-requests?status=pending").catch(() => ({ requests: [] }))
+          ? requestApi("/api/wallet/admin/fund-requests").catch(() => ({ requests: [] }))
           : Promise.resolve({ requests: [] })
       ])
       : [{ userPages: [] }, { balance: 0, currency: "USD", transactions: [] }, { requests: [] }, { options: walletFundingOptions }, { requests: [] }];
@@ -2485,7 +2485,8 @@ function renderAdminUsers() {
   activeFlowSlug = null;
   const activeCount = adminUsers.filter((user) => user.status === "Active").length;
   const reviewCount = adminUsers.filter((user) => user.status === "Review").length;
-  const pendingFunding = adminDepositRequests.filter((request) => request.status === "pending");
+  const activeFunding = adminDepositRequests.filter((request) => ["pending", "reviewing"].includes(request.status));
+  const reviewedFunding = adminDepositRequests.filter((request) => ["approved", "rejected"].includes(request.status)).slice(0, 5);
 
   preview.innerHTML = `
     <section class="app-view">
@@ -2504,7 +2505,7 @@ function renderAdminUsers() {
         <article><small>Total users</small><b>${String(adminUsers.length).padStart(2, "0")}</b><span>User accounts</span></article>
         <article><small>Active</small><b>${String(activeCount).padStart(2, "0")}</b><span>Allowed access</span></article>
         <article><small>Review</small><b>${String(reviewCount).padStart(2, "0")}</b><span>Needs attention</span></article>
-        <article><small>Funding</small><b>${String(pendingFunding.length).padStart(2, "0")}</b><span>Pending crypto</span></article>
+        <article><small>Funding</small><b>${String(activeFunding.length).padStart(2, "0")}</b><span>Open crypto</span></article>
       </div>
 
       <article class="admin-package-card">
@@ -2529,14 +2530,20 @@ function renderAdminUsers() {
           <button type="button" data-admin-action="FUNDING QUEUE REFRESHED">Refresh</button>
         </div>
         <div class="fund-request-list">
-          ${pendingFunding.length ? pendingFunding.map((request) => `
+          ${activeFunding.length ? activeFunding.map((request) => `
             <article>
               <div>
                 <strong>${escapeHtml(request.userEmail || request.userName || request.userId)}</strong>
                 <span>${escapeHtml(request.cryptoType)} / ${escapeHtml(request.network)} - ${formatMoney(request.amount)}</span>
                 <code>${escapeHtml(request.txHash)}</code>
+                <small class="fund-status fund-status-${escapeHtml(request.status)}">${escapeHtml(request.status)}</small>
+                <textarea data-fund-admin-note="${escapeHtml(request.id)}" placeholder="Admin note">${escapeHtml(request.adminNote || "")}</textarea>
               </div>
-              <button type="button" data-approve-wallet-fund="${escapeHtml(request.id)}">Approve credit</button>
+              <div class="fund-review-actions">
+                <button type="button" data-review-wallet-fund="${escapeHtml(request.id)}">Reviewing</button>
+                <button type="button" data-approve-wallet-fund="${escapeHtml(request.id)}">Approve</button>
+                <button type="button" data-reject-wallet-fund="${escapeHtml(request.id)}">Reject</button>
+              </div>
             </article>
           `).join("") : `
             <article>
@@ -2547,6 +2554,17 @@ function renderAdminUsers() {
             </article>
           `}
         </div>
+        ${reviewedFunding.length ? `
+          <div class="fund-history-list">
+            ${reviewedFunding.map((request) => `
+              <div>
+                <span>${escapeHtml(request.userEmail || request.userName || request.userId)}</span>
+                <b>${formatMoney(request.amount)}</b>
+                <small class="fund-status fund-status-${escapeHtml(request.status)}">${escapeHtml(request.status)}</small>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
       </article>
 
       <article class="admin-table-card">
@@ -3357,7 +3375,7 @@ function updateWalletFundingAddress(select) {
 
 function renderWallet() {
   activeFlowSlug = null;
-  const pendingRequests = walletDepositRequests.filter((request) => request.status === "pending").slice(0, 3);
+  const recentRequests = walletDepositRequests.slice(0, 5);
   const selectedFundingOption = walletFundingOptionByValue(walletFundingOptions[0]?.value);
   preview.innerHTML = `
     <section class="app-view wallet-view">
@@ -3396,13 +3414,13 @@ function renderWallet() {
               </div>
             </div>
           ` : ""}
-          ${pendingRequests.length ? `
+          ${recentRequests.length ? `
             <div class="wallet-pending-list">
-              ${pendingRequests.map((request) => `
+              ${recentRequests.map((request) => `
                 <div>
                   <span>${escapeHtml(request.cryptoType)} ${escapeHtml(request.network)}</span>
                   <b>${formatMoney(request.amount)}</b>
-                  <small>pending</small>
+                  <small class="fund-status fund-status-${escapeHtml(request.status)}">${escapeHtml(request.status)}</small>
                 </div>
               `).join("")}
             </div>
@@ -3888,7 +3906,7 @@ async function subscribeToMarketPackage(button) {
 
 async function submitWalletFundRequest() {
   const field = (name) => preview.querySelector(`[data-wallet-fund="${name}"]`)?.value.trim() || "";
-  const selected = cryptoFundingOptions.find((option) => option.value === field("crypto")) || cryptoFundingOptions[0];
+  const selected = walletFundingOptionByValue(field("crypto"));
   const payload = {
     amount: field("amount"),
     cryptoType: selected.asset,
@@ -3928,16 +3946,34 @@ async function submitWalletFundRequest() {
 async function approveWalletFundRequest(button) {
   const requestId = button.dataset.approveWalletFund;
   if (!requestId) return;
+  const adminNote = preview.querySelector(`[data-fund-admin-note="${requestId}"]`)?.value.trim() || "";
   try {
     await requestApi(`/api/wallet/admin/fund-requests/${encodeURIComponent(requestId)}/approve`, {
       method: "POST",
-      body: JSON.stringify({})
+      body: JSON.stringify({ adminNote })
     });
     await loadAppData();
     renderAdminUsers();
     statusText.textContent = "WALLET CREDIT APPROVED";
   } catch (error) {
     statusText.textContent = `APPROVAL FAILED: ${error.message}`.toUpperCase();
+  }
+}
+
+async function updateWalletFundReview(button, action) {
+  const requestId = button.dataset.reviewWalletFund || button.dataset.rejectWalletFund;
+  if (!requestId) return;
+  const adminNote = preview.querySelector(`[data-fund-admin-note="${requestId}"]`)?.value.trim() || "";
+  try {
+    await requestApi(`/api/wallet/admin/fund-requests/${encodeURIComponent(requestId)}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ adminNote })
+    });
+    await loadAppData();
+    renderAdminUsers();
+    statusText.textContent = action === "reject" ? "FUNDING REQUEST REJECTED" : "FUNDING REQUEST MARKED REVIEWING";
+  } catch (error) {
+    statusText.textContent = `FUNDING UPDATE FAILED: ${error.message}`.toUpperCase();
   }
 }
 
@@ -4272,6 +4308,18 @@ preview.addEventListener("click", async (event) => {
   const approveWalletFundButton = event.target.closest("[data-approve-wallet-fund]");
   if (approveWalletFundButton) {
     await withButtonBusy(approveWalletFundButton, "Approving", () => approveWalletFundRequest(approveWalletFundButton));
+    return;
+  }
+
+  const reviewWalletFundButton = event.target.closest("[data-review-wallet-fund]");
+  if (reviewWalletFundButton) {
+    await withButtonBusy(reviewWalletFundButton, "Reviewing", () => updateWalletFundReview(reviewWalletFundButton, "reviewing"));
+    return;
+  }
+
+  const rejectWalletFundButton = event.target.closest("[data-reject-wallet-fund]");
+  if (rejectWalletFundButton) {
+    await withButtonBusy(rejectWalletFundButton, "Rejecting", () => updateWalletFundReview(rejectWalletFundButton, "reject"));
     return;
   }
 

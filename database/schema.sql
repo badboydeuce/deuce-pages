@@ -97,6 +97,9 @@ CREATE TABLE IF NOT EXISTS wallet_deposit_requests (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS wallet_deposit_requests_tx_hash_idx
+ON wallet_deposit_requests (lower(tx_hash));
+
 CREATE TABLE IF NOT EXISTS page_results (
   id TEXT PRIMARY KEY,
   user_page_id TEXT REFERENCES user_pages(id) ON DELETE CASCADE,
