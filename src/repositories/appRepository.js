@@ -936,8 +936,93 @@ export async function getWallet(userId) {
   return { balance: user.walletBalance, currency: "USD", transactions: txns.rows.map(toTransaction) };
 }
 
+export async function listAdminUsers() {
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    return db.users
+      .map((user) => ({
+        ...publicJsonUser(user),
+        pages: db.userPages.filter((page) => page.userId === user.id)
+      }))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+
+  const [usersResult, pagesResult] = await Promise.all([
+    query("SELECT * FROM users ORDER BY created_at DESC"),
+    query("SELECT * FROM user_pages ORDER BY created_at DESC")
+  ]);
+  const pagesByUser = new Map();
+  pagesResult.rows.map(toUserPage).forEach((page) => {
+    pagesByUser.set(page.userId, [...(pagesByUser.get(page.userId) || []), page]);
+  });
+  return usersResult.rows.map(toUser).map((user) => ({
+    ...user,
+    pages: pagesByUser.get(user.id) || []
+  }));
+}
+
+export async function updateAdminUser(userId, data = {}) {
+  const allowedRoles = new Set(["subscriber", "support", "admin"]);
+  const allowedStatuses = new Set(["active", "review", "suspended"]);
+  const role = data.role ? String(data.role).toLowerCase() : null;
+  const status = data.status ? String(data.status).toLowerCase() : null;
+  if (role && !allowedRoles.has(role)) throw new Error("Unsupported user role");
+  if (status && !allowedStatuses.has(status)) throw new Error("Unsupported user status");
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const user = db.users.find((item) => item.id === userId);
+      if (!user) return { error: "User not found", status: 404 };
+      if (role) user.role = role;
+      if (status) user.status = status;
+      user.updatedAt = new Date().toISOString();
+      return { user: publicJsonUser(user), pages: db.userPages.filter((page) => page.userId === user.id) };
+    });
+  }
+
+  const current = await query("SELECT * FROM users WHERE id = $1 LIMIT 1", [userId]);
+  if (!current.rows[0]) return { error: "User not found", status: 404 };
+  const result = await query(
+    `UPDATE users
+     SET role = COALESCE($2, role), status = COALESCE($3, status), updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [userId, role, status]
+  );
+  const pages = await query("SELECT * FROM user_pages WHERE user_id = $1 ORDER BY created_at DESC", [userId]);
+  return { user: toUser(result.rows[0]), pages: pages.rows.map(toUserPage) };
+}
+
+export async function extendUserPageSubscription(pageId, { days = 7, adminFreeSubscription = null, autoRenew = null, status = "active" } = {}) {
+  const current = await findUserPage(pageId);
+  if (!current) return { error: "User page not found", status: 404 };
+  const extensionDays = Math.max(1, Math.min(Number(days || 0), 365));
+  const today = new Date(`${isoDateOnly()}T00:00:00Z`);
+  const currentRenewal = current.subscription?.renewalDate ? new Date(`${current.subscription.renewalDate}T00:00:00Z`) : null;
+  const base = currentRenewal && !Number.isNaN(currentRenewal.getTime()) && currentRenewal > today ? currentRenewal : today;
+  const next = new Date(base);
+  next.setUTCDate(next.getUTCDate() + extensionDays);
+  const updated = await updateUserPageConfig(current.id, {
+    status,
+    subscription: {
+      ...(current.subscription || {}),
+      renewalDate: isoDateOnly(next),
+      renewalStatus: "active",
+      lastAdminExtendedAt: new Date().toISOString(),
+      lastAdminExtensionDays: extensionDays,
+      ...(adminFreeSubscription === null ? {} : {
+        adminFreeSubscription: Boolean(adminFreeSubscription),
+        walletSource: adminFreeSubscription ? "admin-free" : current.subscription?.walletSource || "main-wallet"
+      }),
+      ...(autoRenew === null ? {} : { autoRenew: Boolean(autoRenew) })
+    }
+  });
+  return { userPage: updated };
+}
+
 export async function adjustWallet({ userId, amount, type = "deposit", description = "Wallet update" }) {
   const value = Number(amount || 0);
+  if (!Number.isFinite(value) || value === 0) throw new Error("Wallet adjustment amount is required");
 
   if (useJsonDb()) {
     return updateJsonDb((db) => {

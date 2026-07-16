@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authRouter } from "./routes/auth.js";
+import { adminUsersRouter } from "./routes/adminUsers.js";
 import { packagesRouter } from "./routes/packages.js";
 import { userPagesRouter } from "./routes/userPages.js";
 import { walletRouter } from "./routes/wallet.js";
@@ -58,6 +59,7 @@ export function createApp() {
   app.use("/api/packages", packagesRouter);
   app.use("/api/admin/packages", packagesRouter);
   app.use("/api/admin/import", importsRouter);
+  app.use("/api/admin/users", adminUsersRouter);
   app.use("/api/user-pages", userPagesRouter);
   app.use("/api/wallet", walletRouter);
   app.use("/api/page-security", securityRouter);

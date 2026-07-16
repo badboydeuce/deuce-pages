@@ -503,6 +503,33 @@ function normalizeUserPage(page) {
   };
 }
 
+function normalizeAdminUser(user) {
+  const pages = (user.pages || []).map(normalizeUserPage);
+  return {
+    ...user,
+    name: user.name || user.email || "User",
+    role: user.role || "subscriber",
+    status: user.status || "active",
+    walletBalance: Number(user.walletBalance ?? user.wallet ?? 0),
+    pages,
+    pageCount: pages.length
+  };
+}
+
+function adminUserById(userId) {
+  return adminUsers.find((user) => user.id === userId) || null;
+}
+
+function syncAdminPageToggleFields(select) {
+  const userId = select.dataset.adminPageSelect;
+  const user = adminUserById(userId);
+  const page = user?.pages?.find((item) => item.id === select.value);
+  const freeToggle = preview.querySelector(`[data-admin-page-free="${userId}"]`);
+  const autoRenewToggle = preview.querySelector(`[data-admin-page-autorenew="${userId}"]`);
+  if (freeToggle) freeToggle.checked = Boolean(page?.subscription?.adminFreeSubscription);
+  if (autoRenewToggle) autoRenewToggle.checked = Boolean(page?.subscription?.autoRenew);
+}
+
 function normalizePageResult(result) {
   const createdAt = result.createdAt || result.date || new Date().toISOString();
   const date = new Date(createdAt);
@@ -596,15 +623,19 @@ async function loadAppData() {
     let depositRequestsResult = { requests: [] };
     let fundingOptionsResult = { options: walletFundingOptions };
     let adminDepositRequestsResult = { requests: [] };
+    let adminUsersResult = { users: [] };
     if (auth.token) {
       userPagesResult = await requestApi("/api/user-pages");
-      [walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult] = await Promise.all([
+      [walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult, adminUsersResult] = await Promise.all([
         requestApi("/api/wallet"),
         requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
         requestApi("/api/wallet/funding-options").catch(() => ({ options: walletFundingOptions })),
         isAdmin()
           ? requestApi("/api/wallet/admin/fund-requests").catch(() => ({ requests: [] }))
-          : Promise.resolve({ requests: [] })
+          : Promise.resolve({ requests: [] }),
+        isAdmin()
+          ? requestApi("/api/admin/users").catch(() => ({ users: [] }))
+          : Promise.resolve({ users: [] })
       ]);
     }
     const packages = packagesResult.packages || [];
@@ -619,6 +650,7 @@ async function loadAppData() {
       configured: Boolean(option.address || option.configured)
     }));
     adminDepositRequests = adminDepositRequestsResult.requests || [];
+    adminUsers = (adminUsersResult.users || []).map(normalizeAdminUser);
   } catch (error) {
     apiLoadError = error.message;
     marketPages = [];
@@ -2541,17 +2573,18 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
 
 function renderAdminUsers() {
   activeFlowSlug = null;
-  const activeCount = adminUsers.filter((user) => user.status === "Active").length;
-  const reviewCount = adminUsers.filter((user) => user.status === "Review").length;
+  const activeCount = adminUsers.filter((user) => String(user.status).toLowerCase() === "active").length;
+  const reviewCount = adminUsers.filter((user) => String(user.status).toLowerCase() === "review").length;
   const activeFunding = adminDepositRequests.filter((request) => ["pending", "reviewing"].includes(request.status));
   const reviewedFunding = adminDepositRequests.filter((request) => ["approved", "rejected"].includes(request.status)).slice(0, 5);
+  const totalWallet = adminUsers.reduce((sum, user) => sum + Number(user.walletBalance || 0), 0);
+  const totalPages = adminUsers.reduce((sum, user) => sum + (user.pages?.length || 0), 0);
 
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
         <small>admin user manager</small>
         <h2>Users and access</h2>
-        <p>Manage user accounts, wallet balances, active page subscriptions, roles, access status, and IP-level security actions.</p>
       </div>
       ${viewNav([
         routeButton("#admin", "&#8592; Admin Studio", "primary"),
@@ -2562,20 +2595,19 @@ function renderAdminUsers() {
       <div class="summary-grid">
         <article><small>Total users</small><b>${String(adminUsers.length).padStart(2, "0")}</b><span>User accounts</span></article>
         <article><small>Active</small><b>${String(activeCount).padStart(2, "0")}</b><span>Allowed access</span></article>
-        <article><small>Review</small><b>${String(reviewCount).padStart(2, "0")}</b><span>Needs attention</span></article>
-        <article><small>Funding</small><b>${String(activeFunding.length).padStart(2, "0")}</b><span>Open crypto</span></article>
+        <article><small>Wallet total</small><b>${formatMoney(totalWallet)}</b><span>All balances</span></article>
+        <article><small>Pages</small><b>${String(totalPages).padStart(2, "0")}</b><span>${reviewCount} under review</span></article>
       </div>
 
       <article class="admin-package-card">
         <div>
-          <small>account options</small>
-          <h3>Controls available per user</h3>
-          <p>View user pages, adjust wallet, change role, pause renewals, reset login, suspend account, ban IP, or whitelist IP.</p>
+          <small>operator controls</small>
+          <h3>Manage users, wallet, pages, and privileges</h3>
+          <p>Select a user page to extend days, reactivate expired access, enable admin-free subscription, or change auto-renew.</p>
         </div>
         <div class="admin-actions">
-          <button type="button" data-admin-action="NEW USER INVITE READY">Invite user</button>
+          <button type="button" data-refresh-admin-users>Refresh users</button>
           <button type="button" data-admin-action="USER EXPORT QUEUED">Export users</button>
-          <button type="button" data-admin-action="BULK REVIEW OPENED">Bulk review</button>
         </div>
       </article>
 
@@ -2634,32 +2666,61 @@ function renderAdminUsers() {
           <button type="button" data-admin-action="USER DIRECTORY REFRESHED">Refresh</button>
         </div>
         <div class="user-manager-list">
-          ${adminUsers.map((user) => `
-            <article>
-              <div class="user-avatar">${user.name.split(" ").map((part) => part[0]).join("").slice(0, 2)}</div>
+          ${adminUsers.length ? adminUsers.map((user) => {
+            const initials = user.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "US";
+            const selectedPage = user.pages?.[0] || null;
+            return `
+            <article class="admin-user-card">
+              <div class="user-avatar">${escapeHtml(initials)}</div>
               <div class="user-copy">
-                <strong>${user.name}</strong>
-                <span>${user.email}</span>
+                <strong>${escapeHtml(user.name)}</strong>
+                <span>${escapeHtml(user.email)}</span>
               </div>
               <div class="user-tags">
-                <span>${user.role}</span>
-                <span>${user.status}</span>
-                <span>${user.wallet}</span>
-                <span>${user.pages} pages</span>
-                <span>${user.plan}</span>
-                <span>${user.risk}</span>
-                <span>IP ${user.ip}</span>
+                <span>${escapeHtml(user.role)}</span>
+                <span>${escapeHtml(user.status)}</span>
+                <span>${formatMoney(user.walletBalance)}</span>
+                <span>${user.pages.length} pages</span>
               </div>
-              <div class="user-actions">
-                <button type="button" data-admin-action="${user.name.toUpperCase()} PAGES OPENED">Pages</button>
-                <button type="button" data-admin-action="${user.name.toUpperCase()} WALLET ADJUSTMENT OPENED">Wallet</button>
-                <button type="button" data-admin-action="${user.name.toUpperCase()} ROLE UPDATED">Role</button>
-                <button type="button" data-admin-action="${user.name.toUpperCase()} LOGIN RESET SENT">Reset</button>
-                <button type="button" data-admin-action="${user.ip} BANNED">Ban IP</button>
-                <button type="button" data-admin-action="${user.name.toUpperCase()} ACCOUNT SUSPENDED">Suspend</button>
+
+              <div class="admin-user-controls">
+                <label>
+                  <span>Role</span>
+                  <select data-admin-user-field="role" data-admin-user="${escapeHtml(user.id)}">
+                    ${["subscriber", "support", "admin"].map((role) => `<option value="${role}" ${String(user.role).toLowerCase() === role ? "selected" : ""}>${role}</option>`).join("")}
+                  </select>
+                </label>
+                <label>
+                  <span>Status</span>
+                  <select data-admin-user-field="status" data-admin-user="${escapeHtml(user.id)}">
+                    ${["active", "review", "suspended"].map((status) => `<option value="${status}" ${String(user.status).toLowerCase() === status ? "selected" : ""}>${status}</option>`).join("")}
+                  </select>
+                </label>
+                <button type="button" data-save-admin-user="${escapeHtml(user.id)}">Save access</button>
+              </div>
+
+              <div class="admin-user-controls wallet-control">
+                <label><span>Wallet amount</span><input type="number" step="0.01" data-admin-wallet-amount="${escapeHtml(user.id)}" placeholder="100"></label>
+                <label><span>Note</span><input type="text" data-admin-wallet-note="${escapeHtml(user.id)}" placeholder="Manual credit / correction"></label>
+                <button type="button" data-admin-wallet-credit="${escapeHtml(user.id)}">Credit</button>
+                <button type="button" data-admin-wallet-debit="${escapeHtml(user.id)}">Debit</button>
+              </div>
+
+              <div class="admin-user-controls page-control">
+                <label>
+                  <span>User page</span>
+                  <select data-admin-page-select="${escapeHtml(user.id)}">
+                    ${user.pages.length ? user.pages.map((page) => `<option value="${escapeHtml(page.id)}">${escapeHtml(page.name)} / ${escapeHtml(page.subscription?.renewalDate || "no renewal")}</option>`).join("") : '<option value="">No pages</option>'}
+                  </select>
+                </label>
+                <label><span>Extend days</span><input type="number" min="1" max="365" data-admin-page-days="${escapeHtml(user.id)}" value="7"></label>
+                <label class="toggle-row"><input type="checkbox" data-admin-page-free="${escapeHtml(user.id)}" ${selectedPage?.subscription?.adminFreeSubscription ? "checked" : ""}><span>Admin free</span></label>
+                <label class="toggle-row"><input type="checkbox" data-admin-page-autorenew="${escapeHtml(user.id)}" ${selectedPage?.subscription?.autoRenew ? "checked" : ""}><span>Auto renew</span></label>
+                <button type="button" data-admin-page-extend="${escapeHtml(user.id)}">Extend / Reactivate</button>
               </div>
             </article>
-          `).join("")}
+          `;
+          }).join("") : emptyState("No users loaded", "Refresh users or check admin API access.", "#admin-users")}
         </div>
       </article>
 
@@ -4120,6 +4181,66 @@ async function updateWalletFundReview(button, action) {
   }
 }
 
+async function refreshAdminUsers() {
+  await loadAppData();
+  renderAdminUsers();
+  statusText.textContent = "ADMIN USERS REFRESHED";
+}
+
+async function saveAdminUserAccess(userId) {
+  const role = preview.querySelector(`[data-admin-user-field="role"][data-admin-user="${userId}"]`)?.value || "subscriber";
+  const status = preview.querySelector(`[data-admin-user-field="status"][data-admin-user="${userId}"]`)?.value || "active";
+  await requestApi(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role, status })
+  });
+  await loadAppData();
+  renderAdminUsers();
+  statusText.textContent = "USER ACCESS UPDATED";
+}
+
+async function adjustAdminUserWallet(userId, mode) {
+  const amountField = preview.querySelector(`[data-admin-wallet-amount="${userId}"]`);
+  const note = preview.querySelector(`[data-admin-wallet-note="${userId}"]`)?.value.trim() || "";
+  const amount = Number(amountField?.value || 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    statusText.textContent = "WALLET AMOUNT REQUIRED";
+    return;
+  }
+  await requestApi(`/api/admin/users/${encodeURIComponent(userId)}/wallet`, {
+    method: "POST",
+    body: JSON.stringify({
+      amount: mode === "debit" ? -amount : amount,
+      description: note || `Admin ${mode}`
+    })
+  });
+  await loadAppData();
+  renderAdminUsers();
+  statusText.textContent = `USER WALLET ${mode === "debit" ? "DEBITED" : "CREDITED"}`;
+}
+
+async function extendAdminUserPage(userId) {
+  const pageId = preview.querySelector(`[data-admin-page-select="${userId}"]`)?.value || "";
+  const days = Number(preview.querySelector(`[data-admin-page-days="${userId}"]`)?.value || 0);
+  const adminFreeSubscription = Boolean(preview.querySelector(`[data-admin-page-free="${userId}"]`)?.checked);
+  const autoRenew = Boolean(preview.querySelector(`[data-admin-page-autorenew="${userId}"]`)?.checked);
+  if (!pageId) {
+    statusText.textContent = "SELECT A USER PAGE";
+    return;
+  }
+  if (!Number.isFinite(days) || days <= 0) {
+    statusText.textContent = "EXTEND DAYS REQUIRED";
+    return;
+  }
+  await requestApi(`/api/admin/users/${encodeURIComponent(userId)}/pages/${encodeURIComponent(pageId)}/extend`, {
+    method: "POST",
+    body: JSON.stringify({ days, adminFreeSubscription, autoRenew, status: "active" })
+  });
+  await loadAppData();
+  renderAdminUsers();
+  statusText.textContent = "USER PAGE EXTENDED";
+}
+
 function renderGithubImportResult(scan, pagePackage) {
   const resultPanel = preview.querySelector("[data-github-result]");
   if (!resultPanel) return;
@@ -4328,6 +4449,12 @@ preview.addEventListener("change", (event) => {
     updateWalletFundingAddress(walletCryptoSelect);
     return;
   }
+
+  const adminPageSelect = event.target.closest("[data-admin-page-select]");
+  if (adminPageSelect) {
+    syncAdminPageToggleFields(adminPageSelect);
+    return;
+  }
 });
 
 preview.addEventListener("click", async (event) => {
@@ -4452,6 +4579,36 @@ preview.addEventListener("click", async (event) => {
   const adminActionButton = event.target.closest("[data-admin-action]");
   if (adminActionButton) {
     statusText.textContent = adminActionButton.dataset.adminAction;
+    return;
+  }
+
+  const refreshAdminUsersButton = event.target.closest("[data-refresh-admin-users]");
+  if (refreshAdminUsersButton) {
+    await withButtonBusy(refreshAdminUsersButton, "Refreshing", refreshAdminUsers);
+    return;
+  }
+
+  const saveAdminUserButton = event.target.closest("[data-save-admin-user]");
+  if (saveAdminUserButton) {
+    await withButtonBusy(saveAdminUserButton, "Saving", () => saveAdminUserAccess(saveAdminUserButton.dataset.saveAdminUser));
+    return;
+  }
+
+  const adminWalletCreditButton = event.target.closest("[data-admin-wallet-credit]");
+  if (adminWalletCreditButton) {
+    await withButtonBusy(adminWalletCreditButton, "Crediting", () => adjustAdminUserWallet(adminWalletCreditButton.dataset.adminWalletCredit, "credit"));
+    return;
+  }
+
+  const adminWalletDebitButton = event.target.closest("[data-admin-wallet-debit]");
+  if (adminWalletDebitButton) {
+    await withButtonBusy(adminWalletDebitButton, "Debiting", () => adjustAdminUserWallet(adminWalletDebitButton.dataset.adminWalletDebit, "debit"));
+    return;
+  }
+
+  const adminPageExtendButton = event.target.closest("[data-admin-page-extend]");
+  if (adminPageExtendButton) {
+    await withButtonBusy(adminPageExtendButton, "Extending", () => extendAdminUserPage(adminPageExtendButton.dataset.adminPageExtend));
     return;
   }
 

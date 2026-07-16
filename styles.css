@@ -2393,6 +2393,87 @@ code,
   padding-top: 2px;
 }
 
+.admin-user-controls {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.admin-user-controls label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-user-controls label span {
+  color: var(--muted);
+  font: 800 0.66rem var(--mono);
+  text-transform: uppercase;
+}
+
+.admin-user-controls input,
+.admin-user-controls select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.045);
+  font-weight: 750;
+}
+
+.admin-user-controls .toggle-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+}
+
+.admin-user-controls .toggle-row input {
+  width: auto;
+  min-height: auto;
+}
+
+.admin-user-controls button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--bg-deep);
+  background: var(--accent);
+  cursor: pointer;
+  font-size: 0.73rem;
+  font-weight: 850;
+}
+
+.admin-user-controls.wallet-control button:last-child {
+  color: #ffd8d8;
+  border-color: rgba(255, 97, 97, 0.35);
+  background: rgba(255, 97, 97, 0.12);
+}
+
+:root[data-theme="light"] .admin-user-controls {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(255, 255, 255, 0.66);
+}
+
+:root[data-theme="light"] .admin-user-controls input,
+:root[data-theme="light"] .admin-user-controls select {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+:root[data-theme="light"] .admin-user-controls button {
+  color: #ffffff;
+}
+
 .user-actions button {
   min-height: 34px;
   padding: 0 10px;
