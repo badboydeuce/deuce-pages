@@ -1001,9 +1001,9 @@ function createPackageRuntimeIndex(page, pagePackage) {
     <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
     <section id="deuceBlock">
       <article>
-        <small>access blocked</small>
-        <h1 id="deuceBlockTitle">Domain not authorized</h1>
-        <p id="deuceBlockCopy">This generated page is not allowed to run on this domain.</p>
+        <small>access denied</small>
+        <h1 id="deuceBlockTitle">ACCESS DENIED</h1>
+        <p id="deuceBlockCopy">ACCESS DENIED</p>
       </article>
     </section>
     <script>
@@ -1022,7 +1022,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
       }
 
       if (allowed.length && !allowed.includes(host)) {
-        blockPage("This page is only configured for " + allowed.join(", ") + ".");
+        blockPage("ACCESS DENIED");
       } else {
         frame.src = config.runtime.sourceEndpoint;
       }
@@ -1237,9 +1237,9 @@ function createGeneratedIndex(page) {
       function blockPage(reason, detail) {
         runtimeAllowed = false;
         document.querySelector("main").classList.add("blocked");
-        stepLabel.textContent = "access blocked";
-        screenTitle.textContent = reason;
-        screenCopy.textContent = detail;
+        stepLabel.textContent = "access denied";
+        screenTitle.textContent = "ACCESS DENIED";
+        screenCopy.textContent = "ACCESS DENIED";
         screenForm.innerHTML = "";
         progress.textContent = "blocked";
       }
@@ -1249,7 +1249,7 @@ function createGeneratedIndex(page) {
         const hostname = window.location.hostname;
 
         if (allowedDomains.length && !allowedDomains.includes(hostname)) {
-          blockPage("Domain not authorized", "This page is not allowed to run on " + hostname + ". Update the domain allowlist inside DEUCE Pages.");
+          blockPage("ACCESS DENIED", "ACCESS DENIED");
           return false;
         }
         return true;
@@ -1278,7 +1278,7 @@ function createGeneratedIndex(page) {
           if (!response.ok) return true;
           const decision = await response.json();
           if (decision.allowed === false) {
-            blockPage("Security rule blocked this visit", decision.reason || "This visit was blocked by your DEUCE Pages security settings.");
+            blockPage("ACCESS DENIED", "ACCESS DENIED");
             return false;
           }
           return true;
@@ -1398,7 +1398,7 @@ function createGeneratedIndex(page) {
           });
           const result = await response.json().catch(() => ({}));
           if (!response.ok || !result.verified) {
-            screenCopy.textContent = result.reason || "Turnstile verification failed.";
+            screenCopy.textContent = "ACCESS DENIED";
             return false;
           }
           captchaPassed = true;
@@ -2832,6 +2832,7 @@ function ownedPageCard(page, index) {
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="security">&#128737; Security</button>
             <button type="button" data-results="${escapeHtml(page.slug)}">&#128193; Results</button>
             <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="traffic">&#128200; Traffic</button>
+            <button type="button" data-page-log="${escapeHtml(page.slug)}">&#128220; Log</button>
             <button type="button" data-renew-page="${escapeHtml(page.slug)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; ${escapeHtml(renewButtonLabel)}</button>
           </section>
         </div>
@@ -3333,7 +3334,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const tabButtons = [
     routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
     routeButton(`#security-${page.slug}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:traffic`, "Traffic", tab === "traffic" ? "primary" : "")
+    routeButton(`#security-${page.slug}:traffic`, "Page Log", tab === "traffic" ? "primary" : "")
   ];
   const captchaPanel = `
     <article class="security-panel">
@@ -3420,8 +3421,8 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
     <article class="security-panel security-panel-wide">
       <div class="builder-heading">
         <div>
-          <small>traffic</small>
-          <h3>Recent visits</h3>
+          <small>page log</small>
+          <h3>Recent page events</h3>
         </div>
         <button type="button" data-route="#security-${page.slug}:traffic">Refresh</button>
       </div>
@@ -4842,6 +4843,13 @@ preview.addEventListener("click", async (event) => {
   if (securityButton) {
     setAppBusy(true, "Opening security");
     window.location.hash = `security-${securityButton.dataset.security}:${securityButton.dataset.securityTab}`;
+    return;
+  }
+
+  const pageLogButton = event.target.closest("[data-page-log]");
+  if (pageLogButton) {
+    setAppBusy(true, "Opening page log");
+    window.location.hash = `security-${pageLogButton.dataset.pageLog}:traffic`;
     return;
   }
 

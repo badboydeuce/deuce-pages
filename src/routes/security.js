@@ -5,6 +5,7 @@ import { turnstileSecretFor, verifyTurnstileToken } from "../services/turnstile.
 import { deviceBlocked } from "../services/deviceRules.js";
 
 export const securityRouter = Router();
+const accessDeniedMessage = "ACCESS DENIED";
 
 const securityPayloadLimit = 16 * 1024;
 
@@ -41,31 +42,31 @@ function payloadTooLarge(req, res) {
 async function securityContext(req, res) {
   const userPageId = String(req.body.userPageId || req.body.pageId || "").trim();
   if (!userPageId) {
-    res.status(400).json({ allowed: false, reason: "Runtime page id required" });
+    res.status(400).json({ allowed: false, reason: accessDeniedMessage });
     return null;
   }
   const userPage = await resolveUserPageSubscription(userPageId);
   if (!userPage) {
-    res.status(404).json({ allowed: false, reason: "Page config not found" });
+    res.status(404).json({ allowed: false, reason: accessDeniedMessage });
     return null;
   }
 
   const expectedSecret = relaySecretFor(userPage);
   if (expectedSecret && !safeCompare(req.headers["x-deuce-relay-secret"], expectedSecret)) {
-    res.status(403).json({ allowed: false, reason: "Relay secret rejected" });
+    res.status(403).json({ allowed: false, reason: accessDeniedMessage });
     return null;
   }
 
   const hostname = normalizeHost(req.headers["x-deuce-client-host"] || req.body.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(userPage);
   if (allowedHosts.length && (!hostname || !allowedHosts.includes(hostname))) {
-    res.status(403).json({ allowed: false, reason: "Domain is not allowed", host: hostname });
+    res.status(403).json({ allowed: false, reason: accessDeniedMessage });
     return null;
   }
 
   const subscription = pageSubscriptionState(userPage);
   if (subscription.blocked) {
-    res.status(402).json({ allowed: false, reason: "Page subscription is not active", status: subscription.status });
+    res.status(402).json({ allowed: false, reason: accessDeniedMessage });
     return null;
   }
 
@@ -96,8 +97,8 @@ securityRouter.post("/check", async (req, res) => {
       metadata: { deviceType: device.deviceType }
     }, ip, req.headers["user-agent"]);
 
-    if (banned) return res.status(403).json({ allowed: false, reason: "IP address is banned" });
-    if (device.blocked) return res.status(403).json({ allowed: false, reason: `${device.deviceType} devices are blocked`, deviceType: device.deviceType });
+    if (banned) return res.status(403).json({ allowed: false, reason: accessDeniedMessage });
+    if (device.blocked) return res.status(403).json({ allowed: false, reason: accessDeniedMessage });
 
     res.json({ allowed: true, captchaRequired: Boolean(security.captcha), deviceType: device.deviceType, event });
   } catch (error) {
@@ -125,7 +126,7 @@ securityRouter.post("/turnstile/verify", async (req, res) => {
     });
 
     if (!result.success) {
-      res.status(403).json({ verified: false, reason: result.error || "Turnstile verification failed" });
+      res.status(403).json({ verified: false, reason: accessDeniedMessage });
       return;
     }
 
@@ -141,6 +142,6 @@ securityRouter.post("/turnstile/verify", async (req, res) => {
 
     res.json({ verified: true });
   } catch (error) {
-    res.status(400).json({ verified: false, reason: error.message });
+    res.status(400).json({ verified: false, reason: accessDeniedMessage });
   }
 });

