@@ -100,6 +100,49 @@ const screenLibrary = [
 let activeFlowSlug = null;
 let draggedScreenName = null;
 let apiLoadError = "";
+const appearanceStorageKey = "deuceAppearance";
+
+function getAppearancePreference() {
+  try {
+    return JSON.parse(localStorage.getItem(appearanceStorageKey)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveAppearancePreference(nextPreference) {
+  const current = getAppearancePreference();
+  localStorage.setItem(appearanceStorageKey, JSON.stringify({ ...current, ...nextPreference }));
+}
+
+function setThemeMode(theme, persist = false) {
+  const nextTheme = theme === "light" ? "light" : "dark";
+  const isLight = nextTheme === "light";
+  document.documentElement.dataset.theme = nextTheme;
+  themeToggle?.setAttribute("aria-label", isLight ? "Switch to dark theme" : "Switch to light theme");
+  if (themeToggle) {
+    themeToggle.innerHTML = isLight
+      ? '<span aria-hidden="true">&#9728;</span><strong>Light Mode</strong>'
+      : '<span aria-hidden="true">&#127769;</span><strong>Dark Mode</strong>';
+  }
+  if (persist) saveAppearancePreference({ theme: nextTheme });
+}
+
+function setAccentColor(accent, persist = false) {
+  const nextAccent = accent || "#7CFFB2";
+  document.documentElement.style.setProperty("--accent", nextAccent);
+  document.documentElement.style.setProperty("--line", `${nextAccent}33`);
+  document.querySelectorAll(".swatch").forEach((item) => {
+    item.classList.toggle("active", item.dataset.accent?.toLowerCase() === nextAccent.toLowerCase());
+  });
+  if (persist) saveAppearancePreference({ accent: nextAccent });
+}
+
+function applyAppearancePreference() {
+  const preference = getAppearancePreference();
+  setThemeMode(preference.theme || document.documentElement.dataset.theme || "dark");
+  setAccentColor(preference.accent || "#7CFFB2");
+}
 
 async function saveFlowState(page) {
   try {
@@ -2965,20 +3008,13 @@ swatches.addEventListener("click", (event) => {
   const swatch = event.target.closest(".swatch");
   if (!swatch) return;
 
-  document.documentElement.style.setProperty("--accent", swatch.dataset.accent);
-  document.documentElement.style.setProperty("--line", `${swatch.dataset.accent}33`);
-  document.querySelectorAll(".swatch").forEach((item) => item.classList.remove("active"));
-  swatch.classList.add("active");
+  setAccentColor(swatch.dataset.accent, true);
 });
 
 themeToggle.addEventListener("click", () => {
   const root = document.documentElement;
   const isLight = root.dataset.theme === "light";
-  root.dataset.theme = isLight ? "dark" : "light";
-  themeToggle.setAttribute("aria-label", isLight ? "Switch to light theme" : "Switch to dark theme");
-  themeToggle.innerHTML = isLight
-    ? '<span aria-hidden="true">&#127769;</span><strong>Dark Mode</strong>'
-    : '<span aria-hidden="true">&#9728;</span><strong>Light Mode</strong>';
+  setThemeMode(isLight ? "dark" : "light", true);
 });
 
 document.querySelector("[data-logout]")?.addEventListener("click", handleLogout);
@@ -3464,6 +3500,7 @@ sizeMatrix();
 resetStreams();
 drawMatrix();
 renderButtons();
+applyAppearancePreference();
 async function initApp() {
   statusText.textContent = "LOADING API DATA";
   syncAdminVisibility();
