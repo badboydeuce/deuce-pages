@@ -3131,92 +3131,87 @@ function renderUserConfigCenter(pageSlug = "page-a") {
     renderMissingPage();
     return;
   }
-  const snapshot = {
-    id: page.id,
-    userId: page.userId,
-    packageId: page.packageId,
-    packageVersion: page.packageVersion,
-    domain: page.domain,
-    subscription: page.subscription,
-    generatedFile: page.generatedFile,
-    resultSettings: page.resultSettings,
-    flow: page.flow,
-    securityConfig: page.securityConfig
-  };
+  const subscription = page.subscription || {};
+  const hosting = page.hostingConfig || {};
+  const resultSettings = page.resultSettings || {};
+  const domain = hosting.domain || page.domain || "";
+  const planLabel = subscription.billingPeriod ? billingLabel(subscription.billingPeriod) : "Not set";
+  const renewalPrice = formatMoney(subscription.renewalPrice || 0);
+  const renewalDate = subscription.renewalDate || "Not scheduled";
+  const liveStatus = hosting.liveStatus || (hosting.verified ? "Live" : "Setup needed");
 
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
-        <small>user config</small>
+        <small>page config</small>
         <h2>${page.name} configuration</h2>
-        <p>Set the page domain, subscription behavior, runtime endpoints, and result capture rules. Downloading the final index.html now happens only inside Go Live.</p>
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
         routeButton(`#security-${page.slug}:security`, "Security"),
-        routeButton(`#results-${page.slug}`, "Results")
+        routeButton(`#results-${page.slug}`, "Results"),
+        routeButton(`#go-live-${page.slug}`, "Go Live")
       ])}
 
       <div class="summary-grid">
-        <article><small>User page ID</small><b>${page.id}</b><span>${page.userId}</span></article>
-        <article><small>Package</small><b>${page.packageVersion}</b><span>${page.packageId}</span></article>
-        <article><small>Renewal</small><b>$${page.subscription.renewalPrice}</b><span>${page.subscription.billingPeriod} / ${page.subscription.renewalDate}</span></article>
-        <article><small>Generated</small><b>${page.generatedFile.version}</b><span>${page.generatedFile.downloadName}</span></article>
+        <article><small>Domain</small><b>${escapeHtml(domain || "Not set")}</b><span>Live host</span></article>
+        <article><small>Plan</small><b>${escapeHtml(planLabel)}</b><span>${escapeHtml(renewalPrice)} renewal</span></article>
+        <article><small>Renewal</small><b>${escapeHtml(renewalDate)}</b><span>${subscription.autoRenew ? "Auto-renew on" : "Auto-renew off"}</span></article>
+        <article><small>Status</small><b>${escapeHtml(liveStatus)}</b><span>${page.securityConfig?.captcha ? "Captcha on" : "Captcha off"}</span></article>
       </div>
 
       <div class="package-editor-grid">
         <article class="security-panel package-form">
-          <small>subscription</small>
-          <h3>Billing config</h3>
-          <label>
-            <span>Billing period</span>
-            <select data-user-config="billingPeriod">
-              ${["daily", "weekly", "biweekly", "monthly"].map((period) => `<option value="${period}" ${page.subscription.billingPeriod === period ? "selected" : ""}>${period}</option>`).join("")}
-            </select>
-          </label>
-          <label><span>Renewal price</span><input type="number" min="0" data-user-config="renewalPrice" value="${page.subscription.renewalPrice}"></label>
-          <label><span>Renewal date</span><input type="date" data-user-config="renewalDate" value="${page.subscription.renewalDate}"></label>
-          <label class="toggle-row">
-            <input type="checkbox" data-user-config="autoRenew" ${page.subscription.autoRenew ? "checked" : ""}>
-            <span>Auto-renew from wallet</span>
-          </label>
+          <small>domain</small>
+          <h3>Page identity</h3>
+          <label><span>Primary domain</span><input type="text" data-user-config="domain" value="${escapeHtml(domain)}" placeholder="clientdomain.com"></label>
+          <p>This domain is used for the hosted page and allowed-host security checks.</p>
+          <div class="admin-actions">
+            <button type="button" data-save-user-config="${page.slug}">Save config</button>
+            <button type="button" data-go-live="${page.slug}">Go Live</button>
+          </div>
         </article>
 
         <article class="security-panel package-form">
-          <small>hosting</small>
-          <h3>Domain and runtime</h3>
-          <label><span>Primary domain</span><input type="text" data-user-config="domain" value="${page.domain}" placeholder="clientdomain.com"></label>
-          <label><span>API base</span><input type="text" data-user-config="apiBase" value="${page.generatedFile.apiBase}"></label>
-          <label><span>Download name</span><input type="text" data-user-config="downloadName" value="${page.generatedFile.downloadName}"></label>
-          <label><span>Build version</span><input type="text" data-user-config="fileVersion" value="${page.generatedFile.version}"></label>
+          <small>subscription</small>
+          <h3>Renewal behavior</h3>
+          <label class="toggle-row">
+            <input type="checkbox" data-user-config="autoRenew" ${subscription.autoRenew ? "checked" : ""}>
+            <span>Auto-renew from wallet</span>
+          </label>
+          <div class="feature-row">
+            <span>${escapeHtml(planLabel)}</span>
+            <span>${escapeHtml(renewalPrice)}</span>
+            <span>${escapeHtml(renewalDate)}</span>
+          </div>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save config</button>
-            <button type="button" data-go-live="${page.slug}">Go Live / Download</button>
+            <button type="button" data-save-user-config="${page.slug}">Save renewal</button>
+            <button type="button" data-route="#wallet">Wallet</button>
           </div>
         </article>
 
         <article class="security-panel package-form">
           <small>results</small>
-          <h3>Capture settings</h3>
-          <label><span>Result webhook</span><input type="text" data-user-config="webhook" value="${page.resultSettings.webhook}"></label>
-          <label><span>Retention days</span><input type="number" min="1" data-user-config="retentionDays" value="${page.resultSettings.retentionDays}"></label>
+          <h3>Result handling</h3>
+          <label><span>Keep results for</span><input type="number" min="1" data-user-config="retentionDays" value="${escapeHtml(resultSettings.retentionDays || 30)}"></label>
           <label class="toggle-row">
-            <input type="checkbox" data-user-config="notifyOnResult" ${page.resultSettings.notifyOnResult ? "checked" : ""}>
-            <span>Notify user when a new result arrives</span>
+            <input type="checkbox" data-user-config="notifyOnResult" ${resultSettings.notifyOnResult ? "checked" : ""}>
+            <span>Notify me when a new result arrives</span>
           </label>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save results config</button>
+            <button type="button" data-save-user-config="${page.slug}">Save results</button>
+            <button type="button" data-results="${page.slug}">Open results</button>
           </div>
         </article>
 
-        <article class="security-panel">
-          <small>live config snapshot</small>
-          <h3>Stored payload preview</h3>
-          <div class="admin-code-sample">
-            <code>${escapeHtml(JSON.stringify({ id: snapshot.id, userId: snapshot.userId, packageId: snapshot.packageId, packageVersion: snapshot.packageVersion }, null, 0))}</code>
-            <code>${escapeHtml(JSON.stringify({ subscription: snapshot.subscription }, null, 0))}</code>
-            <code>${escapeHtml(JSON.stringify({ generatedFile: snapshot.generatedFile }, null, 0))}</code>
-            <code>${escapeHtml(JSON.stringify({ resultSettings: snapshot.resultSettings }, null, 0))}</code>
+        <article class="security-panel package-form">
+          <small>quick controls</small>
+          <h3>Page operations</h3>
+          <div class="admin-compact-grid">
+            <button type="button" data-security="${page.slug}" data-security-tab="security"><strong>Security</strong><span>Captcha and device rules</span></button>
+            <button type="button" data-security="${page.slug}" data-security-tab="traffic"><strong>Traffic</strong><span>Visits and blocks</span></button>
+            <button type="button" data-results="${page.slug}"><strong>Results</strong><span>Submissions and sessions</span></button>
+            <button type="button" data-go-live="${page.slug}"><strong>Go Live</strong><span>Hosting and download</span></button>
           </div>
         </article>
       </div>
@@ -3931,27 +3926,30 @@ function saveSecurityConfig(page, tab = "security") {
 
 function saveUserConfig(page) {
   const getField = (name) => preview.querySelector(`[data-user-config="${name}"]`);
-  const domain = getField("domain").value.trim() || page.domain;
+  const fieldValue = (name, fallback = "") => getField(name)?.value.trim() || fallback;
+  const fieldChecked = (name, fallback = false) => getField(name)?.checked ?? fallback;
+  const domain = fieldValue("domain", page.hostingConfig?.domain || page.domain || "");
 
   page.domain = domain;
   page.subscription = {
     ...(page.subscription || {}),
-    billingPeriod: getField("billingPeriod").value,
-    renewalPrice: Number(getField("renewalPrice").value || 0),
-    renewalDate: getField("renewalDate").value,
-    autoRenew: getField("autoRenew").checked
+    autoRenew: fieldChecked("autoRenew", Boolean(page.subscription?.autoRenew))
   };
   page.generatedFile = {
     ...(page.generatedFile || {}),
-    apiBase: getField("apiBase").value.trim() || "https://your-render-app.onrender.com",
-    downloadName: getField("downloadName").value.trim() || `${page.slug}-index.html`,
-    version: getField("fileVersion").value.trim() || page.generatedFile?.version || "build-001"
+    apiBase: page.generatedFile?.apiBase || "/api",
+    downloadName: page.generatedFile?.downloadName || `${page.slug}-index.html`,
+    version: page.generatedFile?.version || "build-001"
   };
   page.resultSettings = {
     ...(page.resultSettings || {}),
-    webhook: getField("webhook").value.trim() || "/api/page-results",
-    retentionDays: Number(getField("retentionDays").value || 30),
-    notifyOnResult: getField("notifyOnResult").checked
+    webhook: page.resultSettings?.webhook || "/api/page-results",
+    retentionDays: Number(fieldValue("retentionDays", page.resultSettings?.retentionDays || 30)),
+    notifyOnResult: fieldChecked("notifyOnResult", Boolean(page.resultSettings?.notifyOnResult))
+  };
+  page.hostingConfig = {
+    ...(page.hostingConfig || {}),
+    domain
   };
   page.securityConfig = {
     ...(page.securityConfig || {}),
