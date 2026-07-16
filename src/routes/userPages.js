@@ -10,6 +10,7 @@ import {
   updateUserPageConfig
 } from "../repositories/appRepository.js";
 import { requireAuth } from "../middleware/auth.js";
+import { installCloudflareWorker, verifyCloudflareZone } from "../services/cloudflareDeploy.js";
 
 export const userPagesRouter = Router();
 
@@ -88,6 +89,87 @@ userPagesRouter.post("/:id/generate-index", (req, res) => {
       });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.post("/:id/cloudflare/verify", async (req, res) => {
+  try {
+    const userPage = await findUserPage(req.params.id, req.user.id);
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    const domain = req.body.domain || userPage.hostingConfig?.domain || userPage.domain;
+    const verification = await verifyCloudflareZone({
+      apiToken: req.body.apiToken,
+      domain
+    });
+    const updated = await updateUserPageConfig(userPage.id, {
+      domain,
+      hostingConfig: {
+        ...(userPage.hostingConfig || {}),
+        domain,
+        cloudflare: {
+          ...(userPage.hostingConfig?.cloudflare || {}),
+          zoneId: verification.zoneId,
+          zoneName: verification.zoneName,
+          tokenStatus: verification.tokenStatus,
+          verifiedAt: new Date().toISOString()
+        }
+      }
+    }, req.user.id);
+    res.json({ cloudflare: updated.hostingConfig.cloudflare, userPage: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+userPagesRouter.post("/:id/cloudflare/install", async (req, res) => {
+  try {
+    const userPage = await findUserPage(req.params.id, req.user.id);
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    const domain = req.body.domain || userPage.hostingConfig?.domain || userPage.domain;
+    const relaySecret = userPage.hostingConfig?.relaySecret || req.body.relaySecret;
+    const deployment = await installCloudflareWorker({
+      apiToken: req.body.apiToken,
+      accountId: req.body.accountId,
+      domain,
+      relaySecret,
+      scriptName: req.body.scriptName || userPage.hostingConfig?.cloudflare?.scriptName
+    });
+    const updated = await updateUserPageConfig(userPage.id, {
+      domain,
+      securityConfig: {
+        ...(userPage.securityConfig || {}),
+        domains: domain ? [domain] : []
+      },
+      hostingConfig: {
+        ...(userPage.hostingConfig || {}),
+        domain,
+        connectionType: "cloudflare-worker",
+        relaySecret,
+        workerRoute: deployment.routePattern,
+        relayVerified: true,
+        relayVerifiedAt: deployment.installedAt,
+        verified: true,
+        verifiedAt: deployment.installedAt,
+        liveStatus: "Cloudflare Worker installed",
+        cloudflare: {
+          ...(userPage.hostingConfig?.cloudflare || {}),
+          accountId: deployment.accountId,
+          zoneId: deployment.zoneId,
+          zoneName: deployment.zoneName,
+          scriptName: deployment.scriptName,
+          routePattern: deployment.routePattern,
+          installedAt: deployment.installedAt,
+          managed: true
+        }
+      },
+      generatedFile: {
+        ...(userPage.generatedFile || {}),
+        apiBase: "/api"
+      }
+    }, req.user.id);
+    res.json({ cloudflare: updated.hostingConfig.cloudflare, userPage: updated });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 userPagesRouter.get("/:id/results", (req, res) => {

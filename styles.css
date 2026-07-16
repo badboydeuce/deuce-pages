@@ -2526,6 +2526,24 @@ code,
   cursor: not-allowed;
 }
 
+.advanced-worker {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.advanced-worker summary {
+  color: var(--accent);
+  cursor: pointer;
+  font: 850 0.72rem var(--mono);
+  text-transform: uppercase;
+}
+
+.advanced-worker p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
 :root[data-theme="light"] .security-panel textarea {
   border-color: rgba(16, 32, 24, 0.12);
   background: rgba(255, 255, 255, 0.82);

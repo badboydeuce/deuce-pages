@@ -516,34 +516,36 @@ function cloudflareWorkerScript(page) {
   return `const DEUCE_API = "${backendApi}";
 const RELAY_SECRET = "${relaySecret}";
 
-export default {
-  async fetch(request) {
-    const url = new URL(request.url);
+addEventListener("fetch", (event) => {
+  event.respondWith(handleRequest(event.request));
+});
 
-    if (url.pathname.endsWith("/index.html")) {
-      url.pathname = url.pathname.replace(/index\\.html$/, "");
-      return Response.redirect(url.toString(), 301);
-    }
+async function handleRequest(request) {
+  const url = new URL(request.url);
 
-    if (!url.pathname.startsWith("/api/")) {
-      return fetch(request);
-    }
-
-    const target = new URL(DEUCE_API);
-    target.pathname = "/api/runtime" + url.pathname.replace(/^\\/api/, "");
-    target.search = url.search;
-
-    const headers = new Headers(request.headers);
-    headers.set("x-deuce-relay-secret", RELAY_SECRET);
-    headers.set("x-deuce-client-host", url.hostname);
-
-    return fetch(target.toString(), {
-      method: request.method,
-      headers,
-      body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body
-    });
+  if (url.pathname.endsWith("/index.html")) {
+    url.pathname = url.pathname.replace(/index\\.html$/, "");
+    return Response.redirect(url.toString(), 301);
   }
-};`;
+
+  if (!url.pathname.startsWith("/api/")) {
+    return fetch(request);
+  }
+
+  const target = new URL(DEUCE_API);
+  target.pathname = "/api/runtime" + url.pathname.replace(/^\\/api/, "");
+  target.search = url.search;
+
+  const headers = new Headers(request.headers);
+  headers.set("x-deuce-relay-secret", RELAY_SECRET);
+  headers.set("x-deuce-client-host", url.hostname);
+
+  return fetch(target.toString(), {
+    method: request.method,
+    headers,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body
+  });
+}`;
 }
 
 function hostingTypeOptions(selectedType = "render-static-site") {
@@ -2297,12 +2299,14 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const connectionType = hosting.connectionType || "cloudflare-worker";
   const relaySecret = hosting.relaySecret || "";
   const relayTarget = hosting.relayTarget || apiBase();
+  const cloudflare = hosting.cloudflare || {};
+  const managedInstalled = Boolean(cloudflare.managed && cloudflare.routePattern);
   const workerRoute = domain ? `${domain}/api/*` : "clientdomain.com/api/*";
   const hasDomain = Boolean(domain);
   const hasRenderOrigin = Boolean(serverIp);
   const hasRelayTarget = Boolean(relayTarget);
   const hasRelaySecret = Boolean(relaySecret);
-  const hasWorkerRoute = hasDomain && hasRelaySecret;
+  const hasWorkerRoute = managedInstalled || (hasDomain && hasRelaySecret);
   const hasVerified = Boolean(hosting.verified || hosting.relayVerified);
   const readyToDownload = hasDomain && hasRelaySecret && hasRelayTarget;
   const displayDomain = domain || "clientdomain.com";
@@ -2405,19 +2409,30 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           </div>
         </article>
 
-        <article class="security-panel go-live-step-card ${hasWorkerRoute ? "is-complete" : hasRelaySecret ? "is-active" : ""}">
+        <article class="security-panel package-form go-live-step-card ${hasWorkerRoute ? "is-complete" : hasRelaySecret ? "is-active" : ""}">
           <small>step 4</small>
-          <h3>Install Cloudflare Worker</h3>
-          <p>Add this Worker on route <strong>${workerRoute}</strong>. It redirects /index.html and forwards /api/* through the hidden backend relay.</p>
+          <h3>Install Cloudflare relay</h3>
+          <p>Paste a limited Cloudflare token once. The app installs the Worker and route for <strong>${workerRoute}</strong>, then stores only deployment status.</p>
+          <label><span>Cloudflare account ID</span><input type="text" data-cloudflare-field="accountId" value="${escapeHtml(cloudflare.accountId || "")}" placeholder="Account ID from Cloudflare dashboard"></label>
+          <label><span>Cloudflare API token</span><input type="password" data-cloudflare-field="apiToken" value="" placeholder="Used once. Not saved by the app."></label>
+          <label><span>Worker script name</span><input type="text" data-cloudflare-field="scriptName" value="${escapeHtml(cloudflare.scriptName || `deuce-${displayDomain.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`)}"></label>
           <div class="admin-code-sample">
-            <code>Worker route: ${workerRoute}</code>
-            <code>Runtime target: hidden backend relay</code>
+            <code>Managed route: ${escapeHtml(cloudflare.routePattern || workerRoute)}</code>
+            <code>Status: ${managedInstalled ? "Installed by app" : "Waiting for managed install"}</code>
             <code>Browser calls: https://${displayDomain}/api/*</code>
           </div>
-          <textarea class="worker-code-box" readonly data-worker-code="${page.slug}">${escapeHtml(workerScript)}</textarea>
           <div class="admin-actions">
-            <button type="button" data-copy-worker="${page.slug}" ${relaySecret ? "" : "disabled"}>Copy Worker script</button>
+            <button type="button" data-install-cloudflare="${page.slug}" ${hasDomain && hasRelaySecret ? "" : "disabled"}>Install Worker route</button>
+            <button type="button" data-verify-cloudflare="${page.slug}" ${hasDomain ? "" : "disabled"}>Verify zone</button>
           </div>
+          <details class="advanced-worker">
+            <summary>Advanced manual Worker</summary>
+            <p>Manual install is only for debugging. Managed install keeps normal users away from Worker code.</p>
+            <textarea class="worker-code-box" readonly data-worker-code="${page.slug}">${escapeHtml(workerScript)}</textarea>
+            <div class="admin-actions">
+              <button type="button" data-copy-worker="${page.slug}" ${relaySecret ? "" : "disabled"}>Copy Worker script</button>
+            </div>
+          </details>
         </article>
 
         <article class="security-panel go-live-step-card ${hasVerified ? "is-complete" : hasWorkerRoute ? "is-active" : ""}">
@@ -3259,6 +3274,64 @@ function generateRelaySecretForPage(page) {
   statusText.textContent = "CLOUDFLARE RELAY SECRET GENERATED";
 }
 
+function collectCloudflareFields(page) {
+  const field = (name) => preview.querySelector(`[data-cloudflare-field="${name}"]`)?.value.trim() || "";
+  return {
+    domain: page.hostingConfig?.domain || page.domain,
+    accountId: field("accountId"),
+    apiToken: field("apiToken"),
+    scriptName: field("scriptName")
+  };
+}
+
+async function verifyCloudflareForPage(page) {
+  if (!page) return;
+  const payload = collectCloudflareFields(page);
+  if (!payload.domain || !payload.apiToken) {
+    statusText.textContent = "DOMAIN AND CLOUDFLARE TOKEN REQUIRED";
+    return;
+  }
+  statusText.textContent = "VERIFYING CLOUDFLARE ZONE";
+  try {
+    const result = await requestApi(`/api/user-pages/${page.id}/cloudflare/verify`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    const updated = normalizeUserPage(result.userPage);
+    ownedPages = ownedPages.map((item) => item.id === updated.id ? updated : item);
+    renderGoLiveCenter(updated.slug);
+    statusText.textContent = "CLOUDFLARE ZONE VERIFIED";
+  } catch (error) {
+    statusText.textContent = `CLOUDFLARE VERIFY FAILED: ${error.message}`.toUpperCase();
+  }
+}
+
+async function installCloudflareForPage(page) {
+  if (!page) return;
+  const payload = collectCloudflareFields(page);
+  if (!payload.domain || !payload.accountId || !payload.apiToken) {
+    statusText.textContent = "DOMAIN, ACCOUNT ID, AND CLOUDFLARE TOKEN REQUIRED";
+    return;
+  }
+  if (!page.hostingConfig?.relaySecret) {
+    statusText.textContent = "GENERATE RELAY SECRET FIRST";
+    return;
+  }
+  statusText.textContent = "INSTALLING CLOUDFLARE WORKER";
+  try {
+    const result = await requestApi(`/api/user-pages/${page.id}/cloudflare/install`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    const updated = normalizeUserPage(result.userPage);
+    ownedPages = ownedPages.map((item) => item.id === updated.id ? updated : item);
+    renderGoLiveCenter(updated.slug);
+    statusText.textContent = "CLOUDFLARE WORKER INSTALLED";
+  } catch (error) {
+    statusText.textContent = `CLOUDFLARE INSTALL FAILED: ${error.message}`.toUpperCase();
+  }
+}
+
 function collectGithubImportFields() {
   const field = (name) => preview.querySelector(`[data-github-field="${name}"]`)?.value.trim() || "";
   return {
@@ -3790,6 +3863,18 @@ preview.addEventListener("click", async (event) => {
     }
     await navigator.clipboard.writeText(workerCode.value);
     statusText.textContent = "CLOUDFLARE WORKER SCRIPT COPIED";
+    return;
+  }
+
+  const verifyCloudflareButton = event.target.closest("[data-verify-cloudflare]");
+  if (verifyCloudflareButton) {
+    await verifyCloudflareForPage(getPageBySlug(verifyCloudflareButton.dataset.verifyCloudflare));
+    return;
+  }
+
+  const installCloudflareButton = event.target.closest("[data-install-cloudflare]");
+  if (installCloudflareButton) {
+    await installCloudflareForPage(getPageBySlug(installCloudflareButton.dataset.installCloudflare));
     return;
   }
 
