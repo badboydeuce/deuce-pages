@@ -12,10 +12,36 @@ export const walletRouter = Router();
 
 walletRouter.use(requireAuth);
 
+const cryptoFundingOptions = [
+  { value: "USDT_TRC20", asset: "USDT", network: "TRC20", label: "USDT - TRC20", envKey: "WALLET_USDT_TRC20" },
+  { value: "USDT_ERC20", asset: "USDT", network: "ERC20", label: "USDT - ERC20", envKey: "WALLET_USDT_ERC20" },
+  { value: "BTC_BTC", asset: "BTC", network: "BTC", label: "Bitcoin - BTC", envKey: "WALLET_BTC" },
+  { value: "ETH_ERC20", asset: "ETH", network: "ERC20", label: "Ethereum - ERC20", envKey: "WALLET_ETH" },
+  { value: "BNB_BEP20", asset: "BNB", network: "BEP20", label: "BNB - BEP20", envKey: "WALLET_BNB_BEP20" }
+];
+
+function fundingOptionsFromEnv() {
+  return cryptoFundingOptions.map((option) => {
+    const address = String(process.env[option.envKey] || "").trim();
+    return {
+      value: option.value,
+      asset: option.asset,
+      network: option.network,
+      label: option.label,
+      address,
+      configured: Boolean(address)
+    };
+  });
+}
+
 walletRouter.get("/", (req, res) => {
   getWallet(req.user.id)
     .then((wallet) => res.json(wallet))
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+walletRouter.get("/funding-options", (req, res) => {
+  res.json({ options: fundingOptionsFromEnv() });
 });
 
 function submitDepositRequest(req, res) {

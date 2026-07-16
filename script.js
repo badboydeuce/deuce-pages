@@ -59,6 +59,7 @@ let walletData = { balance: 0, currency: "USD", transactions: [] };
 let walletDepositRequests = [];
 let adminDepositRequests = [];
 let walletFundOpen = false;
+let walletFundingOptions = [];
 const selectedMarketPlans = {};
 const billingPeriodLabels = {
   daily: "Daily",
@@ -73,6 +74,7 @@ const cryptoFundingOptions = [
   { value: "ETH_ERC20", asset: "ETH", network: "ERC20", label: "Ethereum - ERC20" },
   { value: "BNB_BEP20", asset: "BNB", network: "BEP20", label: "BNB - BEP20" }
 ];
+walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
 
 const screenLibrary = [
   {
@@ -553,22 +555,28 @@ async function loadAppData() {
   try {
     const auth = getAuthState();
     const packagesResult = await requestApi("/api/packages");
-    const [userPagesResult, walletResult, depositRequestsResult, adminDepositRequestsResult] = auth.token
+    const [userPagesResult, walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult] = auth.token
       ? await Promise.all([
         requestApi("/api/user-pages"),
         requestApi("/api/wallet"),
         requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
+        requestApi("/api/wallet/funding-options").catch(() => ({ options: walletFundingOptions })),
         isAdmin()
           ? requestApi("/api/wallet/admin/fund-requests?status=pending").catch(() => ({ requests: [] }))
           : Promise.resolve({ requests: [] })
       ])
-      : [{ userPages: [] }, { balance: 0, currency: "USD", transactions: [] }, { requests: [] }, { requests: [] }];
+      : [{ userPages: [] }, { balance: 0, currency: "USD", transactions: [] }, { requests: [] }, { options: walletFundingOptions }, { requests: [] }];
     const packages = packagesResult.packages || [];
     marketPages = packages.filter((pagePackage) => pagePackage.status === "published").map(normalizePackage);
     adminPackages = packages.map(normalizePackage);
     ownedPages = (userPagesResult.userPages || []).map(normalizeUserPage);
     walletData = walletResult || { balance: 0, currency: "USD", transactions: [] };
     walletDepositRequests = depositRequestsResult.requests || [];
+    walletFundingOptions = (fundingOptionsResult.options || walletFundingOptions).map((option) => ({
+      ...option,
+      address: option.address || "",
+      configured: Boolean(option.address || option.configured)
+    }));
     adminDepositRequests = adminDepositRequestsResult.requests || [];
   } catch (error) {
     apiLoadError = error.message;
@@ -578,6 +586,7 @@ async function loadAppData() {
     adminUsers = [];
     walletData = { balance: 0, currency: "USD", transactions: [] };
     walletDepositRequests = [];
+    walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
     adminDepositRequests = [];
   }
 }
@@ -616,6 +625,7 @@ function clearAuthState() {
   walletDepositRequests = [];
   adminDepositRequests = [];
   walletFundOpen = false;
+  walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
   syncAdminVisibility();
 }
 
@@ -3324,9 +3334,31 @@ async function renderResultsCenter(pageSlug = "page-a") {
   topbarTitle.textContent = `${page.name} Results`;
 }
 
+function walletFundingOptionByValue(value) {
+  return walletFundingOptions.find((option) => option.value === value) || walletFundingOptions[0] || cryptoFundingOptions[0];
+}
+
+function walletFundingAddressMarkup(option) {
+  const address = option?.address || "";
+  return `
+    <div class="wallet-address-card" data-wallet-address-card>
+      <span>${escapeHtml(option?.label || "Crypto wallet")}</span>
+      <code data-wallet-address>${address ? escapeHtml(address) : "Receiving address not configured"}</code>
+      <button type="button" data-copy-wallet-address ${address ? "" : "disabled"}>Copy address</button>
+    </div>
+  `;
+}
+
+function updateWalletFundingAddress(select) {
+  const card = preview.querySelector("[data-wallet-address-card]");
+  if (!card) return;
+  card.outerHTML = walletFundingAddressMarkup(walletFundingOptionByValue(select.value));
+}
+
 function renderWallet() {
   activeFlowSlug = null;
   const pendingRequests = walletDepositRequests.filter((request) => request.status === "pending").slice(0, 3);
+  const selectedFundingOption = walletFundingOptionByValue(walletFundingOptions[0]?.value);
   preview.innerHTML = `
     <section class="app-view wallet-view">
       <div class="view-heading">
@@ -3350,10 +3382,11 @@ function renderWallet() {
                 <label>
                   <span>Crypto</span>
                   <select data-wallet-fund="crypto">
-                    ${cryptoFundingOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}
+                    ${walletFundingOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}${option.configured ? "" : " - not set"}</option>`).join("")}
                   </select>
                 </label>
               </div>
+              ${walletFundingAddressMarkup(selectedFundingOption)}
               <label>
                 <span>Transaction hash</span>
                 <input type="text" data-wallet-fund="txHash" placeholder="Paste payment hash">
@@ -3866,6 +3899,10 @@ async function submitWalletFundRequest() {
     statusText.textContent = "FUNDING AMOUNT REQUIRED";
     return;
   }
+  if (!selected.address) {
+    statusText.textContent = `${selected.label.toUpperCase()} RECEIVING ADDRESS NOT SET`;
+    return;
+  }
   if (!payload.txHash || payload.txHash.length < 8) {
     statusText.textContent = "TRANSACTION HASH REQUIRED";
     return;
@@ -4106,6 +4143,12 @@ preview.addEventListener("change", (event) => {
     updateMarketPlanCard(marketPlanSelect);
     return;
   }
+
+  const walletCryptoSelect = event.target.closest('[data-wallet-fund="crypto"]');
+  if (walletCryptoSelect) {
+    updateWalletFundingAddress(walletCryptoSelect);
+    return;
+  }
 });
 
 preview.addEventListener("click", async (event) => {
@@ -4189,6 +4232,18 @@ preview.addEventListener("click", async (event) => {
   const walletFundSubmit = event.target.closest("[data-submit-wallet-fund]");
   if (walletFundSubmit) {
     await withButtonBusy(walletFundSubmit, "Submitting", submitWalletFundRequest);
+    return;
+  }
+
+  const copyWalletAddressButton = event.target.closest("[data-copy-wallet-address]");
+  if (copyWalletAddressButton) {
+    const address = preview.querySelector("[data-wallet-address]")?.textContent.trim() || "";
+    if (!address || address === "Receiving address not configured") {
+      statusText.textContent = "RECEIVING ADDRESS NOT SET";
+      return;
+    }
+    await withButtonBusy(copyWalletAddressButton, "Copying", () => navigator.clipboard.writeText(address));
+    statusText.textContent = "WALLET ADDRESS COPIED";
     return;
   }
 

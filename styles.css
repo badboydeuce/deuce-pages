@@ -3242,6 +3242,47 @@ code,
   gap: 10px;
 }
 
+.wallet-address-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(124, 255, 178, 0.2);
+  border-radius: var(--radius);
+  background: rgba(124, 255, 178, 0.055);
+}
+
+.wallet-address-card span {
+  color: var(--muted);
+  font: 800 0.68rem var(--mono);
+  text-transform: uppercase;
+}
+
+.wallet-address-card code {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--accent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-address-card button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.wallet-address-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .wallet-pending-list {
   display: grid;
   gap: 8px;
@@ -3319,6 +3360,7 @@ code,
 }
 
 :root[data-theme="light"] .wallet-pending-list div,
+:root[data-theme="light"] .wallet-address-card,
 :root[data-theme="light"] .fund-request-list article {
   border-color: rgba(16, 32, 24, 0.1);
   background: rgba(255, 255, 255, 0.72);
@@ -4781,6 +4823,7 @@ code {
 
   .wallet-actions,
   .wallet-fund-grid,
+  .wallet-address-card,
   .fund-request-list article,
   .card-footer,
   .view-nav,
