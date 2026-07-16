@@ -2747,7 +2747,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         routeButton(`#config-${page.slug}`, "Config")
       ])}
 
-      <div class="summary-grid">
+      <div class="summary-grid go-live-summary">
         <article><small>Live status</small><b>${liveStatus}</b><span>${verifiedLabel}</span></article>
         <article><small>Domain</small><b>${domain || "Unset"}</b><span>Allowed host</span></article>
         <article><small>Hosting</small><b>${hostingTypeLabel(hostingType)}</b><span>${hosting.relayVerified ? "Verified" : "Needs check"}</span></article>
@@ -2762,19 +2762,6 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <span class="${setupStepClass(hasVerified, hasWorkerRoute && !hasVerified)}">5 Verify</span>
         <span class="${setupStepClass(page.generatedFile?.lastGeneratedAt, readyToDownload)}">6 Download</span>
       </div>
-
-      <article class="my-pages-brief">
-        <div>
-          <small>local testing note</small>
-          <h3>Render hosts the page. Cloudflare hides the backend route.</h3>
-          <p>The visitor only calls https://${displayDomain}/api/*. Cloudflare relays those calls to the app backend without exposing the backend URL in the downloaded index.html.</p>
-        </div>
-        <div class="feature-row">
-          <span>Live URL: https://${displayDomain}/</span>
-          <span>Raw Render URL blocked</span>
-          <span>API masked by Worker</span>
-        </div>
-      </article>
 
       <div class="go-live-steps">
         <article class="security-panel package-form go-live-step-card ${hasDomain ? "is-complete" : "is-active"}">
