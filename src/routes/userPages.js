@@ -2,10 +2,12 @@ import { Router } from "express";
 import {
   deleteResult,
   findUserPage,
+  listActivePageSessions,
   listResults,
   listTrafficEvents,
   listUserPages,
   markGenerated,
+  setSessionCommand,
   updateIpRule,
   updateSecurityConfig,
   updateUserPageConfig
@@ -97,6 +99,42 @@ userPagesRouter.get("/:id/traffic", (req, res) => {
     .then((trafficEvents) => {
       if (!trafficEvents) return res.status(404).json({ error: "User page not found" });
       res.json({ trafficEvents });
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.get("/:id/sessions", (req, res) => {
+  listActivePageSessions(req.params.id, req.user.id)
+    .then((sessions) => {
+      if (!sessions) return res.status(404).json({ error: "User page not found" });
+      res.json({ sessions });
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.post("/:id/sessions/:sessionId/redirect", (req, res) => {
+  const targetUrl = String(req.body?.targetUrl || "").trim();
+  if (!targetUrl) {
+    res.status(400).json({ error: "Redirect URL is required" });
+    return;
+  }
+  setSessionCommand(req.params.id, req.params.sessionId, {
+    action: "redirect",
+    targetUrl,
+    note: req.body?.note || ""
+  }, req.user.id)
+    .then((userPage) => {
+      if (!userPage) return res.status(404).json({ error: "User page not found" });
+      res.json({ userPage, command: userPage.configs?.sessionCommands?.[req.params.sessionId] || null });
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.delete("/:id/sessions/:sessionId/command", (req, res) => {
+  setSessionCommand(req.params.id, req.params.sessionId, { action: "clear" }, req.user.id)
+    .then((userPage) => {
+      if (!userPage) return res.status(404).json({ error: "User page not found" });
+      res.json({ userPage, ok: true });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });

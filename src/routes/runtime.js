@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   findPackage,
   findUserPage,
+  getSessionCommand,
   savePageResult,
   saveTrafficEvent,
   updateUserPageConfig
@@ -170,6 +171,24 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
 
   send("/api/traffic", { event: "page_load", screen: runtime.pageId });
 
+  function checkCommand() {
+    const params = new URLSearchParams({
+      userPageId: runtime.userPageId,
+      sessionId: runtime.sessionId
+    });
+    fetch("/api/session-command?" + params.toString())
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (data) {
+        const command = data && data.command;
+        if (command && command.action === "redirect" && command.targetUrl) {
+          window.location.href = command.targetUrl;
+        }
+      })
+      .catch(function () {});
+  }
+
+  window.setInterval(checkCommand, 4000);
+
   document.addEventListener("submit", function (event) {
     const form = event.target;
     if (!form || !(form instanceof HTMLFormElement)) return;
@@ -297,6 +316,21 @@ runtimeRouter.post("/traffic", async (req, res) => {
     reason: req.body?.reason || decision.reason
   }, context.ip, req.headers["user-agent"]);
   res.status(201).json({ event, allowed: decision.allowed, reason: decision.reason });
+});
+
+runtimeRouter.get("/session-command", async (req, res) => {
+  const context = await runtimeContext(req, res);
+  if (!context) return;
+  const sessionId = req.query?.sessionId || req.body?.sessionId;
+  const result = await getSessionCommand(context.page.id, sessionId);
+  res.json(result || { command: null });
+});
+
+runtimeRouter.post("/session-command", async (req, res) => {
+  const context = await runtimeContext(req, res);
+  if (!context) return;
+  const result = await getSessionCommand(context.page.id, req.body?.sessionId);
+  res.json(result || { command: null });
 });
 
 runtimeRouter.post("/results", async (req, res) => {

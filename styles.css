@@ -1246,6 +1246,96 @@ code,
   gap: 14px;
 }
 
+.active-users-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.active-session-list {
+  display: grid;
+  gap: 10px;
+}
+
+.active-session-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(160px, 0.6fr) minmax(240px, 0.9fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+:root[data-theme="light"] .active-session-card {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(19, 133, 78, 0.055);
+}
+
+.active-session-card h4,
+.active-session-card p {
+  margin: 0;
+}
+
+.active-session-card h4 {
+  font-size: 1rem;
+}
+
+.session-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.session-meta span,
+.active-session-card small {
+  color: var(--muted);
+  font: 800 0.7rem var(--mono);
+  text-transform: uppercase;
+}
+
+.session-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+}
+
+.session-command input {
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+:root[data-theme="light"] .session-command input {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.session-command button {
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.session-command button:first-of-type {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.empty-session {
+  grid-template-columns: 1fr;
+}
+
 .result-card {
   display: grid;
   gap: 14px;
@@ -3696,6 +3786,10 @@ code {
 
   .manage-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .active-session-card {
+    grid-template-columns: 1fr;
   }
 
   .sidebar {

@@ -790,6 +790,71 @@ export async function listTrafficEvents(userPageId, userId = null, limit = 100) 
   return result.rows.map(toTrafficEvent);
 }
 
+export async function listActivePageSessions(userPageId, userId = null) {
+  const trafficEvents = await listTrafficEvents(userPageId, userId, 250);
+  if (!trafficEvents) return null;
+
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  const sessions = new Map();
+  for (const event of trafficEvents) {
+    if (!event.sessionId) continue;
+    const eventTime = new Date(event.createdAt).getTime();
+    if (!Number.isFinite(eventTime) || eventTime < cutoff) continue;
+    const current = sessions.get(event.sessionId);
+    if (current && new Date(current.lastSeenAt).getTime() >= eventTime) continue;
+    sessions.set(event.sessionId, {
+      sessionId: event.sessionId,
+      ip: event.ip || "unknown",
+      screen: event.screen || event.pageId || "page",
+      event: event.event,
+      result: event.result,
+      reason: event.reason,
+      hostname: event.hostname,
+      path: event.path,
+      userAgent: event.userAgent,
+      lastSeenAt: event.createdAt
+    });
+  }
+
+  return [...sessions.values()].sort((a, b) => String(b.lastSeenAt).localeCompare(String(a.lastSeenAt)));
+}
+
+export async function setSessionCommand(userPageId, sessionId, command, userId = null) {
+  const userPage = await findUserPage(userPageId, userId);
+  if (!userPage) return null;
+  const cleanSessionId = String(sessionId || "").trim();
+  if (!cleanSessionId) throw new Error("Session id is required");
+
+  const currentConfigs = userPage.configs || {};
+  const currentCommands = currentConfigs.sessionCommands || {};
+  const nextCommands = { ...currentCommands };
+  if (!command || command.action === "clear") {
+    delete nextCommands[cleanSessionId];
+  } else {
+    nextCommands[cleanSessionId] = {
+      action: command.action || "redirect",
+      targetUrl: String(command.targetUrl || "").trim(),
+      note: String(command.note || "").trim(),
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  return updateUserPageConfig(userPage.id, {
+    configs: {
+      ...currentConfigs,
+      sessionCommands: nextCommands
+    }
+  }, userId);
+}
+
+export async function getSessionCommand(userPageId, sessionId) {
+  const userPage = await findUserPage(userPageId);
+  if (!userPage) return null;
+  const command = userPage.configs?.sessionCommands?.[String(sessionId || "").trim()];
+  if (!command || command.action !== "redirect" || !command.targetUrl) return { command: null };
+  return { command };
+}
+
 export async function saveTrafficEvent(data, ip, userAgent) {
   const userPage = await findUserPage(data.userPageId || data.pageId);
   const event = {
