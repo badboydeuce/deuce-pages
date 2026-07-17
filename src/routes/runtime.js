@@ -282,6 +282,19 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     return apiBase + "/" + String(path || "").replace(/^\\/+/, "");
   }
 
+  function sameLocation(targetUrl) {
+    try {
+      const target = new URL(targetUrl, window.location.href);
+      const current = new URL(window.location.href);
+      return target.origin === current.origin
+        && target.pathname === current.pathname
+        && target.search === current.search
+        && target.hash === current.hash;
+    } catch (error) {
+      return false;
+    }
+  }
+
   function getSessionId() {
     try {
       const existing = window.sessionStorage.getItem(sessionKey);
@@ -358,7 +371,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         const command = data && data.command;
-        if (command && command.action === "redirect" && command.targetUrl) {
+        if (command && command.action === "redirect" && command.targetUrl && !sameLocation(command.targetUrl)) {
           window.location.href = command.targetUrl;
         }
       })

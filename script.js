@@ -1497,6 +1497,19 @@ function createGeneratedIndex(page) {
         });
       }
 
+      function sameLocation(targetUrl) {
+        try {
+          const target = new URL(targetUrl, window.location.href);
+          const current = new URL(window.location.href);
+          return target.origin === current.origin
+            && target.pathname === current.pathname
+            && target.search === current.search
+            && target.hash === current.hash;
+        } catch (error) {
+          return false;
+        }
+      }
+
       function checkSessionCommand() {
         const commandUrl = config.runtime.commandEndpoint || endpoint("/api/runtime/session-command");
         const params = new URLSearchParams({ userPageId: config.id, sessionId });
@@ -1504,7 +1517,7 @@ function createGeneratedIndex(page) {
           .then((response) => response.ok ? response.json() : null)
           .then((data) => {
             const command = data && data.command;
-            if (command && command.action === "redirect" && command.targetUrl) {
+            if (command && command.action === "redirect" && command.targetUrl && !sameLocation(command.targetUrl)) {
               window.location.href = command.targetUrl;
             }
           })
