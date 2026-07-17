@@ -3620,7 +3620,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
         routeButton(`#go-live-${page.slug}`, "Go Live")
       ])}
 
-      <div class="summary-grid">
+      <div class="summary-grid config-summary">
         <article><small>Domain</small><b>${escapeHtml(domain || "Not set")}</b><span>Live host</span></article>
         <article><small>Plan</small><b>${escapeHtml(planLabel)}</b><span>${escapeHtml(renewalPrice)} renewal</span></article>
         <article><small>Renewal</small><b>${escapeHtml(renewalDate)}</b><span>${subscription.autoRenew ? "Auto-renew on" : "Auto-renew off"}</span></article>
@@ -4877,6 +4877,16 @@ async function subscribeToMarketPackage(button) {
     if (error.status === 401) {
       window.location.hash = "#login";
       statusText.textContent = "LOGIN REQUIRED TO SUBSCRIBE";
+      return;
+    }
+    if (error.status === 409) {
+      await loadAppData();
+      window.location.hash = "#my-pages";
+      const existing = error.data?.userPage || error.data?.existingUserPage;
+      const action = error.data?.action === "renew" ? "RENEW FROM MY PAGES" : "OPEN IT FROM MY PAGES";
+      statusText.textContent = existing?.name
+        ? `${existing.name.toUpperCase()} ALREADY SUBSCRIBED. ${action}`
+        : `PAGE ALREADY SUBSCRIBED. ${action}`;
       return;
     }
     statusText.textContent = `SUBSCRIPTION FAILED: ${error.message}`.toUpperCase();

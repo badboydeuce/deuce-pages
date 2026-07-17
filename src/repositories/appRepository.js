@@ -492,10 +492,26 @@ export async function subscribeToPackage(id, data = {}) {
   if (!data.userId) return { error: "Authentication required", status: 401 };
   const period = data.billingPeriod || "weekly";
   const price = Number(pagePackage.billingPeriods?.[period] || pagePackage.billingPeriods?.weekly || 25);
+  const duplicateSubscription = (userPage) => {
+    if (!userPage) return null;
+    const state = pageSubscriptionState(userPage);
+    return {
+      error: "Already subscribed to this page",
+      status: 409,
+      userPage,
+      subscriptionState: state,
+      action: state.blocked ? "renew" : "open"
+    };
+  };
 
   if (useJsonDb()) {
     return updateJsonDb((db) => {
       const user = db.users.find((item) => item.id === data.userId);
+      const existingPage = db.userPages
+        .filter((page) => page.userId === data.userId && page.packageId === pagePackage.id)
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0];
+      const duplicate = duplicateSubscription(existingPage);
+      if (duplicate) return duplicate;
       const jsonRole = roleForEmail(user?.email, user?.role || data.userRole || "subscriber");
       const jsonIsAdminSubscription = String(jsonRole || "").toLowerCase() === "admin";
       const jsonChargePrice = jsonIsAdminSubscription ? 0 : price;
@@ -519,6 +535,12 @@ export async function subscribeToPackage(id, data = {}) {
   return withTransaction(async (client) => {
     const userResult = await client.query("SELECT * FROM users WHERE id = $1 FOR UPDATE", [data.userId]);
     const user = userResult.rows[0];
+    const existingResult = await client.query(
+      "SELECT * FROM user_pages WHERE user_id = $1 AND package_id = $2 ORDER BY created_at DESC LIMIT 1",
+      [data.userId, pagePackage.id]
+    );
+    const duplicate = duplicateSubscription(toUserPage(existingResult.rows[0]));
+    if (duplicate) return duplicate;
     const dbRole = roleForEmail(user?.email, user?.role || data.userRole || "subscriber");
     const dbIsAdminSubscription = String(dbRole || "").toLowerCase() === "admin";
     const dbChargePrice = dbIsAdminSubscription ? 0 : price;
