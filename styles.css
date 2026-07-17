@@ -1890,10 +1890,58 @@ code,
   grid-template-columns: 1fr;
 }
 
+.result-session-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(124, 255, 178, 0.075), transparent 38%),
+    rgba(255, 255, 255, 0.028);
+}
+
+:root[data-theme="light"] .result-session-card {
+  border-color: rgba(16, 32, 24, 0.1);
+  background:
+    linear-gradient(135deg, rgba(19, 133, 78, 0.075), transparent 38%),
+    rgba(255, 255, 255, 0.78);
+}
+
+.result-session-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.result-session-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.result-session-head small,
+.result-session-head span {
+  color: var(--muted);
+  font: 800 0.7rem var(--mono);
+  text-transform: uppercase;
+}
+
+.session-result-timeline {
+  display: grid;
+  gap: 10px;
+}
+
 .result-card {
   display: grid;
   gap: 14px;
   padding: 18px;
+}
+
+.result-card.compact {
+  padding: 13px;
+  background: rgba(0, 0, 0, 0.14);
 }
 
 .result-head,

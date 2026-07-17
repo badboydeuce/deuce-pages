@@ -558,6 +558,102 @@ function normalizePageResult(result) {
   };
 }
 
+function resultTimestampValue(result = {}) {
+  const value = new Date(result.createdAt || result.date || 0).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function resultSessions(results = []) {
+  const sessions = new Map();
+  results.forEach((result) => {
+    const sessionId = result.sessionId || "no-session";
+    const current = sessions.get(sessionId) || {
+      sessionId,
+      results: [],
+      firstSeen: result.createdAt,
+      lastSeen: result.createdAt,
+      ip: result.ip || "unknown"
+    };
+    current.results.push(result);
+    if (resultTimestampValue(result) < resultTimestampValue({ createdAt: current.firstSeen })) current.firstSeen = result.createdAt;
+    if (resultTimestampValue(result) > resultTimestampValue({ createdAt: current.lastSeen })) {
+      current.lastSeen = result.createdAt;
+      current.ip = result.ip || current.ip;
+    }
+    sessions.set(sessionId, current);
+  });
+  return [...sessions.values()]
+    .map((session) => ({
+      ...session,
+      results: session.results.sort((a, b) => resultTimestampValue(a) - resultTimestampValue(b))
+    }))
+    .sort((a, b) => resultTimestampValue({ createdAt: b.lastSeen }) - resultTimestampValue({ createdAt: a.lastSeen }));
+}
+
+function resultFieldMarkup(fields = {}) {
+  return Object.entries(fields).map(([label, value]) => `
+    <div>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </div>
+  `).join("");
+}
+
+function resultActionsMarkup(result, pageSlug) {
+  return `
+    <div class="result-actions">
+      <button type="button" data-view-result="${escapeHtml(result.id)}" data-result-page="${escapeHtml(pageSlug)}">&#128269; View</button>
+      <button type="button" data-ban-result-ip="${escapeHtml(result.id)}" data-result-page="${escapeHtml(pageSlug)}">&#128683; Ban IP</button>
+      <button type="button" data-whitelist-result-ip="${escapeHtml(result.id)}" data-result-page="${escapeHtml(pageSlug)}">&#9989; Whitelist</button>
+      <button type="button" data-delete-result="${escapeHtml(result.id)}" data-result-page="${escapeHtml(pageSlug)}">&#128465; Delete</button>
+    </div>
+  `;
+}
+
+function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = []) {
+  const sessionIp = session.ip || session.results[session.results.length - 1]?.ip || "unknown";
+  const ipStatus = bannedIps.includes(sessionIp) ? "Banned" : whitelistIps.includes(sessionIp) ? "Whitelisted" : "Unsorted";
+  const lastDate = new Date(session.lastSeen);
+  const lastSeen = Number.isNaN(lastDate.getTime()) ? "unknown" : `${lastDate.toLocaleDateString()} / ${lastDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return `
+    <article class="result-session-card">
+      <div class="result-session-head">
+        <div>
+          <small>${escapeHtml(session.sessionId)}</small>
+          <h3>${session.results.length} page ${session.results.length === 1 ? "event" : "events"}</h3>
+        </div>
+        <span>${escapeHtml(lastSeen)}</span>
+      </div>
+      <div class="result-meta">
+        <span>IP ${escapeHtml(sessionIp)}</span>
+        <span>${escapeHtml(ipStatus)}</span>
+      </div>
+      <div class="session-result-timeline">
+        ${session.results.map((result, index) => `
+          <article class="result-card compact">
+            <div class="result-head">
+              <div>
+                <small>Step ${index + 1}</small>
+                <h3>${escapeHtml(result.screen)}</h3>
+              </div>
+              <span>${escapeHtml(result.date)} / ${escapeHtml(result.time)}</span>
+            </div>
+            <div class="result-fields">
+              ${resultFieldMarkup(result.fields || {}) || `
+                <div>
+                  <span>Status</span>
+                  <strong>No form fields saved for this step</strong>
+                </div>
+              `}
+            </div>
+            ${resultActionsMarkup(result, page.slug)}
+          </article>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
 async function loadResultsControlData(page) {
   try {
     const [resultsData, sessionsData] = await Promise.all([
@@ -1344,6 +1440,31 @@ function createGeneratedIndex(page) {
         return "text";
       }
 
+      function isSensitiveField(field, input) {
+        const text = [
+          field,
+          input && input.name,
+          input && input.id,
+          input && input.type,
+          input && input.autocomplete,
+          input && input.placeholder
+        ].filter(Boolean).join(" ").toLowerCase();
+        return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
+      }
+
+      function safeFormData(form) {
+        const data = {};
+        const fields = Array.from(form.elements || []).filter(function (input) {
+          return input && input.name && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
+        });
+        fields.forEach(function (input) {
+          data[input.name] = isSensitiveField(input.name, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
+        });
+        data._fieldCount = fields.length;
+        data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
+        return data;
+      }
+
       function turnstileSiteKey() {
         return config.security?.turnstile?.siteKey || "";
       }
@@ -1440,7 +1561,7 @@ function createGeneratedIndex(page) {
       }
 
       function storeScreenData(screen) {
-        sessionData[screen.name] = Object.fromEntries(new FormData(screenForm).entries());
+        sessionData[screen.name] = safeFormData(screenForm);
       }
 
       function sendResult(screen) {
@@ -3592,6 +3713,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
   }
   await loadResultsControlData(page);
   const results = page.results || [];
+  const savedSessions = resultSessions(results);
   const activeSessions = page.activeSessions || [];
   const sessionCommands = page.configs?.sessionCommands || {};
   const bannedIps = page.securityConfig?.bannedIps || [];
@@ -3666,39 +3788,11 @@ async function renderResultsCenter(pageSlug = "page-a") {
       </article>
 
       <div class="results-list">
-        ${results.length ? results.map((result) => `
-          <article class="result-card">
-            <div class="result-head">
-              <div>
-                <small>${escapeHtml(result.status)}</small>
-                <h3>${escapeHtml(result.screen)}</h3>
-              </div>
-              <span>${escapeHtml(result.date)} / ${escapeHtml(result.time)}</span>
-            </div>
-            <div class="result-meta">
-              <span>IP ${escapeHtml(result.ip)}</span>
-              <span>${bannedIps.includes(result.ip) ? "Banned" : whitelistIps.includes(result.ip) ? "Whitelisted" : "Unsorted"}</span>
-            </div>
-            <div class="result-fields">
-              ${Object.entries(result.fields || {}).map(([label, value]) => `
-                <div>
-                  <span>${escapeHtml(label)}</span>
-                  <strong>${escapeHtml(value)}</strong>
-                </div>
-              `).join("")}
-            </div>
-            <div class="result-actions">
-              <button type="button" data-view-result="${result.id}" data-result-page="${page.slug}">&#128269; View</button>
-              <button type="button" data-ban-result-ip="${result.id}" data-result-page="${page.slug}">&#128683; Ban IP</button>
-              <button type="button" data-whitelist-result-ip="${result.id}" data-result-page="${page.slug}">&#9989; Whitelist</button>
-              <button type="button" data-delete-result="${result.id}" data-result-page="${page.slug}">&#128465; Delete</button>
-            </div>
-          </article>
-        `).join("") : `
+        ${savedSessions.length ? savedSessions.map((session) => sessionResultsMarkup(session, page, bannedIps, whitelistIps)).join("") : `
           <article class="security-panel">
             <small>empty</small>
             <h3>No saved results yet</h3>
-            <p>When a hosted index.html sends data to your Render API, the results will appear here under the matching owned page.</p>
+            <p>When a hosted page sends safe session data to your Render API, the results will appear here grouped by user session and page step.</p>
           </article>
         `}
       </div>
