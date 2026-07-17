@@ -4,7 +4,9 @@ import {
   contentTypeFor,
   fetchGitHubPackageFile,
   findPackageByPreviewToken,
+  injectPreviewJourney,
   previewSourceForPackage,
+  previewScreensForPackage,
   rewritePreviewAssets
 } from "../services/packagePreview.js";
 import { classifyFile } from "../services/githubImport.js";
@@ -34,7 +36,9 @@ async function renderPreviewHtml(req, res, pagePackage, file) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "private, max-age=60");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  res.send(rewritePreviewAssets(injectPreviewTurnstile(html, { token: req.params.token }), { token: req.params.token, file: source.file }));
+  const screens = previewScreensForPackage(pagePackage);
+  const previewHtml = rewritePreviewAssets(injectPreviewTurnstile(html, { token: req.params.token }), { token: req.params.token, file: source.file });
+  res.send(injectPreviewJourney(previewHtml, { token: req.params.token, file: source.file, screens }));
 }
 
 previewRouter.get("/:token/asset", async (req, res) => {

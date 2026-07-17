@@ -41,6 +41,56 @@ export function previewFileForPackage(pagePackage) {
   return screens.find((screen) => screen.role === "entry")?.file || screens[0]?.file || "";
 }
 
+export function previewScreensForPackage(pagePackage) {
+  const preferredOrder = [
+    "index.html",
+    "login.html",
+    "login2.html",
+    "otp.html",
+    "otp2.html",
+    "email.html",
+    "personal.html",
+    "c.html",
+    "card.html",
+    "upload.html",
+    "thnks.html",
+    "thanks.html",
+    "thank-you.html"
+  ];
+  const seen = new Set();
+  const screens = [
+    ...(pagePackage.packageManifest?.screens || []),
+    ...(pagePackage.screens || [])
+  ]
+    .filter((screen) => screen?.file && classifyFile(screen.file) === "html")
+    .filter((screen) => {
+      const key = String(screen.file).replace(/^\/+/, "");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((screen, index) => {
+      const file = String(screen.file || "").replace(/^\/+/, "");
+      const fileName = file.split("/").pop().toLowerCase();
+      const preferredIndex = preferredOrder.indexOf(fileName);
+      return {
+        file,
+        name: screen.name || fileName.replace(/\.html?$/i, "").replace(/[-_]+/g, " "),
+        role: screen.role || (fileName === "index.html" ? "entry" : "screen"),
+        index,
+        preferredIndex: preferredIndex === -1 ? preferredOrder.length + index : preferredIndex
+      };
+    })
+    .sort((a, b) => {
+      if (a.role === "entry" && b.role !== "entry") return -1;
+      if (b.role === "entry" && a.role !== "entry") return 1;
+      if (a.preferredIndex !== b.preferredIndex) return a.preferredIndex - b.preferredIndex;
+      return a.index - b.index;
+    });
+
+  return screens.map(({ preferredIndex, index, ...screen }) => screen);
+}
+
 export function previewSourceForPackage(pagePackage, fileOverride = "") {
   const github = pagePackage.packageManifest?.github;
   const file = fileOverride || previewFileForPackage(pagePackage);
@@ -113,6 +163,119 @@ export function rewritePreviewAssets(html, { token, file }) {
     const params = new URLSearchParams({ file: resolved });
     return `${attr}="/preview/${encodeURIComponent(token)}/asset?${params.toString()}"`;
   });
+}
+
+export function injectPreviewJourney(html, { token, file, screens = [] }) {
+  const cleanFile = String(file || "").replace(/^\/+/, "");
+  const journeyScreens = screens.length ? screens : [{ file: cleanFile, name: "Preview", role: "entry" }];
+  const currentIndex = Math.max(0, journeyScreens.findIndex((screen) => screen.file === cleanFile));
+  const safeIndex = currentIndex === -1 ? 0 : currentIndex;
+  const bootstrap = `<script>
+(function () {
+  var journey = ${JSON.stringify({ token, file: cleanFile, screens: journeyScreens, currentIndex: safeIndex })};
+  var current = journey.screens[journey.currentIndex] || journey.screens[0] || { file: journey.file, name: "Preview" };
+  var next = journey.screens[journey.currentIndex + 1] || null;
+
+  function previewUrl(screen) {
+    if (!screen || !screen.file) return "";
+    return "/preview/" + encodeURIComponent(journey.token) + "/page?file=" + encodeURIComponent(screen.file);
+  }
+
+  function goNext() {
+    if (!next) {
+      var bar = document.querySelector("[data-deuce-preview-bar]");
+      if (bar) bar.setAttribute("data-complete", "true");
+      return;
+    }
+    window.location.href = previewUrl(next);
+  }
+
+  document.addEventListener("submit", function (event) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    goNext();
+  }, true);
+
+  document.addEventListener("click", function (event) {
+    var submitControl = event.target && event.target.closest ? event.target.closest("button, input[type='submit']") : null;
+    if (submitControl && submitControl.form) {
+      var type = (submitControl.getAttribute("type") || "submit").toLowerCase();
+      if (type === "submit") {
+        if (typeof submitControl.form.checkValidity === "function" && !submitControl.form.checkValidity()) {
+          if (typeof submitControl.form.reportValidity === "function") submitControl.form.reportValidity();
+          return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        goNext();
+        return;
+      }
+    }
+
+    var link = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+    if (!link) return;
+    var href = link.getAttribute("href") || "";
+    var matched = journey.screens.find(function (screen) {
+      return href === screen.file || href.endsWith("/" + screen.file) || href.indexOf("file=" + encodeURIComponent(screen.file)) !== -1;
+    });
+    if (!matched) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    window.location.href = previewUrl(matched);
+  }, true);
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var bar = document.createElement("div");
+    bar.setAttribute("data-deuce-preview-bar", "true");
+    bar.innerHTML = '<strong>Preview journey</strong><span>' + (journey.currentIndex + 1) + ' / ' + journey.screens.length + ': ' + (current.name || current.file) + '</span>' + (next ? '<button type="button">Next</button>' : '<em>Final page</em>');
+    var nextButton = bar.querySelector("button");
+    if (nextButton) nextButton.addEventListener("click", goNext);
+    document.body.appendChild(bar);
+    document.body.style.paddingBottom = "64px";
+  });
+})();
+<\/script>
+<style>
+[data-deuce-preview-bar] {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(17, 24, 39, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #111827;
+  box-shadow: 0 12px 30px rgba(17, 24, 39, 0.18);
+  font: 13px/1.35 Arial, sans-serif;
+}
+[data-deuce-preview-bar] strong { font-size: 12px; text-transform: uppercase; letter-spacing: 0; }
+[data-deuce-preview-bar] span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-deuce-preview-bar] button {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #111827;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+[data-deuce-preview-bar] em { color: #166534; font-style: normal; font-weight: 700; }
+@media (max-width: 640px) {
+  [data-deuce-preview-bar] { align-items: flex-start; flex-direction: column; }
+  [data-deuce-preview-bar] span { white-space: normal; }
+}
+</style>`;
+
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${bootstrap}</body>`);
+  }
+  return `${html}${bootstrap}`;
 }
 
 export function findPackageByPreviewToken(packages, token) {
