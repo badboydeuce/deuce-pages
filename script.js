@@ -4138,7 +4138,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     return;
   }
   const previousSearch = options.autoRefresh ? preview.querySelector("[data-session-search-input]")?.value || "" : "";
-  const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "all" : "all";
+  const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "live" : "live";
   const openSessionIds = options.autoRefresh
     ? [...preview.querySelectorAll("[data-compact-session][open]")]
         .map((row) => row.dataset.compactSession)
@@ -4212,8 +4212,8 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
               ["offline", "offline"],
               ["has-results", "has results"],
               ["idle", "idle"]
-            ].map(([filter, label], index) => `
-              <button type="button" class="${index === 0 ? "is-active" : ""}" data-session-filter-button="${filter}">${label}</button>
+            ].map(([filter, label]) => `
+              <button type="button" class="${filter === previousFilter ? "is-active" : ""}" data-session-filter-button="${filter}">${label}</button>
             `).join("")}
           </div>
         </div>
@@ -4247,12 +4247,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     const searchInput = preview.querySelector("[data-session-search-input]");
     if (searchInput) searchInput.value = previousSearch;
   }
-  if (previousFilter !== "all") {
-    preview.querySelectorAll("[data-session-filter-button]").forEach((button) => {
-      button.classList.toggle("is-active", button.dataset.sessionFilterButton === previousFilter);
-    });
-    applyCompactSessionFilters();
-  } else if (previousSearch) {
+  if (previousFilter !== "all" || previousSearch) {
     applyCompactSessionFilters();
   }
   openSessionIds.forEach((sessionId) => {
