@@ -276,6 +276,11 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     pageId: ${JSON.stringify(file)},
     sessionId: getSessionId()
   };
+  const apiBase = window.location.pathname.indexOf("/api/runtime/") === 0 ? "/api/runtime" : "/api";
+
+  function endpoint(path) {
+    return apiBase + "/" + String(path || "").replace(/^\\/+/, "");
+  }
 
   function getSessionId() {
     try {
@@ -326,7 +331,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   }
 
   function send(path, payload) {
-    return fetch(path, {
+    return fetch(endpoint(path), {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
@@ -342,14 +347,14 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     }).catch(function () {});
   }
 
-  send("/api/runtime/traffic", { event: "page_load", screen: pageLabel() });
+  send("traffic", { event: "page_load", screen: pageLabel() });
 
   function checkCommand() {
     const params = new URLSearchParams({
       userPageId: runtime.userPageId,
       sessionId: runtime.sessionId
     });
-    fetch("/api/runtime/session-command?" + params.toString())
+    fetch(endpoint("session-command") + "?" + params.toString())
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         const command = data && data.command;
@@ -366,7 +371,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     const form = event.target;
     if (!form || !(form instanceof HTMLFormElement)) return;
     const data = safeFormData(form);
-    send("/api/runtime/results", {
+    send("results", {
       screen: pageLabel(),
       data: data,
       flow: [runtime.pageId],
