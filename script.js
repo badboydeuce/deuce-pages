@@ -879,7 +879,7 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
     command?.targetUrl
   ].filter(Boolean).join(" ").toLowerCase();
   return `
-    <details class="compact-session-row result-session-card ${activeSession ? "is-live" : ""}" data-compact-session data-session-filter="${escapeHtml(filterTokens)}" data-session-search="${escapeHtml(searchText)}">
+    <details class="compact-session-row result-session-card ${activeSession ? "is-live" : ""}" data-compact-session="${escapeHtml(session.sessionId)}" data-session-filter="${escapeHtml(filterTokens)}" data-session-search="${escapeHtml(searchText)}">
       <summary class="compact-session-summary">
         <span class="session-dot ${escapeHtml(rowStatus)}"></span>
         <div class="compact-session-main">
@@ -4134,6 +4134,11 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
   }
   const previousSearch = options.autoRefresh ? preview.querySelector("[data-session-search-input]")?.value || "" : "";
   const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "all" : "all";
+  const openSessionIds = options.autoRefresh
+    ? [...preview.querySelectorAll("[data-compact-session][open]")]
+        .map((row) => row.dataset.compactSession)
+        .filter(Boolean)
+    : [];
   await loadResultsControlData(page);
   if (options.autoRefresh && !isResultsRoute(page.slug)) return;
   const results = page.results || [];
@@ -4246,6 +4251,10 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
   } else if (previousSearch) {
     applyCompactSessionFilters();
   }
+  openSessionIds.forEach((sessionId) => {
+    const row = preview.querySelector(`[data-compact-session="${CSS.escape(sessionId)}"]`);
+    if (row) row.open = true;
+  });
 
   startResultsAutoRefresh(page.slug);
   statusText.textContent = options.autoRefresh ? `${page.name.toUpperCase()} RESULTS AUTO-REFRESHED` : `${page.name.toUpperCase()} RESULTS READY`;
