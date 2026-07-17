@@ -558,6 +558,28 @@ function normalizePageResult(result) {
   };
 }
 
+function splitRuleList(value = "") {
+  return String(value || "")
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item, index, list) => list.indexOf(item) === index);
+}
+
+function reconcileIpRules(bannedIps = [], whitelistIps = []) {
+  const whitelistSet = new Set(whitelistIps);
+  return {
+    bannedIps: bannedIps.filter((ip) => !whitelistSet.has(ip)),
+    whitelistIps
+  };
+}
+
+function applyPageSecurityConfig(page, securityConfig = {}) {
+  page.securityConfig = { ...(page.securityConfig || {}), ...securityConfig };
+  ownedPages = ownedPages.map((item) => item.id === page.id ? { ...item, securityConfig: page.securityConfig } : item);
+  return page.securityConfig;
+}
+
 function resultTimestampValue(result = {}) {
   const value = new Date(result.createdAt || result.date || 0).getTime();
   return Number.isFinite(value) ? value : 0;
@@ -3793,6 +3815,22 @@ function pageLogRowsMarkup(trafficLog) {
   }).join("");
 }
 
+function ipRuleRowsMarkup(ips = [], pageSlug, label) {
+  if (!ips.length) {
+    return `<p class="ip-rule-empty">No ${escapeHtml(label.toLowerCase())} saved yet.</p>`;
+  }
+  return `
+    <div class="ip-rule-list">
+      ${ips.map((ip) => `
+        <div class="ip-rule-row">
+          <strong>${escapeHtml(ip)}</strong>
+          <button type="button" data-security-remove-ip="${escapeHtml(ip)}" data-security-page="${escapeHtml(pageSlug)}">Remove</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 async function fetchPageTraffic(page) {
   try {
     const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/traffic?limit=100`);
@@ -3853,10 +3891,12 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <span>Banned IPs</span>
         <textarea data-security-field="bannedIps">${bannedIps.join("\n")}</textarea>
       </label>
+      ${ipRuleRowsMarkup(bannedIps, page.slug, "Banned IPs")}
       <label>
         <span>Whitelisted IPs</span>
         <textarea data-security-field="whitelistIps">${whitelistIps.join("\n")}</textarea>
       </label>
+      ${ipRuleRowsMarkup(whitelistIps, page.slug, "Whitelisted IPs")}
       <button type="button" data-save-security="${page.slug}" data-save-security-tab="ips">Save IP rules</button>
     </article>
   `;
@@ -4397,21 +4437,25 @@ function saveSecurityConfig(page, tab = "security") {
   const vpnProxyRules = proxyRuleFields.length
     ? proxyRuleFields.reduce((rules, field) => ({ ...rules, [field.dataset.securityProxy]: field.checked }), {})
     : currentProxyRules;
+  const ipRules = reconcileIpRules(
+    bannedField ? splitRuleList(bannedField.value) : current.bannedIps || [],
+    whitelistField ? splitRuleList(whitelistField.value) : current.whitelistIps || []
+  );
 
-  page.securityConfig = {
+  applyPageSecurityConfig(page, {
     ...current,
-    domains: domainsField ? domainsField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.domains || [],
+    domains: domainsField ? splitRuleList(domainsField.value) : current.domains || [],
     captcha: captchaField ? captchaField.checked : Boolean(current.captcha),
     turnstile: {
       provider: "turnstile",
       siteKey: turnstileSiteKeyField ? turnstileSiteKeyField.value.trim() : currentTurnstile.siteKey || current.turnstileSiteKey || "",
       secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || ""
     },
-    bannedIps: bannedField ? bannedField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.bannedIps || [],
-    whitelistIps: whitelistField ? whitelistField.value.split(/\n|,/).map((item) => item.trim()).filter(Boolean) : current.whitelistIps || [],
+    bannedIps: ipRules.bannedIps,
+    whitelistIps: ipRules.whitelistIps,
     blockedDevices: preview.querySelector("[data-security-device]") ? blockedDevices : current.blockedDevices || [],
     vpnProxyRules
-  };
+  });
   saveFlowState(page);
   renderSecurityCenter(page.slug, tab);
   statusText.textContent = "SECURITY SETTINGS SAVED";
@@ -5454,6 +5498,28 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const securityRemoveIpButton = event.target.closest("[data-security-remove-ip]");
+  if (securityRemoveIpButton) {
+    const resultPage = getPageBySlug(securityRemoveIpButton.dataset.securityPage);
+    const ip = securityRemoveIpButton.dataset.securityRemoveIp || "";
+    if (!resultPage || !ip) {
+      statusText.textContent = "SECURITY IP REQUIRED";
+      return;
+    }
+    await withButtonBusy(securityRemoveIpButton, "Removing", async () => {
+      const updated = await requestApi(`/api/user-pages/${resultPage.id}/ip-rule`, {
+        method: "DELETE",
+        body: JSON.stringify({ ip })
+      });
+      applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
+      await renderSecurityCenter(resultPage.slug, "ips");
+      statusText.textContent = `${ip} REMOVED FROM IP RULES`;
+    }).catch((error) => {
+      statusText.textContent = `IP REMOVE FAILED: ${error.message}`.toUpperCase();
+    });
+    return;
+  }
+
   const trafficIpAction = event.target.closest("[data-traffic-ban-ip], [data-traffic-whitelist-ip]");
   if (trafficIpAction) {
     const resultPage = getPageBySlug(trafficIpAction.dataset.trafficPage);
@@ -5468,8 +5534,7 @@ preview.addEventListener("click", async (event) => {
         method: "POST",
         body: JSON.stringify({ ip })
       });
-      resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
-      ownedPages = ownedPages.map((item) => item.id === resultPage.id ? { ...item, securityConfig: resultPage.securityConfig } : item);
+      applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
       await renderSecurityCenter(resultPage.slug, "traffic");
       statusText.textContent = isBan ? `${ip} BANNED` : `${ip} WHITELISTED`;
     }).catch((error) => {
@@ -5569,7 +5634,7 @@ preview.addEventListener("click", async (event) => {
           method: "POST",
           body: JSON.stringify({ ip: result.ip })
         });
-        resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
+        applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
         await renderResultsCenter(resultPage.slug);
         statusText.textContent = `${result.ip} BANNED`;
       });
@@ -5582,7 +5647,7 @@ preview.addEventListener("click", async (event) => {
           method: "POST",
           body: JSON.stringify({ ip: result.ip })
         });
-        resultPage.securityConfig = updated.securityConfig || resultPage.securityConfig;
+        applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
         await renderResultsCenter(resultPage.slug);
         statusText.textContent = `${result.ip} WHITELISTED`;
       });

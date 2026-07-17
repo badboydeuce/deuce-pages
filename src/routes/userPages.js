@@ -97,6 +97,15 @@ userPagesRouter.post("/:id/whitelist-ip", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
+userPagesRouter.delete("/:id/ip-rule", (req, res) => {
+  updateIpRule(req.params.id, req.body.ip, "remove", req.user.id)
+    .then((userPage) => {
+      if (!userPage) return res.status(404).json({ error: "User page not found" });
+      res.json({ securityConfig: userPage.securityConfig });
+    })
+    .catch((error) => res.status(400).json({ error: error.message }));
+});
+
 userPagesRouter.post("/:id/generate-index", (req, res) => {
   markGenerated(req.params.id, req.body.version, req.user.id)
     .then((userPage) => {

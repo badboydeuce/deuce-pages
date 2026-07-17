@@ -3965,9 +3965,53 @@ code,
   background: var(--accent);
 }
 
+.ip-rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ip-rule-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.ip-rule-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font: 800 0.78rem var(--mono);
+}
+
+.ip-rule-row button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 103, 103, 0.28);
+  border-radius: var(--radius);
+  color: #ffb7b7;
+  background: rgba(255, 103, 103, 0.08);
+  cursor: pointer;
+  font: 800 0.68rem var(--mono);
+}
+
+.ip-rule-empty {
+  margin: -4px 0 2px;
+  font-size: 0.78rem;
+}
+
 :root[data-theme="light"] .traffic-actions button {
   border-color: rgba(16, 32, 24, 0.12);
   background: rgba(255, 255, 255, 0.78);
+}
+
+:root[data-theme="light"] .ip-rule-row {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .page-log-list {

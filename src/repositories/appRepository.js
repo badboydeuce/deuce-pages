@@ -663,6 +663,22 @@ export async function findUserPage(id, userId = null) {
   return toUserPage(result.rows[0]);
 }
 
+function uniqueStringList(list = []) {
+  return Array.isArray(list)
+    ? [...new Set(list.map((item) => String(item || "").trim()).filter(Boolean))]
+    : [];
+}
+
+function normalizeSecurityConfig(securityConfig = {}) {
+  const whitelistIps = uniqueStringList(securityConfig.whitelistIps);
+  const whitelistSet = new Set(whitelistIps);
+  return {
+    ...securityConfig,
+    bannedIps: uniqueStringList(securityConfig.bannedIps).filter((ip) => !whitelistSet.has(ip)),
+    whitelistIps
+  };
+}
+
 export async function updateUserPageConfig(id, data, userId = null) {
   const current = await findUserPage(id, userId);
   if (!current) return null;
@@ -673,7 +689,7 @@ export async function updateUserPageConfig(id, data, userId = null) {
     subscription: { ...current.subscription, ...(data.subscription || {}) },
     flow: data.flow || current.flow,
     configs: { ...current.configs, ...(data.configs || {}) },
-    securityConfig: { ...current.securityConfig, ...(data.securityConfig || {}) },
+    securityConfig: normalizeSecurityConfig({ ...current.securityConfig, ...(data.securityConfig || {}) }),
     hostingConfig: { ...current.hostingConfig, ...(data.hostingConfig || {}) },
     resultSettings: { ...current.resultSettings, ...(data.resultSettings || {}) },
     generatedFile: { ...current.generatedFile, ...(data.generatedFile || {}) }
@@ -894,14 +910,21 @@ export async function updateSecurityConfig(id, securityConfig, userId = null) {
 export async function updateIpRule(id, ip, mode, userId = null) {
   const current = await findUserPage(id, userId);
   if (!current) return null;
+  const cleanIp = String(ip || "").trim();
+  if (!cleanIp) throw new Error("IP address is required");
   const bannedIps = new Set(current.securityConfig?.bannedIps || []);
   const whitelistIps = new Set(current.securityConfig?.whitelistIps || []);
   if (mode === "ban") {
-    bannedIps.add(ip);
-    whitelistIps.delete(ip);
+    bannedIps.add(cleanIp);
+    whitelistIps.delete(cleanIp);
+  } else if (mode === "whitelist") {
+    whitelistIps.add(cleanIp);
+    bannedIps.delete(cleanIp);
+  } else if (mode === "remove") {
+    bannedIps.delete(cleanIp);
+    whitelistIps.delete(cleanIp);
   } else {
-    whitelistIps.add(ip);
-    bannedIps.delete(ip);
+    throw new Error("Invalid IP rule action");
   }
   return updateSecurityConfig(current.id, { bannedIps: [...bannedIps].filter(Boolean), whitelistIps: [...whitelistIps].filter(Boolean) }, userId);
 }
