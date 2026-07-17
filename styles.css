@@ -3366,6 +3366,67 @@ code,
   overflow-wrap: anywhere;
 }
 
+.go-live-checklist {
+  display: grid;
+  gap: 12px;
+}
+
+.go-live-checklist .builder-heading strong {
+  color: var(--accent);
+  font: 900 0.86rem var(--mono);
+}
+
+.go-live-checklist > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.go-live-checklist span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+:root[data-theme="light"] .go-live-checklist span {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(19, 133, 78, 0.055);
+}
+
+.go-live-checklist span.is-ready {
+  border-left-color: var(--accent);
+}
+
+.go-live-checklist span.is-waiting {
+  border-left-color: #f5c451;
+}
+
+.go-live-checklist b {
+  color: var(--muted);
+  font: 900 0.62rem var(--mono);
+  text-transform: uppercase;
+}
+
+.go-live-checklist span.is-ready b {
+  color: var(--accent);
+}
+
+.go-live-checklist strong {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.go-live-checklist small {
+  color: var(--muted);
+  font: 760 0.69rem var(--mono);
+  line-height: 1.45;
+}
+
 .go-live-steps {
   display: grid;
   gap: 14px;

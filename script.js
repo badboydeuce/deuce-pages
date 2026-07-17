@@ -937,6 +937,29 @@ function setupStepClass(done, active = false) {
   return active ? "active" : "";
 }
 
+function goLiveChecklistMarkup(items = []) {
+  return `
+    <article class="security-panel go-live-checklist">
+      <div class="builder-heading">
+        <div>
+          <small>readiness checklist</small>
+          <h3>Before download</h3>
+        </div>
+        <strong>${items.filter((item) => item.done).length}/${items.length}</strong>
+      </div>
+      <div>
+        ${items.map((item) => `
+          <span class="${item.done ? "is-ready" : "is-waiting"}">
+            <b>${item.done ? "Ready" : "Needed"}</b>
+            <strong>${escapeHtml(item.label)}</strong>
+            <small>${escapeHtml(item.detail)}</small>
+          </span>
+        `).join("")}
+      </div>
+    </article>
+  `;
+}
+
 function packageForUserPage(page) {
   const packages = [...marketPages, ...adminPackages];
   return packages.find((pagePackage) => (
@@ -1053,6 +1076,8 @@ function createPackageRuntimeIndex(page, pagePackage) {
     },
     generatedFile: page.generatedFile,
     runtime: {
+      mode: "launcher",
+      entryFile,
       configEndpoint: `${runtimeApiBase}/config?userPageId=${encodeURIComponent(page.id)}`,
       sourceEndpoint: `${runtimeApiBase}/source?userPageId=${encodeURIComponent(page.id)}`
     }
@@ -1062,6 +1087,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
   const configJson = JSON.stringify(payload, null, 8).replace(/<\//g, "<\\/");
 
   return `<!doctype html>
+<!-- DEUCE runtime launcher: upload this one index.html. The full page package is served by DEUCE runtime for this subscriber. -->
 <html lang="en">
   <head>
     <meta charset="utf-8">
@@ -1071,29 +1097,46 @@ function createPackageRuntimeIndex(page, pagePackage) {
       * { box-sizing: border-box; }
       html, body { width: 100%; min-height: 100%; margin: 0; background: #050607; }
       body { overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; }
+      #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; opacity: 0; transition: opacity .18s ease; }
+      #deuceFrame.active { opacity: 1; }
+      #deuceLauncher,
       #deuceBlock {
         min-height: 100vh;
-        display: none;
         place-items: center;
         padding: 24px;
         color: #eef8f2;
         background: #050607;
       }
-      #deuceBlock.active { display: grid; }
+      #deuceLauncher { display: grid; }
+      #deuceLauncher.hidden { display: none; }
+      #deuceLauncher article,
       #deuceBlock article {
-        max-width: 520px;
+        max-width: 560px;
         border: 1px solid rgba(124,255,178,.24);
         border-radius: 10px;
         padding: 28px;
         background: #0d1112;
       }
+      #deuceBlock.active { display: grid; }
+      #deuceBlock { display: none; }
+      #deuceLauncher small,
       #deuceBlock small { color: #7cffb2; font-weight: 800; text-transform: uppercase; }
+      #deuceLauncher h1,
       #deuceBlock h1 { margin: 10px 0; font-size: 1.7rem; }
+      #deuceLauncher p,
       #deuceBlock p { color: #8da199; line-height: 1.55; }
+      #deuceLauncher code { display: block; color: #7cffb2; overflow-wrap: anywhere; font: 800 .76rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     </style>
   </head>
   <body>
+    <section id="deuceLauncher">
+      <article>
+        <small>deuce runtime</small>
+        <h1>Loading page</h1>
+        <p>This index.html is a launcher. The page package, session redirects, security checks, and results sync are served by DEUCE runtime.</p>
+        <code id="deuceLauncherMeta">Preparing ${escapeHtml(entryFile || "runtime page")}</code>
+      </article>
+    </section>
     <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
     <section id="deuceBlock">
       <article>
@@ -1108,10 +1151,12 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const allowed = config.allowedDomains || [];
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
+      const launcher = document.getElementById("deuceLauncher");
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
 
       function blockPage(message) {
+        launcher.classList.add("hidden");
         frame.remove();
         block.classList.add("active");
         blockCopy.textContent = message;
@@ -1120,6 +1165,10 @@ function createPackageRuntimeIndex(page, pagePackage) {
       if (allowed.length && !allowed.includes(host)) {
         blockPage("ACCESS DENIED");
       } else {
+        frame.addEventListener("load", () => {
+          launcher.classList.add("hidden");
+          frame.classList.add("active");
+        }, { once: true });
         frame.src = config.runtime.sourceEndpoint;
       }
     <\/script>
@@ -3036,6 +3085,55 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const hasVerified = Boolean(hosting.verified || hosting.relayVerified);
   const readyToDownload = hasDomain && hasRelaySecret && hasRelayTarget;
   const displayDomain = domain || "clientdomain.com";
+  const pagePackage = packageForUserPage(page);
+  const runtimeEntryFile = packageEntryFile(pagePackage);
+  const runtimeTargets = sessionPageTargets(page);
+  const runtimeSourceReady = shouldUsePackageRuntime(page, pagePackage)
+    ? Boolean(runtimeEntryFile)
+    : Boolean((page.flow || []).length || runtimeEntryFile);
+  const resultsEndpointReady = Boolean(page.id && hasRelayTarget);
+  const goLiveChecks = [
+    {
+      label: "Live domain",
+      done: hasDomain,
+      detail: hasDomain ? `${displayDomain} is the only allowed hostname.` : "Set the user's live domain in Config."
+    },
+    {
+      label: "Raw host URL",
+      done: hasRenderOrigin,
+      detail: hasRenderOrigin ? "Origin host is saved for the uploaded index.html." : "Save the static host URL where index.html will live."
+    },
+    {
+      label: "Relay secret",
+      done: hasRelaySecret,
+      detail: hasRelaySecret ? "Runtime API calls can be relayed privately." : "Generate the relay secret before Worker install."
+    },
+    {
+      label: "Worker route",
+      done: hasWorkerRoute,
+      detail: hasWorkerRoute ? `${workerRoute} is ready or derivable from the saved domain.` : "Install or verify the Cloudflare Worker route."
+    },
+    {
+      label: "Runtime pages",
+      done: runtimeSourceReady,
+      detail: runtimeSourceReady ? `Entry page ${runtimeEntryFile || "configured flow"} is available.` : "Import must include an entry HTML file or configured flow."
+    },
+    {
+      label: "Session redirects",
+      done: runtimeTargets.length > 0,
+      detail: runtimeTargets.length ? `${runtimeTargets.length} page target${runtimeTargets.length === 1 ? "" : "s"} mapped for live sessions.` : "Map HTML pages so active sessions can be redirected."
+    },
+    {
+      label: "Results endpoint",
+      done: resultsEndpointReady,
+      detail: resultsEndpointReady ? "Submissions and page events can sync to this user page." : "Runtime API target is not ready yet."
+    },
+    {
+      label: "Download ready",
+      done: readyToDownload && runtimeSourceReady,
+      detail: readyToDownload && runtimeSourceReady ? "Download one launcher index.html for the host root." : "Complete domain, relay, and runtime checks first."
+    }
+  ];
   const workerScript = cloudflareWorkerScript({
     ...page,
     hostingConfig: { ...hosting, domain, relaySecret, relayTarget, connectionType }
@@ -3068,6 +3166,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <span class="${setupStepClass(hasVerified, hasWorkerRoute && !hasVerified)}">5 Verify</span>
         <span class="${setupStepClass(page.generatedFile?.lastGeneratedAt, readyToDownload)}">6 Download</span>
       </div>
+
+      ${goLiveChecklistMarkup(goLiveChecks)}
 
       <div class="go-live-steps">
         <article class="security-panel package-form go-live-step-card ${hasDomain ? "is-complete" : "is-active"}">
@@ -3168,7 +3268,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <article class="security-panel go-live-step-card ${page.generatedFile?.lastGeneratedAt ? "is-complete" : readyToDownload ? "is-active" : ""}">
           <small>step 6</small>
           <h3>Download final index.html</h3>
-          <p>Download after the domain, relay secret, and Worker route are set. Upload this file as index.html on the static host.</p>
+          <p>Download after the domain, relay secret, and Worker route are set. Upload only this file as index.html on the static host; the full page package stays controlled by DEUCE runtime.</p>
           <div class="admin-rule-list">
             ${isRenderStatic ? `
               <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>

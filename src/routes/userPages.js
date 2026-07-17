@@ -20,6 +20,23 @@ export const userPagesRouter = Router();
 
 userPagesRouter.use(requireAuth);
 
+function validRuntimeRedirectTarget(targetUrl, userPageId) {
+  let parsed;
+  try {
+    parsed = new URL(targetUrl, "https://deuce.local");
+  } catch {
+    return false;
+  }
+
+  if (parsed.origin !== "https://deuce.local") return false;
+  if (!["/api/runtime/source", "/api/source"].includes(parsed.pathname)) return false;
+  if (parsed.searchParams.get("userPageId") !== userPageId) return false;
+
+  const file = String(parsed.searchParams.get("file") || "").replace(/^\/+/, "");
+  if (!file || file.includes("..") || file.length > 240) return false;
+  return /\.html?$/i.test(file);
+}
+
 userPagesRouter.get("/", (req, res) => {
   listUserPages(req.user.id)
     .then((userPages) => res.json({ userPages }))
@@ -126,6 +143,10 @@ userPagesRouter.post("/:id/sessions/:sessionId/redirect", (req, res) => {
   const targetUrl = String(req.body?.targetUrl || "").trim();
   if (!targetUrl) {
     res.status(400).json({ error: "Redirect URL is required" });
+    return;
+  }
+  if (!validRuntimeRedirectTarget(targetUrl, req.params.id)) {
+    res.status(400).json({ error: "Redirect target must be a runtime HTML page for this user page" });
     return;
   }
   setSessionCommand(req.params.id, req.params.sessionId, {
