@@ -1863,15 +1863,25 @@ code,
   font-weight: 800;
 }
 
+.flow-command-title {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font: 900 0.66rem var(--mono);
+  text-transform: uppercase;
+}
+
 .session-route-buttons {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
   gap: 8px;
   min-width: 0;
 }
 
 .session-route-buttons button {
-  min-width: 78px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-route-buttons span {
@@ -1880,10 +1890,18 @@ code,
   text-transform: uppercase;
 }
 
-.session-route-buttons button:first-of-type {
+.session-route-buttons button.is-current {
   color: var(--bg-deep);
   border-color: var(--accent);
   background: var(--accent);
+  cursor: default;
+  opacity: 1;
+}
+
+.session-route-buttons button.is-current::after {
+  content: " now";
+  font: 900 0.58rem var(--mono);
+  text-transform: uppercase;
 }
 
 .empty-session {
@@ -1954,6 +1972,14 @@ code,
   color: var(--muted);
   font: 800 0.68rem var(--mono);
   text-transform: uppercase;
+}
+
+.result-live-command small.is-queued {
+  color: #f5c451;
+}
+
+.result-live-command small.is-delivered {
+  color: var(--accent);
 }
 
 .result-card {

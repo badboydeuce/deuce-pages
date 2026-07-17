@@ -1410,24 +1410,67 @@ export async function setSessionCommand(userPageId, sessionId, command, userId =
 
   const currentConfigs = userPage.configs || {};
   const currentCommands = currentConfigs.sessionCommands || {};
+  const currentHistory = currentConfigs.sessionCommandHistory || {};
   const nextCommands = { ...currentCommands };
+  const nextHistory = { ...currentHistory };
   if (!command || command.action === "clear") {
     delete nextCommands[cleanSessionId];
+    delete nextHistory[cleanSessionId];
   } else {
+    const createdAt = new Date().toISOString();
     nextCommands[cleanSessionId] = {
+      id: createId("cmd"),
       action: command.action || "redirect",
       targetUrl: String(command.targetUrl || "").trim(),
       note: String(command.note || "").trim(),
-      createdAt: new Date().toISOString()
+      status: "queued",
+      createdAt,
+      deliveredAt: null
     };
   }
 
   return updateUserPageConfig(userPage.id, {
     configs: {
       ...currentConfigs,
-      sessionCommands: nextCommands
+      sessionCommands: nextCommands,
+      sessionCommandHistory: nextHistory
     }
   }, userId);
+}
+
+export async function deliverSessionCommand(userPageId, sessionId) {
+  const userPage = await findUserPage(userPageId);
+  if (!userPage) return null;
+  const cleanSessionId = String(sessionId || "").trim();
+  if (!cleanSessionId) return { command: null };
+
+  const currentConfigs = userPage.configs || {};
+  const currentCommands = currentConfigs.sessionCommands || {};
+  const command = currentCommands[cleanSessionId];
+  if (!command || command.action !== "redirect" || !command.targetUrl) return { command: null };
+
+  const delivered = {
+    ...command,
+    status: "delivered",
+    deliveredAt: new Date().toISOString()
+  };
+  const currentHistory = currentConfigs.sessionCommandHistory || {};
+  const nextCommands = { ...currentCommands };
+  const nextHistory = {
+    ...currentHistory,
+    [cleanSessionId]: [delivered, ...(currentHistory[cleanSessionId] || [])].slice(0, 10)
+  };
+  delete nextCommands[cleanSessionId];
+
+  await updateUserPageConfig(userPage.id, {
+    configs: {
+      ...currentConfigs,
+      sessionCommands: nextCommands,
+      sessionCommandHistory: nextHistory
+    }
+  });
+
+  return { command: delivered };
 }
 
 export async function getSessionCommand(userPageId, sessionId) {

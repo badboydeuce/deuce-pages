@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { timingSafeEqual } from "node:crypto";
 import {
+  deliverSessionCommand,
   findPackage,
-  getSessionCommand,
   pageSubscriptionState,
   resolveUserPageSubscription,
   savePageResult,
@@ -544,7 +544,7 @@ runtimeRouter.get("/session-command", async (req, res) => {
   if (!context) return;
   const sessionId = req.query?.sessionId || req.body?.sessionId;
   if (!validSessionId(sessionId)) return runtimeError(res, 400, "Invalid session id");
-  const result = await getSessionCommand(context.page.id, sessionId);
+  const result = await deliverSessionCommand(context.page.id, sessionId);
   res.json(result || { command: null });
 });
 
@@ -553,7 +553,7 @@ runtimeRouter.post("/session-command", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
   if (!validSessionId(req.body?.sessionId)) return runtimeError(res, 400, "Invalid session id");
-  const result = await getSessionCommand(context.page.id, req.body?.sessionId);
+  const result = await deliverSessionCommand(context.page.id, req.body?.sessionId);
   res.json(result || { command: null });
 });
 
