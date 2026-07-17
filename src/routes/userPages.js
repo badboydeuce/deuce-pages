@@ -152,7 +152,8 @@ userPagesRouter.post("/:id/sessions/:sessionId/redirect", (req, res) => {
   setSessionCommand(req.params.id, req.params.sessionId, {
     action: "redirect",
     targetUrl,
-    note: req.body?.note || ""
+    note: req.body?.note || "",
+    forceReload: Boolean(req.body?.forceReload)
   }, req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });

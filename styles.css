@@ -1793,6 +1793,70 @@ code,
   gap: 10px;
 }
 
+.compact-results-center {
+  display: grid;
+  gap: 12px;
+}
+
+.compact-center-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.compact-session-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.compact-session-toolbar input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+:root[data-theme="light"] .compact-session-toolbar input {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.compact-session-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.compact-session-filters button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+  font: 900 0.68rem var(--mono);
+  text-transform: uppercase;
+}
+
+.compact-session-filters button.is-active {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.compact-session-list {
+  display: grid;
+  gap: 8px;
+}
+
 .active-session-card {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(160px, 0.6fr) minmax(240px, 0.9fr);
@@ -1922,6 +1986,126 @@ code,
 .result-session-card.is-live {
   border-color: rgba(124, 255, 178, 0.42);
   box-shadow: 0 0 0 1px rgba(124, 255, 178, 0.08);
+}
+
+.compact-session-row {
+  padding: 0;
+  overflow: hidden;
+}
+
+.compact-session-row[hidden],
+.compact-session-empty[hidden] {
+  display: none;
+}
+
+.compact-session-summary {
+  display: grid;
+  grid-template-columns: 14px minmax(140px, 0.8fr) minmax(180px, 0.75fr) minmax(280px, 1.35fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.compact-session-summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--muted);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+}
+
+.session-dot.live,
+.session-dot.delivered {
+  background: var(--accent);
+}
+
+.session-dot.queued {
+  background: #f5c451;
+}
+
+.session-dot.blocked {
+  background: var(--danger);
+}
+
+.compact-session-main {
+  min-width: 0;
+}
+
+.compact-session-main small,
+.compact-session-main h3,
+.compact-session-main h3 span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-session-main h3 {
+  margin: 2px 0 0;
+  font-size: 0.92rem;
+}
+
+.compact-session-main h3 span {
+  color: var(--muted);
+  font: 800 0.68rem var(--mono);
+  text-transform: uppercase;
+}
+
+.compact-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.compact-session-meta span {
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 800 0.66rem var(--mono);
+  text-transform: uppercase;
+}
+
+.compact-session-row .session-result-timeline {
+  padding: 0 10px 10px;
+}
+
+.compact-session-summary .result-live-command {
+  padding: 8px;
+  gap: 6px;
+  align-items: center;
+}
+
+.compact-session-summary .flow-command-title {
+  display: none;
+}
+
+.compact-session-summary .session-route-buttons {
+  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  gap: 6px;
+}
+
+.compact-session-summary .session-command button {
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 0.72rem;
+}
+
+.compact-session-summary .result-live-command small {
+  font-size: 0.62rem;
 }
 
 :root[data-theme="light"] .result-session-card {
@@ -5625,6 +5809,19 @@ code {
 
   .active-session-card {
     grid-template-columns: 1fr;
+  }
+
+  .compact-session-toolbar,
+  .compact-session-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-session-filters {
+    justify-content: flex-start;
+  }
+
+  .session-dot {
+    display: none;
   }
 
   .session-command {

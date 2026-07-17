@@ -1423,6 +1423,7 @@ export async function setSessionCommand(userPageId, sessionId, command, userId =
       action: command.action || "redirect",
       targetUrl: String(command.targetUrl || "").trim(),
       note: String(command.note || "").trim(),
+      forceReload: Boolean(command.forceReload),
       status: "queued",
       createdAt,
       deliveredAt: null

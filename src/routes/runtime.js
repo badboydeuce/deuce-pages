@@ -371,7 +371,11 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         const command = data && data.command;
-        if (command && command.action === "redirect" && command.targetUrl && !sameLocation(command.targetUrl)) {
+        if (command && command.action === "redirect" && command.targetUrl) {
+          if (sameLocation(command.targetUrl)) {
+            if (command.forceReload) window.location.reload();
+            return;
+          }
           window.location.href = command.targetUrl;
         }
       })

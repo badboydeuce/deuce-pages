@@ -140,7 +140,11 @@
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         var command = data && data.command;
-        if (command && command.action === "redirect" && command.targetUrl && !sameLocation(command.targetUrl)) {
+        if (command && command.action === "redirect" && command.targetUrl) {
+          if (sameLocation(command.targetUrl)) {
+            if (command.forceReload) location.reload();
+            return;
+          }
           location.href = command.targetUrl;
         }
       })
