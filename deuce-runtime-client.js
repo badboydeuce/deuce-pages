@@ -122,6 +122,15 @@
     }, extra || {}));
   }
 
+  function heartbeat() {
+    return track("heartbeat", {
+      screen: runtime.pageLabel,
+      metadata: {
+        visibility: document.visibilityState || "visible"
+      }
+    });
+  }
+
   function submitResult(form) {
     return send("results", {
       screen: runtime.pageLabel,
@@ -167,7 +176,9 @@
   };
 
   track("page_load", { screen: runtime.pageLabel });
+  heartbeat();
   if (commandPolling) {
     window.setInterval(checkCommand, commandInterval);
   }
+  window.setInterval(heartbeat, 10000);
 })();

@@ -2097,6 +2097,10 @@ code,
   background: var(--danger);
 }
 
+.session-dot.offline {
+  background: #7b8580;
+}
+
 .compact-session-main {
   min-width: 0;
 }

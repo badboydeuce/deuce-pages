@@ -1422,10 +1422,11 @@ export async function listActivePageSessions(userPageId, userId = null) {
   const trafficEvents = await listTrafficEvents(userPageId, userId, 250);
   if (!trafficEvents) return null;
 
-  const cutoff = Date.now() - 10 * 60 * 1000;
+  const cutoff = Date.now() - 35 * 1000;
   const sessions = new Map();
   for (const event of trafficEvents) {
     if (!event.sessionId) continue;
+    if (event.event !== "heartbeat") continue;
     const eventTime = new Date(event.createdAt).getTime();
     if (!Number.isFinite(eventTime) || eventTime < cutoff) continue;
     const current = sessions.get(event.sessionId);

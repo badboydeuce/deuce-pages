@@ -405,7 +405,18 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     }).catch(function () {});
   }
 
+  function sendHeartbeat() {
+    send("traffic", {
+      event: "heartbeat",
+      screen: pageLabel(),
+      metadata: {
+        visibility: document.visibilityState || "visible"
+      }
+    });
+  }
+
   send("traffic", { event: "page_load", screen: pageLabel() });
+  sendHeartbeat();
 
   function checkCommand() {
     const params = new URLSearchParams({
@@ -428,6 +439,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   }
 
   window.setInterval(checkCommand, 4000);
+  window.setInterval(sendHeartbeat, 10000);
 
   document.addEventListener("submit", function (event) {
     const form = event.target;
