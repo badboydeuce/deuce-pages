@@ -695,12 +695,6 @@ function resultStepCountMarkup(results = []) {
   const counts = resultStepCounts(results);
   return `
     <article class="security-panel result-count-panel">
-      <div class="builder-heading">
-        <div>
-          <small>result count</small>
-          <h3>Submissions by page</h3>
-        </div>
-      </div>
       <div class="result-count-grid">
         ${resultStepDefinitions.map(([key, label]) => `
           <div class="${counts[key] ? "has-results" : ""}">
@@ -4167,8 +4161,6 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     <section class="app-view">
       <div class="view-heading">
         <small>page results</small>
-        <h2>${page.name} submissions</h2>
-        <p>Watch active visitors on this page, redirect a live session when needed, and manage saved submissions without leaving the page workspace.</p>
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
