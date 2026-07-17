@@ -8,6 +8,7 @@ import {
 } from "../repositories/appRepository.js";
 
 export const eventsRouter = Router();
+const pageExpiredMessage = "Page Expired Renew to continue using";
 
 const legacyPayloadLimits = {
   traffic: 24 * 1024,
@@ -71,7 +72,7 @@ async function legacyRuntimeContext(req, res) {
 
   const subscription = pageSubscriptionState(page);
   if (subscription.blocked) {
-    res.status(402).json({ error: subscription.status, reason: "Page subscription is not active" });
+    res.status(402).json({ error: pageExpiredMessage, reason: pageExpiredMessage });
     return null;
   }
   return { page, host };

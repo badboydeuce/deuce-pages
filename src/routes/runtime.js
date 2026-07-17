@@ -25,6 +25,7 @@ import { deviceBlocked } from "../services/deviceRules.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
+const pageExpiredMessage = "Page Expired Renew to continue using";
 
 const runtimePayloadLimits = {
   config: 8 * 1024,
@@ -65,6 +66,50 @@ function runtimeError(res, status, error, detail = {}) {
 
 function accessDenied(res, status = 403) {
   return runtimeError(res, status, accessDeniedMessage);
+}
+
+function expiredPageHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Page Expired</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: grid;
+      place-items: center;
+      background: #070909;
+      color: #f4fff8;
+      font: 700 16px/1.45 Arial, sans-serif;
+    }
+    main {
+      width: min(420px, calc(100% - 32px));
+      padding: 28px;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 8px;
+      text-align: center;
+      background: rgba(255,255,255,.045);
+    }
+    h1 { margin: 0; font-size: clamp(1.35rem, 5vw, 2rem); }
+  </style>
+</head>
+<body>
+  <main><h1>${pageExpiredMessage}</h1></main>
+</body>
+</html>`;
+}
+
+function pageExpired(res, status = 402, options = {}) {
+  if (options.html) {
+    res.status(status);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(expiredPageHtml());
+    return null;
+  }
+  return runtimeError(res, status, pageExpiredMessage, { reason: pageExpiredMessage });
 }
 
 function safeCompare(value, expected) {
@@ -137,7 +182,7 @@ function publicPageConfig(page) {
   };
 }
 
-async function runtimeContext(req, res) {
+async function runtimeContext(req, res, options = {}) {
   const userPageId = runtimeIdFrom(req);
   if (!userPageId || userPageId.length > 120) {
     return runtimeError(res, 400, "Runtime page id required");
@@ -164,7 +209,7 @@ async function runtimeContext(req, res) {
 
   const subscriptionState = pageSubscriptionState(page);
   if (subscriptionState.blocked) {
-    return accessDenied(res, 402);
+    return pageExpired(res, 402, options.expiredResponse === "html" ? { html: true } : {});
   }
 
   return { page, clientHost, ip: requestIp(req) };
@@ -409,7 +454,7 @@ async function packageForRuntimePage(page) {
 }
 
 async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
-  const context = await runtimeContext(req, res);
+  const context = await runtimeContext(req, res, { expiredResponse: asAsset ? "json" : "html" });
   if (!context) return;
   if (!enforceRuntimeSecurity(context, req, res)) return;
 
