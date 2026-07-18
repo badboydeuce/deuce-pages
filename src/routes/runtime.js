@@ -286,12 +286,12 @@ function packageContainsFile(pagePackage, file) {
 
 function runtimeAssetUrl(userPageId, file) {
   const params = new URLSearchParams({ userPageId, file });
-  return `/api/source/asset?${params.toString()}`;
+  return `/api/runtime/source/asset?${params.toString()}`;
 }
 
 function runtimePageUrl(userPageId, file) {
   const params = new URLSearchParams({ userPageId, file });
-  return `/api/source?${params.toString()}`;
+  return `/api/runtime/source?${params.toString()}`;
 }
 
 function rewriteRuntimeHtml(html, { userPageId, file }) {

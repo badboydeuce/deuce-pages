@@ -29,7 +29,7 @@ function validRuntimeRedirectTarget(targetUrl, userPageId) {
   }
 
   if (parsed.origin !== "https://deuce.local") return false;
-  if (!["/api/runtime/source", "/api/source"].includes(parsed.pathname)) return false;
+  if (!["/api/runtime/source", "/api/runtime/runtime/source", "/api/source"].includes(parsed.pathname)) return false;
   if (parsed.searchParams.get("userPageId") !== userPageId) return false;
 
   const file = String(parsed.searchParams.get("file") || "").replace(/^\/+/, "");

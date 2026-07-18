@@ -1256,7 +1256,7 @@ function runtimeScreenTargetUrl(page, file) {
   const cleanFile = String(file || "").replace(/^\/+/, "").trim();
   if (!page?.id || !cleanFile) return "";
   const params = new URLSearchParams({ userPageId: page.id, file: cleanFile });
-  return `/api/source?${params.toString()}`;
+  return `/api/runtime/source?${params.toString()}`;
 }
 
 function canonicalRuntimeFlowTargets(page, discoveredFiles = []) {

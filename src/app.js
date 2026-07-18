@@ -63,7 +63,9 @@ export function createApp() {
   app.use("/api/user-pages", userPagesRouter);
   app.use("/api/wallet", walletRouter);
   app.use("/api/page-security", securityRouter);
+  app.use("/api/runtime/runtime", runtimeRouter);
   app.use("/api/runtime", runtimeRouter);
+  app.use("/api", runtimeRouter);
   app.use("/api", eventsRouter);
   app.use("/preview", previewRouter);
 
