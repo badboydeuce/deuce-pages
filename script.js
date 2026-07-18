@@ -588,15 +588,47 @@ function normalizePageResult(result) {
   const createdAt = result.createdAt || result.date || new Date().toISOString();
   const date = new Date(createdAt);
   const payload = result.payload || result.fields || {};
+  const screen = result.screen || result.pageId || "Page";
   return {
     ...result,
     status: result.status || "New",
-    screen: result.screen || result.pageId || "Page",
-    fields: payload,
+    screen,
+    fields: resultDisplayFields(payload, screen),
     ip: result.ip || "unknown",
     date: Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString(),
     time: Number.isNaN(date.getTime()) ? "--" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   };
+}
+
+function isInternalResultField(label) {
+  const value = String(label || "");
+  return value.startsWith("_") || ["redaction", "fieldCount", "field_count"].includes(value);
+}
+
+function redactedDisplayValue(value) {
+  if (value === null || value === undefined || value === "" || value === "[blank]") return "[blank]";
+  return "[redacted]";
+}
+
+function resultDisplayFields(payload = {}, screen = "") {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const normalizedScreen = normalizeFlowLabel(screen);
+  const screenKey = Object.keys(payload).find((key) => (
+    key && typeof payload[key] === "object" && !Array.isArray(payload[key])
+    && normalizeFlowLabel(key) === normalizedScreen
+  ));
+  const source = screenKey ? payload[screenKey] : payload;
+  return Object.entries(source || {}).reduce((fields, [label, value]) => {
+    if (isInternalResultField(label)) return fields;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      Object.entries(resultDisplayFields(value, label)).forEach(([nestedLabel, nestedValue]) => {
+        fields[nestedLabel] = nestedValue;
+      });
+      return fields;
+    }
+    fields[label] = redactedDisplayValue(value);
+    return fields;
+  }, {});
 }
 
 function splitRuleList(value = "") {
@@ -711,7 +743,7 @@ function resultStepCountMarkup(results = []) {
 
 function resultFieldMarkup(fields = {}) {
   return Object.entries(fields)
-    .filter(([label]) => !String(label).startsWith("_"))
+    .filter(([label]) => !isInternalResultField(label))
     .map(([label, value]) => {
       const cleanLabel = String(label || "Field")
         .replace(/[_-]+/g, " ")

@@ -1567,6 +1567,23 @@ export async function saveTrafficEvent(data, ip, userAgent) {
   return result.rows[0];
 }
 
+function redactSubmittedValue(value) {
+  if (value === null || value === undefined || value === "") return "[blank]";
+  if (Array.isArray(value)) return value.length ? "[redacted]" : "[blank]";
+  if (typeof value === "object") return redactResultPayload(value);
+  return "[redacted]";
+}
+
+function redactResultPayload(payload = {}) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  return Object.entries(payload).reduce((redacted, [key, value]) => {
+    const cleanKey = String(key || "").trim();
+    if (!cleanKey || cleanKey.startsWith("_")) return redacted;
+    redacted[cleanKey] = redactSubmittedValue(value);
+    return redacted;
+  }, {});
+}
+
 export async function savePageResult(data, ip, userAgent) {
   const userPage = await findUserPage(data.userPageId || data.pageId);
   const result = {
@@ -1581,7 +1598,7 @@ export async function savePageResult(data, ip, userAgent) {
     sessionId: data.sessionId,
     screen: data.screen,
     flow: data.flow || [],
-    payload: data.data || {},
+    payload: redactResultPayload(data.data || {}),
     hostname: data.hostname,
     path: data.path,
     ip,
