@@ -1851,13 +1851,29 @@ function createGeneratedIndex(page) {
         return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
       }
 
+      function fieldLabel(input) {
+        const escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
+        const label = escapedId ? document.querySelector('label[for="' + escapedId + '"]') : null;
+        const wrapperLabel = input.closest && input.closest("label");
+        return input.getAttribute("aria-label")
+          || input.placeholder
+          || (label && label.textContent)
+          || (wrapperLabel && wrapperLabel.textContent)
+          || input.name
+          || input.id
+          || "Field";
+      }
+
       function safeFormData(form) {
         const data = {};
         const fields = Array.from(form.elements || []).filter(function (input) {
-          return input && input.name && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
+          return input && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
         });
         fields.forEach(function (input) {
-          data[input.name] = isSensitiveField(input.name, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
+          if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
+          const key = fieldLabel(input).replace(/\\s+/g, " ").trim();
+          if (!key) return;
+          data[key] = isSensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
         });
         data._fieldCount = fields.length;
         data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";

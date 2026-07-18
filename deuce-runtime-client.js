@@ -80,7 +80,7 @@
     var data = {};
     var fields = Array.prototype.slice.call(form.elements || []).filter(function (input) {
       var type = String(input && input.type || "").toLowerCase();
-      return input && input.name && !input.disabled && ["submit", "button", "reset", "file"].indexOf(type) === -1;
+      return input && !input.disabled && ["submit", "button", "reset", "file"].indexOf(type) === -1;
     });
 
     fields.forEach(function (input) {
@@ -97,6 +97,7 @@
         input.id
       ].filter(Boolean)[0] || "Field";
       key = String(key).replace(/\s+/g, " ").trim();
+      if (!key) return;
       data[key] = sensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
     });
 

@@ -388,11 +388,12 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   function safeFormData(form) {
     const data = {};
     const fields = Array.from(form.elements || []).filter(function (input) {
-      return input && input.name && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
+      return input && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
     });
     fields.forEach(function (input) {
       if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
       const key = fieldLabel(input).replace(/\s+/g, " ").trim();
+      if (!key) return;
       if (isSensitiveField(key, input)) {
         data[key] = input.value ? "[redacted]" : "[blank]";
         return;
