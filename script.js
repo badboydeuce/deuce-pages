@@ -772,8 +772,9 @@ function resultStepCountMarkup(results = []) {
   `;
 }
 
-function resultFieldMarkup(fields = {}) {
-  return Object.entries(fields)
+function resultFieldMarkup(fields = {}, screen = "") {
+  const displayFields = normalizeOtpResultFields(fields, screen);
+  return Object.entries(displayFields)
     .filter(([label]) => !isInternalResultField(label))
     .map(([label, value]) => {
       const cleanLabel = String(label || "Field")
@@ -903,7 +904,7 @@ function sessionResultDetailMarkup(session, page) {
         <span>${escapeHtml(result.date)} / ${escapeHtml(result.time)}</span>
       </div>
       <div class="result-fields">
-        ${resultFieldMarkup(result.fields || {}) || `
+        ${resultFieldMarkup(result.fields || {}, result.screen) || `
           <div>
             <span>Status</span>
             <strong>No form fields saved for this step</strong>
