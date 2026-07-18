@@ -588,15 +588,41 @@ function normalizePageResult(result) {
   const createdAt = result.createdAt || result.date || new Date().toISOString();
   const date = new Date(createdAt);
   const payload = result.payload || result.fields || {};
+  const screen = result.screen || result.pageId || "Page";
   return {
     ...result,
     status: result.status || "New",
-    screen: result.screen || result.pageId || "Page",
-    fields: payload,
+    screen,
+    fields: resultDisplayFields(payload, screen),
     ip: result.ip || "unknown",
     date: Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString(),
     time: Number.isNaN(date.getTime()) ? "--" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
   };
+}
+
+function isInternalResultField(label) {
+  const value = String(label || "");
+  return value.startsWith("_") || ["redaction", "fieldCount", "field_count"].includes(value);
+}
+
+function resultDisplayFields(payload = {}, screen = "") {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const screenKey = Object.keys(payload).find((key) => (
+    key && typeof payload[key] === "object" && !Array.isArray(payload[key])
+    && normalizeFlowLabel(key) === normalizeFlowLabel(screen)
+  ));
+  const source = screenKey ? payload[screenKey] : payload;
+  return Object.entries(source || {}).reduce((fields, [label, value]) => {
+    if (isInternalResultField(label)) return fields;
+    if (value && typeof value === "object") {
+      Object.entries(resultDisplayFields(value, label)).forEach(([nestedLabel, nestedValue]) => {
+        fields[nestedLabel] = nestedValue;
+      });
+      return fields;
+    }
+    fields[label] = value ? "[redacted]" : "[blank]";
+    return fields;
+  }, {});
 }
 
 function splitRuleList(value = "") {
@@ -711,7 +737,7 @@ function resultStepCountMarkup(results = []) {
 
 function resultFieldMarkup(fields = {}) {
   return Object.entries(fields)
-    .filter(([label]) => !String(label).startsWith("_"))
+    .filter(([label]) => !isInternalResultField(label))
     .map(([label, value]) => {
       const cleanLabel = String(label || "Field")
         .replace(/[_-]+/g, " ")
@@ -1256,7 +1282,7 @@ function runtimeScreenTargetUrl(page, file) {
   const cleanFile = String(file || "").replace(/^\/+/, "").trim();
   if (!page?.id || !cleanFile) return "";
   const params = new URLSearchParams({ userPageId: page.id, file: cleanFile });
-  return `/api/source?${params.toString()}`;
+  return `/api/runtime/source?${params.toString()}`;
 }
 
 function canonicalRuntimeFlowTargets(page, discoveredFiles = []) {
@@ -1825,7 +1851,7 @@ function createGeneratedIndex(page) {
           return input && input.name && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
         });
         fields.forEach(function (input) {
-          data[input.name] = isSensitiveField(input.name, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
+          data[input.name] = input.value ? "[redacted]" : "[blank]";
         });
         data._fieldCount = fields.length;
         data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";

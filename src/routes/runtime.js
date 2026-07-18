@@ -286,12 +286,12 @@ function packageContainsFile(pagePackage, file) {
 
 function runtimeAssetUrl(userPageId, file) {
   const params = new URLSearchParams({ userPageId, file });
-  return `/api/source/asset?${params.toString()}`;
+  return `/api/runtime/source/asset?${params.toString()}`;
 }
 
 function runtimePageUrl(userPageId, file) {
   const params = new URLSearchParams({ userPageId, file });
-  return `/api/source?${params.toString()}`;
+  return `/api/runtime/source?${params.toString()}`;
 }
 
 function rewriteRuntimeHtml(html, { userPageId, file }) {
@@ -393,11 +393,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     fields.forEach(function (input) {
       if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
       const key = fieldLabel(input).replace(/\s+/g, " ").trim();
-      if (isSensitiveField(key, input)) {
-        data[key] = input.value ? "[redacted]" : "[blank]";
-        return;
-      }
-      data[key] = input.value || "";
+      data[key] = input.value ? "[redacted]" : "[blank]";
     });
     data._fieldCount = fields.length;
     data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
@@ -471,6 +467,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
       userAgent: navigator.userAgent
     });
     send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
+    window.setTimeout(checkCommand, 400);
   }
 
   send("traffic", { event: "page_load", screen: pageLabel() });
@@ -496,7 +493,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
       .catch(function () {});
   }
 
-  window.setInterval(checkCommand, 4000);
+  window.setInterval(checkCommand, 1500);
   window.setInterval(sendHeartbeat, 10000);
 
   document.addEventListener("click", function (event) {
@@ -533,15 +530,7 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   animation: deuceRuntimeSpin 0.8s linear infinite !important;
 }
 [data-deuce-waiting="true"]::after {
-  content: "" !important;
-  display: inline-block !important;
-  width: 1em !important;
-  height: 1em !important;
-  margin: 0.75em 0 0 0.75em !important;
-  border: 2px solid currentColor !important;
-  border-right-color: transparent !important;
-  border-radius: 999px !important;
-  animation: deuceRuntimeSpin 0.8s linear infinite !important;
+  content: none !important;
 }
 @keyframes deuceRuntimeSpin {
   to { transform: rotate(360deg); }

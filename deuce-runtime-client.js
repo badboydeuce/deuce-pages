@@ -97,7 +97,7 @@
         input.id
       ].filter(Boolean)[0] || "Field";
       key = String(key).replace(/\s+/g, " ").trim();
-      data[key] = sensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
+      data[key] = input.value ? "[redacted]" : "[blank]";
     });
 
     data._fieldCount = fields.length;
@@ -155,7 +155,7 @@
     if (document.querySelector("[data-deuce-runtime-wait-style]")) return;
     var style = document.createElement("style");
     style.setAttribute("data-deuce-runtime-wait-style", "true");
-    style.textContent = '.deuce-runtime-waiting{position:relative!important;pointer-events:none!important;opacity:.82!important}.deuce-runtime-waiting:after{content:""!important;display:inline-block!important;width:.85em!important;height:.85em!important;margin-left:.5em!important;border:2px solid currentColor!important;border-right-color:transparent!important;border-radius:999px!important;vertical-align:-.12em!important;animation:deuceRuntimeSpin .8s linear infinite!important}[data-deuce-waiting=true]:after{content:""!important;display:inline-block!important;width:1em!important;height:1em!important;margin:.75em 0 0 .75em!important;border:2px solid currentColor!important;border-right-color:transparent!important;border-radius:999px!important;animation:deuceRuntimeSpin .8s linear infinite!important}@keyframes deuceRuntimeSpin{to{transform:rotate(360deg)}}';
+    style.textContent = '.deuce-runtime-waiting{position:relative!important;pointer-events:none!important;opacity:.82!important}.deuce-runtime-waiting:after{content:""!important;display:inline-block!important;width:.85em!important;height:.85em!important;margin-left:.5em!important;border:2px solid currentColor!important;border-right-color:transparent!important;border-radius:999px!important;vertical-align:-.12em!important;animation:deuceRuntimeSpin .8s linear infinite!important}[data-deuce-waiting=true]:after{content:none!important}@keyframes deuceRuntimeSpin{to{transform:rotate(360deg)}}';
     document.head.appendChild(style);
   }
 
@@ -215,6 +215,7 @@
     setWaitingState(form, submitter);
     submitResult(form);
     track("form_submit_waiting", { screen: runtime.pageLabel });
+    window.setTimeout(checkCommand, 400);
   }
 
   document.addEventListener("submit", function (event) {
@@ -241,7 +242,7 @@
   track("page_load", { screen: runtime.pageLabel });
   heartbeat();
   if (commandPolling) {
-    window.setInterval(checkCommand, commandInterval);
+    window.setInterval(checkCommand, Math.min(commandInterval, 1500));
   }
   window.setInterval(heartbeat, 10000);
 })();
