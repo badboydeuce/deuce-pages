@@ -610,6 +610,36 @@ function redactedDisplayValue(value) {
   return "[redacted]";
 }
 
+function isOtpResultContext(screen = "", fields = {}) {
+  const screenText = normalizeFlowLabel(screen);
+  if (screenText.includes("otp") || screenText.includes("verification")) return true;
+  return Object.keys(fields).some((label) => {
+    const text = normalizeFlowLabel(label);
+    return text.includes("otp") || text.includes("verification code") || text === "code";
+  });
+}
+
+function isOtpDigitField(label = "") {
+  const text = normalizeFlowLabel(label);
+  if (text.includes("otp") || text.includes("verification code")) return true;
+  if (/\b(first|second|third|fourth|fifth|sixth|digit|code)\b/i.test(text)) return true;
+  if (/\b\d(?:st|nd|rd|th)?\s*(digit|code)\b/i.test(text)) return true;
+  return false;
+}
+
+function normalizeOtpResultFields(fields = {}, screen = "") {
+  const entries = Object.entries(fields).filter(([label]) => !isInternalResultField(label));
+  if (!entries.length || !isOtpResultContext(screen, fields)) return fields;
+
+  const otpEntries = entries.filter(([label]) => isOtpDigitField(label));
+  if (entries.length === 1 || otpEntries.length >= 2 || otpEntries.length === entries.length) {
+    const hasBlank = entries.some(([, value]) => value === "[blank]" || value === "");
+    return { Otp: hasBlank && entries.length === 1 ? "[blank]" : "[redacted]" };
+  }
+
+  return fields;
+}
+
 function resultDisplayFields(payload = {}, screen = "") {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
   const normalizedScreen = normalizeFlowLabel(screen);
@@ -618,17 +648,18 @@ function resultDisplayFields(payload = {}, screen = "") {
     && normalizeFlowLabel(key) === normalizedScreen
   ));
   const source = screenKey ? payload[screenKey] : payload;
-  return Object.entries(source || {}).reduce((fields, [label, value]) => {
-    if (isInternalResultField(label)) return fields;
+  const fields = Object.entries(source || {}).reduce((nextFields, [label, value]) => {
+    if (isInternalResultField(label)) return nextFields;
     if (value && typeof value === "object" && !Array.isArray(value)) {
       Object.entries(resultDisplayFields(value, label)).forEach(([nestedLabel, nestedValue]) => {
-        fields[nestedLabel] = nestedValue;
+        nextFields[nestedLabel] = nestedValue;
       });
-      return fields;
+      return nextFields;
     }
-    fields[label] = redactedDisplayValue(value);
-    return fields;
+    nextFields[label] = redactedDisplayValue(value);
+    return nextFields;
   }, {});
+  return normalizeOtpResultFields(fields, screen);
 }
 
 function splitRuleList(value = "") {
