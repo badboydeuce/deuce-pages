@@ -532,17 +532,6 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   vertical-align: -0.12em !important;
   animation: deuceRuntimeSpin 0.8s linear infinite !important;
 }
-[data-deuce-waiting="true"]::after {
-  content: "" !important;
-  display: inline-block !important;
-  width: 1em !important;
-  height: 1em !important;
-  margin: 0.75em 0 0 0.75em !important;
-  border: 2px solid currentColor !important;
-  border-right-color: transparent !important;
-  border-radius: 999px !important;
-  animation: deuceRuntimeSpin 0.8s linear infinite !important;
-}
 @keyframes deuceRuntimeSpin {
   to { transform: rotate(360deg); }
 }
