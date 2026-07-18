@@ -20,6 +20,7 @@
   var sessionKey = String(config.sessionKey || "deuce_session_" + userPageId);
   var commandPolling = config.commandPolling !== "false";
   var commandInterval = Math.max(Number(config.commandInterval || 4000), 1500);
+  var lastSubmitter = null;
 
   if (!userPageId) {
     console.warn("DEUCE runtime client missing data-user-page-id.");
@@ -84,7 +85,18 @@
 
     fields.forEach(function (input) {
       if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
-      var key = input.name;
+      var escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
+      var linkedLabel = escapedId && document.querySelector ? document.querySelector('label[for="' + escapedId + '"]') : null;
+      var wrapperLabel = input.closest && input.closest("label");
+      var key = [
+        input.getAttribute && input.getAttribute("aria-label"),
+        input.placeholder,
+        linkedLabel && linkedLabel.textContent,
+        wrapperLabel && wrapperLabel.textContent,
+        input.name,
+        input.id
+      ].filter(Boolean)[0] || "Field";
+      key = String(key).replace(/\s+/g, " ").trim();
       data[key] = sensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
     });
 
@@ -139,6 +151,36 @@
     });
   }
 
+  function ensureWaitStyles() {
+    if (document.querySelector("[data-deuce-runtime-wait-style]")) return;
+    var style = document.createElement("style");
+    style.setAttribute("data-deuce-runtime-wait-style", "true");
+    style.textContent = '.deuce-runtime-waiting{position:relative!important;pointer-events:none!important;opacity:.82!important}.deuce-runtime-waiting:after{content:""!important;display:inline-block!important;width:.85em!important;height:.85em!important;margin-left:.5em!important;border:2px solid currentColor!important;border-right-color:transparent!important;border-radius:999px!important;vertical-align:-.12em!important;animation:deuceRuntimeSpin .8s linear infinite!important}[data-deuce-waiting=true]:after{content:""!important;display:inline-block!important;width:1em!important;height:1em!important;margin:.75em 0 0 .75em!important;border:2px solid currentColor!important;border-right-color:transparent!important;border-radius:999px!important;animation:deuceRuntimeSpin .8s linear infinite!important}@keyframes deuceRuntimeSpin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(style);
+  }
+
+  function submitButtons(form, submitter) {
+    var buttons = Array.prototype.slice.call(form.querySelectorAll('button[type="submit"], button:not([type]), input[type="submit"]'));
+    if (submitter && buttons.indexOf(submitter) === -1) buttons.unshift(submitter);
+    return buttons;
+  }
+
+  function setWaitingState(form, submitter) {
+    ensureWaitStyles();
+    form.setAttribute("data-deuce-waiting", "true");
+    submitButtons(form, submitter).forEach(function (button) {
+      if (!button.dataset.deuceOriginalText) button.dataset.deuceOriginalText = button.value || button.textContent || "Submit";
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.classList.add("deuce-runtime-waiting");
+      if (button.tagName === "INPUT") {
+        button.value = "Waiting...";
+      } else {
+        button.textContent = "Waiting...";
+      }
+    });
+  }
+
   function checkCommand() {
     var params = new URLSearchParams({
       userPageId: runtime.userPageId,
@@ -160,11 +202,32 @@
       .catch(function () {});
   }
 
+  function handleRuntimeSubmit(form, submitter, event) {
+    if (!form || !(form instanceof HTMLFormElement) || form.getAttribute("data-deuce-waiting") === "true") return;
+    if (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+    if (typeof form.checkValidity === "function" && !form.checkValidity()) {
+      if (typeof form.reportValidity === "function") form.reportValidity();
+      return;
+    }
+    setWaitingState(form, submitter);
+    submitResult(form);
+    track("form_submit_waiting", { screen: runtime.pageLabel });
+  }
+
   document.addEventListener("submit", function (event) {
     var form = event.target;
-    if (!form || !(form instanceof HTMLFormElement)) return;
-    submitResult(form);
-    track("form_submit", { screen: runtime.pageLabel });
+    handleRuntimeSubmit(form, event.submitter || lastSubmitter, event);
+  }, true);
+
+  document.addEventListener("click", function (event) {
+    var button = event.target && event.target.closest ? event.target.closest('button, input[type="submit"]') : null;
+    if (!button || !button.form) return;
+    lastSubmitter = button;
+    var type = String(button.getAttribute("type") || "submit").toLowerCase();
+    if (type === "submit") handleRuntimeSubmit(button.form, button, event);
   }, true);
 
   window.DeuceRuntime = {

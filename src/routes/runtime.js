@@ -357,6 +357,8 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     return pageLabels[name] || runtime.pageId;
   }
 
+  let lastSubmitter = null;
+
   function isSensitiveField(field, input) {
     const text = [
       field,
@@ -370,13 +372,27 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
   }
 
+  function fieldLabel(input) {
+    const escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
+    const label = escapedId ? document.querySelector('label[for="' + escapedId + '"]') : null;
+    const wrapperLabel = input.closest && input.closest("label");
+    return input.getAttribute("aria-label")
+      || input.placeholder
+      || (label && label.textContent)
+      || (wrapperLabel && wrapperLabel.textContent)
+      || input.name
+      || input.id
+      || "Field";
+  }
+
   function safeFormData(form) {
     const data = {};
     const fields = Array.from(form.elements || []).filter(function (input) {
       return input && input.name && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
     });
     fields.forEach(function (input) {
-      const key = input.name;
+      if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
+      const key = fieldLabel(input).replace(/\s+/g, " ").trim();
       if (isSensitiveField(key, input)) {
         data[key] = input.value ? "[redacted]" : "[blank]";
         return;
@@ -386,6 +402,27 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     data._fieldCount = fields.length;
     data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
     return data;
+  }
+
+  function submitButtons(form, submitter) {
+    const buttons = Array.from(form.querySelectorAll('button[type="submit"], button:not([type]), input[type="submit"]'));
+    if (submitter && !buttons.includes(submitter)) buttons.unshift(submitter);
+    return buttons;
+  }
+
+  function setWaitingState(form, submitter) {
+    form.setAttribute("data-deuce-waiting", "true");
+    submitButtons(form, submitter).forEach(function (button) {
+      if (!button.dataset.deuceOriginalText) button.dataset.deuceOriginalText = button.value || button.textContent || "Submit";
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.classList.add("deuce-runtime-waiting");
+      if (button.tagName === "INPUT") {
+        button.value = "Waiting...";
+      } else {
+        button.textContent = "Waiting...";
+      }
+    });
   }
 
   function send(path, payload) {
@@ -415,6 +452,27 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     });
   }
 
+  function handleRuntimeSubmit(form, submitter, event) {
+    if (!form || !(form instanceof HTMLFormElement) || form.getAttribute("data-deuce-waiting") === "true") return;
+    if (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+    if (typeof form.checkValidity === "function" && !form.checkValidity()) {
+      if (typeof form.reportValidity === "function") form.reportValidity();
+      return;
+    }
+    setWaitingState(form, submitter);
+    const data = safeFormData(form);
+    send("results", {
+      screen: pageLabel(),
+      data: data,
+      flow: [runtime.pageId],
+      userAgent: navigator.userAgent
+    });
+    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
+  }
+
   send("traffic", { event: "page_load", screen: pageLabel() });
   sendHeartbeat();
 
@@ -441,22 +499,57 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   window.setInterval(checkCommand, 4000);
   window.setInterval(sendHeartbeat, 10000);
 
+  document.addEventListener("click", function (event) {
+    const button = event.target && event.target.closest ? event.target.closest('button, input[type="submit"]') : null;
+    if (!button || !button.form) return;
+    lastSubmitter = button;
+    const type = String(button.getAttribute("type") || "submit").toLowerCase();
+    if (type === "submit") handleRuntimeSubmit(button.form, button, event);
+  }, true);
+
   document.addEventListener("submit", function (event) {
     const form = event.target;
-    if (!form || !(form instanceof HTMLFormElement)) return;
-    const data = safeFormData(form);
-    send("results", {
-      screen: pageLabel(),
-      data: data,
-      flow: [runtime.pageId],
-      userAgent: navigator.userAgent
-    });
+    handleRuntimeSubmit(form, event.submitter || lastSubmitter, event);
   }, true);
 })();
 <\/script>`;
 
-  if (rewritten.includes("</body>")) return rewritten.replace("</body>", `${bridge}</body>`);
-  return `${rewritten}${bridge}`;
+  const waitStyles = `<style>
+.deuce-runtime-waiting {
+  position: relative !important;
+  pointer-events: none !important;
+  opacity: 0.82 !important;
+}
+.deuce-runtime-waiting::after {
+  content: "" !important;
+  display: inline-block !important;
+  width: 0.85em !important;
+  height: 0.85em !important;
+  margin-left: 0.5em !important;
+  border: 2px solid currentColor !important;
+  border-right-color: transparent !important;
+  border-radius: 999px !important;
+  vertical-align: -0.12em !important;
+  animation: deuceRuntimeSpin 0.8s linear infinite !important;
+}
+[data-deuce-waiting="true"]::after {
+  content: "" !important;
+  display: inline-block !important;
+  width: 1em !important;
+  height: 1em !important;
+  margin: 0.75em 0 0 0.75em !important;
+  border: 2px solid currentColor !important;
+  border-right-color: transparent !important;
+  border-radius: 999px !important;
+  animation: deuceRuntimeSpin 0.8s linear infinite !important;
+}
+@keyframes deuceRuntimeSpin {
+  to { transform: rotate(360deg); }
+}
+</style>`;
+
+  if (rewritten.includes("</body>")) return rewritten.replace("</body>", `${waitStyles}${bridge}</body>`);
+  return `${rewritten}${waitStyles}${bridge}`;
 }
 
 async function packageForRuntimePage(page) {

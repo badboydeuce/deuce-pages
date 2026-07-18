@@ -710,12 +710,21 @@ function resultStepCountMarkup(results = []) {
 }
 
 function resultFieldMarkup(fields = {}) {
-  return Object.entries(fields).map(([label, value]) => `
+  return Object.entries(fields)
+    .filter(([label]) => !String(label).startsWith("_"))
+    .map(([label, value]) => {
+      const cleanLabel = String(label || "Field")
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      return `
     <div>
-      <span>${escapeHtml(label)}</span>
+      <span>${escapeHtml(cleanLabel)}</span>
       <strong>${escapeHtml(String(value))}</strong>
     </div>
-  `).join("");
+  `;
+    }).join("");
 }
 
 function resultActionsMarkup(result, pageSlug) {
