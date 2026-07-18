@@ -4253,6 +4253,45 @@ code,
   opacity: 0.48;
 }
 
+.wallet-quote-card {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(102, 217, 239, 0.22);
+  border-radius: var(--radius);
+  background: rgba(102, 217, 239, 0.06);
+}
+
+.wallet-quote-card span,
+.wallet-quote-card small {
+  color: var(--muted);
+  font: 800 0.68rem var(--mono);
+  text-transform: uppercase;
+}
+
+.wallet-quote-card strong {
+  color: var(--soft);
+  font-size: 0.95rem;
+}
+
+.wallet-quote-card[data-quote-state="ready"] {
+  border-color: rgba(124, 255, 178, 0.28);
+  background: rgba(124, 255, 178, 0.065);
+}
+
+.wallet-quote-card[data-quote-state="ready"] strong {
+  color: var(--accent);
+}
+
+.wallet-quote-card[data-quote-state="error"] {
+  border-color: rgba(255, 91, 91, 0.3);
+  background: rgba(255, 91, 91, 0.08);
+}
+
+.wallet-quote-card[data-quote-state="error"] strong {
+  color: #ff8f8f;
+}
+
 .wallet-pending-list {
   display: grid;
   gap: 8px;

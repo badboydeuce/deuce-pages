@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS wallet_deposit_requests (
   amount NUMERIC(12, 2) NOT NULL,
   crypto_type TEXT NOT NULL,
   network TEXT NOT NULL,
+  quote JSONB NOT NULL DEFAULT '{}'::jsonb,
   tx_hash TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   admin_note TEXT,
@@ -99,6 +100,9 @@ CREATE TABLE IF NOT EXISTS wallet_deposit_requests (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE wallet_deposit_requests
+ADD COLUMN IF NOT EXISTS quote JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE UNIQUE INDEX IF NOT EXISTS wallet_deposit_requests_tx_hash_idx
 ON wallet_deposit_requests (lower(tx_hash));

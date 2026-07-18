@@ -111,6 +111,7 @@ function toDepositRequest(row) {
     amount: Number(row.amount || 0),
     cryptoType: row.crypto_type,
     network: row.network,
+    quote: row.quote || {},
     txHash: row.tx_hash,
     status: row.status,
     adminNote: row.admin_note || "",
@@ -1155,7 +1156,7 @@ export async function adjustWallet({ userId, amount, type = "deposit", descripti
   });
 }
 
-function buildDepositRequest(userId, amount, cryptoType, network, txHash) {
+function buildDepositRequest(userId, amount, cryptoType, network, txHash, quote = {}) {
   const now = new Date().toISOString();
   return {
     id: createId("dep"),
@@ -1163,6 +1164,7 @@ function buildDepositRequest(userId, amount, cryptoType, network, txHash) {
     amount,
     cryptoType,
     network,
+    quote,
     txHash,
     status: "pending",
     adminNote: "",
@@ -1173,10 +1175,10 @@ function buildDepositRequest(userId, amount, cryptoType, network, txHash) {
   };
 }
 
-function validateDepositPayload({ userId, amount, cryptoType, network, txHash }) {
+function validateDepositPayload({ userId, amount, cryptoType, network, txHash, quote = {} }) {
   const value = Number(amount || 0);
   if (!userId) throw new Error("Authentication required");
-  if (!Number.isFinite(value) || value <= 0) throw new Error("Funding amount is required");
+  if (!Number.isFinite(value) || value < 30) throw new Error("Minimum funding is $30");
   if (!cryptoType) throw new Error("Crypto type is required");
   if (!network) throw new Error("Crypto network is required");
   if (!txHash || String(txHash).trim().length < 8) throw new Error("Transaction hash is required");
@@ -1184,7 +1186,8 @@ function validateDepositPayload({ userId, amount, cryptoType, network, txHash })
     amount: value,
     cryptoType: String(cryptoType).trim(),
     network: String(network).trim(),
-    txHash: String(txHash).trim()
+    txHash: String(txHash).trim(),
+    quote: quote && typeof quote === "object" ? quote : {}
   };
 }
 
@@ -1207,7 +1210,7 @@ export async function createWalletDepositRequest(data) {
       if (!user) return { error: "User not found", status: 404 };
       const duplicate = db.walletDepositRequests.find((item) => String(item.txHash || "").toLowerCase() === normalizedTxHash);
       if (duplicate) return { error: "Transaction hash already submitted", status: 409 };
-      const request = buildDepositRequest(user.id, clean.amount, clean.cryptoType, clean.network, clean.txHash);
+      const request = buildDepositRequest(user.id, clean.amount, clean.cryptoType, clean.network, clean.txHash, clean.quote);
       db.walletDepositRequests.push(request);
       return { request: jsonDepositToApi(request, user) };
     });
@@ -1215,10 +1218,10 @@ export async function createWalletDepositRequest(data) {
 
   try {
     const result = await query(
-      `INSERT INTO wallet_deposit_requests (id, user_id, amount, crypto_type, network, tx_hash)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO wallet_deposit_requests (id, user_id, amount, crypto_type, network, tx_hash, quote)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [createId("dep"), data.userId, clean.amount, clean.cryptoType, clean.network, clean.txHash]
+      [createId("dep"), data.userId, clean.amount, clean.cryptoType, clean.network, clean.txHash, JSON.stringify(clean.quote)]
     );
     return { request: toDepositRequest(result.rows[0]) };
   } catch (error) {
@@ -1287,7 +1290,7 @@ export async function approveWalletDepositRequest({ requestId, adminUserId, amou
         "crypto_deposit",
         creditAmount,
         `Crypto deposit approved (${request.cryptoType} ${request.network})`,
-        { depositRequestId: request.id, txHash: request.txHash, cryptoType: request.cryptoType, network: request.network }
+        { depositRequestId: request.id, txHash: request.txHash, cryptoType: request.cryptoType, network: request.network, quote: request.quote || {} }
       );
       db.walletTransactions.push(transaction);
       return { request: jsonDepositToApi(request, user), balance: user.walletBalance, transaction };
@@ -1323,7 +1326,7 @@ export async function approveWalletDepositRequest({ requestId, adminUserId, amou
         "crypto_deposit",
         creditAmount,
         `Crypto deposit approved (${request.crypto_type} ${request.network})`,
-        { depositRequestId: request.id, txHash: request.tx_hash, cryptoType: request.crypto_type, network: request.network }
+        { depositRequestId: request.id, txHash: request.tx_hash, cryptoType: request.crypto_type, network: request.network, quote: request.quote || {} }
       ]
     );
     return {

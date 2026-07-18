@@ -61,6 +61,7 @@ let adminDepositRequests = [];
 let walletFundOpen = false;
 let walletHistoryOpen = false;
 let walletFundingOptions = [];
+let walletQuoteTimer = null;
 const expandedAdminUsers = new Set();
 const collabAdminUsers = new Set();
 const selectedMarketPlans = {};
@@ -78,6 +79,7 @@ const cryptoFundingOptions = [
   { value: "BNB_BEP20", asset: "BNB", network: "BEP20", label: "BNB - BEP20" }
 ];
 walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
+const minimumWalletFundingUsd = 30;
 
 const screenLibrary = [
   {
@@ -2948,6 +2950,7 @@ function renderAdminUsers() {
               <div>
                 <strong>${escapeHtml(request.userEmail || request.userName || request.userId)}</strong>
                 <span>${escapeHtml(request.cryptoType)} / ${escapeHtml(request.network)} - ${formatMoney(request.amount)}</span>
+                ${walletFundingQuoteSummary(request) ? `<em>${escapeHtml(walletFundingQuoteSummary(request))}</em>` : ""}
                 <code>${escapeHtml(request.txHash)}</code>
                 <small class="fund-status fund-status-${escapeHtml(request.status)}">${escapeHtml(request.status)}</small>
                 <textarea data-fund-admin-note="${escapeHtml(request.id)}" placeholder="Admin note">${escapeHtml(request.adminNote || "")}</textarea>
@@ -4297,10 +4300,75 @@ function walletFundingAddressMarkup(option) {
   `;
 }
 
+function walletFundingQuoteMarkup() {
+  return `
+    <div class="wallet-quote-card" data-wallet-quote>
+      <span>Minimum funding is ${formatMoney(minimumWalletFundingUsd)}</span>
+      <strong data-wallet-quote-amount>Enter an amount to calculate crypto.</strong>
+      <small data-wallet-quote-rate>Quote updates from the backend before you submit.</small>
+    </div>
+  `;
+}
+
+function setWalletQuoteState(state, detail = "") {
+  const card = preview.querySelector("[data-wallet-quote]");
+  if (!card) return;
+  const amount = card.querySelector("[data-wallet-quote-amount]");
+  const rate = card.querySelector("[data-wallet-quote-rate]");
+  card.dataset.quoteState = state;
+  if (amount) amount.textContent = detail || "Enter an amount to calculate crypto.";
+  if (rate && state !== "ready") {
+    rate.textContent = state === "error" ? "Fix the amount or try another crypto option." : "Quote updates from the backend before you submit.";
+  }
+}
+
+async function updateWalletFundingQuote() {
+  const amountField = preview.querySelector('[data-wallet-fund="amount"]');
+  const cryptoField = preview.querySelector('[data-wallet-fund="crypto"]');
+  if (!amountField || !cryptoField) return;
+
+  const amount = Number(amountField.value || 0);
+  const selected = walletFundingOptionByValue(cryptoField.value);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    setWalletQuoteState("idle");
+    return;
+  }
+  if (amount < minimumWalletFundingUsd) {
+    setWalletQuoteState("error", `Minimum funding is ${formatMoney(minimumWalletFundingUsd)}.`);
+    return;
+  }
+
+  setWalletQuoteState("loading", "Calculating crypto equivalent...");
+  try {
+    const params = new URLSearchParams({
+      amount: String(amount),
+      cryptoType: selected.asset,
+      network: selected.network
+    });
+    const result = await requestApi(`/api/wallet/quote?${params.toString()}`);
+    const quote = result.quote || {};
+    const card = preview.querySelector("[data-wallet-quote]");
+    if (!card) return;
+    const amountLabel = card.querySelector("[data-wallet-quote-amount]");
+    const rateLabel = card.querySelector("[data-wallet-quote-rate]");
+    card.dataset.quoteState = "ready";
+    if (amountLabel) amountLabel.textContent = `Send ${quote.cryptoAmount} ${quote.cryptoType} for ${formatMoney(quote.usdAmount)} wallet credit.`;
+    if (rateLabel) rateLabel.textContent = `Rate: ${formatMoney(quote.rate)} per ${quote.cryptoType} / ${quote.source || "rate provider"}`;
+  } catch (error) {
+    setWalletQuoteState("error", `Quote unavailable: ${error.message}`);
+  }
+}
+
+function scheduleWalletFundingQuote() {
+  if (walletQuoteTimer) window.clearTimeout(walletQuoteTimer);
+  walletQuoteTimer = window.setTimeout(updateWalletFundingQuote, 350);
+}
+
 function updateWalletFundingAddress(select) {
   const card = preview.querySelector("[data-wallet-address-card]");
   if (!card) return;
   card.outerHTML = walletFundingAddressMarkup(walletFundingOptionByValue(select.value));
+  scheduleWalletFundingQuote();
 }
 
 function walletHistoryDate(value) {
@@ -4308,14 +4376,25 @@ function walletHistoryDate(value) {
   return `${formatTrafficDate(value)} ${formatTrafficTime(value)}`.trim();
 }
 
+function walletFundingQuoteSummary(request) {
+  const quote = request?.quote || {};
+  if (!quote.cryptoAmount || !quote.cryptoType) return "";
+  const rate = quote.rate ? ` at ${formatMoney(quote.rate)}` : "";
+  return `Expected ${quote.cryptoAmount} ${quote.cryptoType}${rate}`;
+}
+
 function walletFundingRowMarkup(request) {
+  const quoteSummary = walletFundingQuoteSummary(request);
+  const expected = quoteSummary
+    ? `<em>${escapeHtml(quoteSummary)}</em>`
+    : `<em>${escapeHtml(walletHistoryDate(request.createdAt))}</em>`;
   return `
     <div class="wallet-history-row">
       <span>${escapeHtml(request.cryptoType || "Crypto")} ${escapeHtml(request.network || "")}</span>
       <b>${formatMoney(request.amount)}</b>
       <small class="fund-status fund-status-${escapeHtml(request.status || "pending")}">${escapeHtml(request.status || "pending")}</small>
       <code>${escapeHtml(request.txHash || "no hash")}</code>
-      <em>${escapeHtml(walletHistoryDate(request.createdAt))}</em>
+      ${expected}
     </div>
   `;
 }
@@ -4356,7 +4435,7 @@ function renderWallet() {
               <div class="wallet-fund-grid">
                 <label>
                   <span>Amount USD</span>
-                  <input type="number" min="1" step="0.01" data-wallet-fund="amount" placeholder="100">
+                  <input type="number" min="${minimumWalletFundingUsd}" step="0.01" data-wallet-fund="amount" placeholder="30">
                 </label>
                 <label>
                   <span>Crypto</span>
@@ -4365,6 +4444,7 @@ function renderWallet() {
                   </select>
                 </label>
               </div>
+              ${walletFundingQuoteMarkup()}
               ${walletFundingAddressMarkup(selectedFundingOption)}
               <label>
                 <span>Transaction hash</span>
@@ -4947,8 +5027,9 @@ async function submitWalletFundRequest() {
     network: selected.network,
     txHash: field("txHash")
   };
-  if (!payload.amount || Number(payload.amount) <= 0) {
-    statusText.textContent = "FUNDING AMOUNT REQUIRED";
+  if (!payload.amount || Number(payload.amount) < minimumWalletFundingUsd) {
+    statusText.textContent = `MINIMUM FUNDING IS ${formatMoney(minimumWalletFundingUsd)}`;
+    setWalletQuoteState("error", `Minimum funding is ${formatMoney(minimumWalletFundingUsd)}.`);
     return;
   }
   if (!selected.address) {
@@ -5334,6 +5415,9 @@ preview.addEventListener("change", (event) => {
 preview.addEventListener("input", (event) => {
   if (event.target.closest("[data-session-search-input]")) {
     applyCompactSessionFilters();
+  }
+  if (event.target.closest('[data-wallet-fund="amount"]')) {
+    scheduleWalletFundingQuote();
   }
 });
 

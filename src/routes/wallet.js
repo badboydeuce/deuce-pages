@@ -13,6 +13,10 @@ export const walletRouter = Router();
 
 walletRouter.use(requireAuth);
 
+const minimumFundingUsd = 30;
+const stablecoinAssets = new Set(["USDT", "USDC"]);
+const quoteCache = new Map();
+
 const cryptoFundingOptions = [
   { value: "USDT_TRC20", asset: "USDT", network: "TRC20", label: "USDT - TRC20", envKey: "WALLET_USDT_TRC20" },
   { value: "USDT_ERC20", asset: "USDT", network: "ERC20", label: "USDT - ERC20", envKey: "WALLET_USDT_ERC20" },
@@ -35,6 +39,84 @@ function fundingOptionsFromEnv() {
   });
 }
 
+function fundingOptionByAssetNetwork(asset, network) {
+  const cleanAsset = String(asset || "").trim().toUpperCase();
+  const cleanNetwork = String(network || "").trim().toUpperCase();
+  return cryptoFundingOptions.find((option) => (
+    option.asset === cleanAsset && option.network === cleanNetwork
+  )) || null;
+}
+
+function coingeckoIdForAsset(asset) {
+  return {
+    BTC: "bitcoin",
+    ETH: "ethereum",
+    BNB: "binancecoin"
+  }[String(asset || "").trim().toUpperCase()] || "";
+}
+
+function formatCryptoAmount(value, asset) {
+  const decimals = stablecoinAssets.has(String(asset || "").toUpperCase()) ? 2 : 8;
+  return Number(value).toFixed(decimals).replace(/\.?0+$/, "");
+}
+
+async function cryptoUsdRate(asset) {
+  const cleanAsset = String(asset || "").trim().toUpperCase();
+  if (stablecoinAssets.has(cleanAsset)) {
+    return { rate: 1, source: "stablecoin" };
+  }
+
+  const coinId = coingeckoIdForAsset(cleanAsset);
+  if (!coinId) throw new Error("Crypto rate is not supported");
+
+  const cached = quoteCache.get(cleanAsset);
+  if (cached && cached.expiresAt > Date.now()) return cached;
+
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(coinId)}&vs_currencies=usd`;
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "deuce-pages-wallet"
+    }
+  });
+  if (!response.ok) throw new Error(`Rate provider unavailable (${response.status})`);
+  const data = await response.json().catch(() => ({}));
+  const rate = Number(data?.[coinId]?.usd || 0);
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error("Crypto rate unavailable");
+
+  const quote = { rate, source: "coingecko", expiresAt: Date.now() + 60_000 };
+  quoteCache.set(cleanAsset, quote);
+  return quote;
+}
+
+async function buildWalletQuote({ amount, cryptoType, network }) {
+  const usdAmount = Number(amount || 0);
+  if (!Number.isFinite(usdAmount) || usdAmount < minimumFundingUsd) {
+    return {
+      error: `Minimum funding is $${minimumFundingUsd}`,
+      status: 400,
+      minimumFundingUsd
+    };
+  }
+
+  const selected = fundingOptionByAssetNetwork(cryptoType, network);
+  if (!selected) return { error: "Funding option is not supported", status: 400 };
+
+  const rate = await cryptoUsdRate(selected.asset);
+  const cryptoAmount = usdAmount / rate.rate;
+  return {
+    usdAmount: Number(usdAmount.toFixed(2)),
+    cryptoAmount: formatCryptoAmount(cryptoAmount, selected.asset),
+    cryptoType: selected.asset,
+    network: selected.network,
+    label: selected.label,
+    rate: rate.rate,
+    source: rate.source,
+    expiresIn: Math.max(0, Math.round((rate.expiresAt || Date.now()) - Date.now()) / 1000),
+    minimumFundingUsd
+  };
+}
+
 walletRouter.get("/", (req, res) => {
   getWallet(req.user.id)
     .then((wallet) => res.json(wallet))
@@ -45,14 +127,36 @@ walletRouter.get("/funding-options", (req, res) => {
   res.json({ options: fundingOptionsFromEnv() });
 });
 
+walletRouter.get("/quote", (req, res) => {
+  buildWalletQuote({
+    amount: req.query.amount,
+    cryptoType: req.query.cryptoType || req.query.crypto,
+    network: req.query.network
+  })
+    .then((quote) => {
+      if (quote.error) return res.status(quote.status || 400).json(quote);
+      res.json({ quote });
+    })
+    .catch((error) => res.status(400).json({ error: error.message, minimumFundingUsd }));
+});
+
 function submitDepositRequest(req, res) {
-  createWalletDepositRequest({
-    userId: req.user.id,
+  buildWalletQuote({
     amount: req.body.amount,
     cryptoType: req.body.cryptoType,
-    network: req.body.network,
-    txHash: req.body.txHash
+    network: req.body.network
   })
+    .then((quote) => {
+      if (quote.error) return quote;
+      return createWalletDepositRequest({
+        userId: req.user.id,
+        amount: req.body.amount,
+        cryptoType: req.body.cryptoType,
+        network: req.body.network,
+        txHash: req.body.txHash,
+        quote
+      });
+    })
     .then((result) => {
       if (result.error) return res.status(result.status || 400).json(result);
       res.status(201).json(result);
