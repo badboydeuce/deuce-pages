@@ -357,9 +357,18 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     return pageLabels[name] || runtime.pageId;
   }
 
-function isSensitiveField(field, input) {
-  return false; // Never redact any fields
-}
+  function isSensitiveField(field, input) {
+    const text = [
+      field,
+      input && input.name,
+      input && input.id,
+      input && input.type,
+      input && input.autocomplete,
+      input && input.placeholder,
+      input && input.getAttribute && input.getAttribute("aria-label")
+    ].filter(Boolean).join(" ").toLowerCase();
+    return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
+  }
 
   function safeFormData(form) {
     const data = {};
