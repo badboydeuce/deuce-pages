@@ -2000,16 +2000,18 @@ code,
 
 .session-route-buttons {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
   gap: 8px;
   min-width: 0;
 }
 
 .session-route-buttons button {
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  height: auto;
+  min-height: 38px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.15;
 }
 
 .session-route-buttons span {
@@ -2162,13 +2164,13 @@ code,
 }
 
 .compact-session-summary .session-route-buttons {
-  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 6px;
 }
 
 .compact-session-summary .session-command button {
   min-height: 32px;
-  padding: 0 8px;
+  padding: 6px 8px;
   font-size: 0.72rem;
 }
 
