@@ -123,6 +123,8 @@ const resultsAutoRefreshMs = 5000;
 let resultsAutoRefreshTimer = null;
 let resultsAutoRefreshSlug = "";
 let resultsAutoRefreshBusy = false;
+const resultNotificationSeenIds = new Map();
+let resultNotificationAudioContext = null;
 
 function setAppBusy(isBusy, label = "Working") {
   window.clearTimeout(appBusyTimer);
@@ -286,6 +288,47 @@ function startResultsAutoRefresh(pageSlug) {
       resultsAutoRefreshBusy = false;
     }
   }, resultsAutoRefreshMs);
+}
+
+function resultNotificationId(result = {}) {
+  return result.id || [result.sessionId, result.screen, result.createdAt, result.date, result.time].filter(Boolean).join(":");
+}
+
+function playNewResultTone() {
+  const AudioContextType = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextType) return;
+  try {
+    resultNotificationAudioContext = resultNotificationAudioContext || new AudioContextType();
+    const context = resultNotificationAudioContext;
+    if (context.state === "suspended") context.resume().catch(() => {});
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(720, now);
+    oscillator.frequency.exponentialRampToValueAtTime(540, now + 0.18);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.26);
+  } catch (error) {
+    console.debug("Result notification tone skipped", error);
+  }
+}
+
+function syncResultNotificationState(page, results = [], options = {}) {
+  const pageKey = page.id || page.slug;
+  if (!pageKey) return;
+  const currentIds = new Set(results.map(resultNotificationId).filter(Boolean));
+  const previousIds = resultNotificationSeenIds.get(pageKey);
+  const hasNewSubmittedResult = Boolean(previousIds) && [...currentIds].some((id) => !previousIds.has(id));
+  resultNotificationSeenIds.set(pageKey, currentIds);
+  if (options.autoRefresh && hasNewSubmittedResult && page.resultSettings?.notifyOnResult !== false) {
+    playNewResultTone();
+  }
 }
 
 function renderMissingPage() {
@@ -970,13 +1013,14 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
   `;
 }
 
-async function loadResultsControlData(page) {
+async function loadResultsControlData(page, options = {}) {
   try {
     const [resultsData, sessionsData] = await Promise.all([
       requestApi(`/api/user-pages/${page.id}/results`),
       requestApi(`/api/user-pages/${page.id}/sessions`)
     ]);
     const results = (resultsData.results || []).map(normalizePageResult);
+    syncResultNotificationState(page, results, options);
     page.results = results;
     page.activeSessions = sessionsData.sessions || [];
     ownedPages = ownedPages.map((item) => item.id === page.id ? { ...item, results, activeSessions: page.activeSessions } : item);
@@ -4236,7 +4280,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
         .map((row) => row.dataset.compactSession)
         .filter(Boolean)
     : [];
-  await loadResultsControlData(page);
+  await loadResultsControlData(page, options);
   if (options.autoRefresh && !isResultsRoute(page.slug)) return;
   const results = page.results || [];
   const savedSessions = resultSessions(results);
