@@ -253,7 +253,17 @@ async function saveFlowState(page) {
 }
 
 function getPageBySlug(pageSlug) {
-  return ownedPages.find((item) => item.slug === pageSlug || item.id === pageSlug) || null;
+  const key = String(pageSlug || "");
+  return ownedPages.find((item) => (
+    String(item.id || "") === key
+    || String(item.slug || "") === key
+    || String(item.packageId || "") === key
+    || String(item.routeKey || "") === key
+  )) || null;
+}
+
+function pageRouteKey(page = {}) {
+  return page.id || page.routeKey || page.slug || page.packageId || "";
 }
 
 function isResultsRoute(pageSlug = "") {
@@ -573,8 +583,11 @@ function normalizePackage(pagePackage) {
 
 function normalizeUserPage(page) {
   const results = page.results || [];
+  const routeKey = page.id || page.routeKey || page.slug || page.packageId || "";
   return {
     ...page,
+    routeKey,
+    slug: page.slug || routeKey,
     status: page.status || "active",
     traffic: page.traffic || "0 views",
     security: page.securityConfig?.captcha ? "Captcha on" : "Security ready",
@@ -3393,6 +3406,7 @@ function pageRiskSignal(page) {
 }
 
 function ownedPageCard(page, index) {
+  const routeKey = pageRouteKey(page);
   const readiness = pageLaunchReadiness(page);
   const risk = pageRiskSignal(page);
   const hosting = page.hostingConfig || {};
@@ -3441,13 +3455,13 @@ function ownedPageCard(page, index) {
         <div class="my-page-tool-grid" aria-label="${escapeHtml(page.name)} management tools">
           <section>
             <h4>Page controls</h4>
-            <button type="button" data-go-live="${escapeHtml(page.slug)}">&#128640; Go Live</button>
-            <button type="button" data-config-page="${escapeHtml(page.slug)}">&#9881; Config</button>
-            <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="security">&#128737; Security</button>
-            <button type="button" data-results="${escapeHtml(page.slug)}">&#128193; Results</button>
-            <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="traffic">&#128200; Traffic</button>
-            <button type="button" data-page-log="${escapeHtml(page.slug)}">&#128220; Log</button>
-            <button type="button" data-renew-page="${escapeHtml(page.slug)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; ${escapeHtml(renewButtonLabel)}</button>
+            <button type="button" data-go-live="${escapeHtml(routeKey)}">&#128640; Go Live</button>
+            <button type="button" data-config-page="${escapeHtml(routeKey)}">&#9881; Config</button>
+            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="security">&#128737; Security</button>
+            <button type="button" data-results="${escapeHtml(routeKey)}">&#128193; Results</button>
+            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="traffic">&#128200; Traffic</button>
+            <button type="button" data-page-log="${escapeHtml(routeKey)}">&#128220; Log</button>
+            <button type="button" data-renew-page="${escapeHtml(routeKey)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; ${escapeHtml(renewButtonLabel)}</button>
           </section>
         </div>
       </details>
@@ -3748,6 +3762,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
   const subscription = page.subscription || {};
   const hosting = page.hostingConfig || {};
   const resultSettings = page.resultSettings || {};
+  const routeKey = pageRouteKey(page);
   const domain = hosting.domain || page.domain || "";
   const planLabel = subscription.billingPeriod ? billingLabel(subscription.billingPeriod) : "Not set";
   const renewalPrice = formatMoney(subscription.renewalPrice || 0);
@@ -3762,9 +3777,9 @@ function renderUserConfigCenter(pageSlug = "page-a") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#security-${page.slug}:security`, "Security"),
-        routeButton(`#results-${page.slug}`, "Results"),
-        routeButton(`#go-live-${page.slug}`, "Go Live")
+        routeButton(`#security-${routeKey}:security`, "Security"),
+        routeButton(`#results-${routeKey}`, "Results"),
+        routeButton(`#go-live-${routeKey}`, "Go Live")
       ])}
 
       <div class="summary-grid config-summary">
@@ -3781,8 +3796,8 @@ function renderUserConfigCenter(pageSlug = "page-a") {
           <label><span>Primary domain</span><input type="text" data-user-config="domain" value="${escapeHtml(domain)}" placeholder="clientdomain.com"></label>
           <p>This domain is used for the hosted page and allowed-host security checks.</p>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save config</button>
-            <button type="button" data-go-live="${page.slug}">Go Live</button>
+            <button type="button" data-save-user-config="${routeKey}">Save config</button>
+            <button type="button" data-go-live="${routeKey}">Go Live</button>
           </div>
         </article>
 
@@ -3799,7 +3814,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
             <span>${escapeHtml(renewalDate)}</span>
           </div>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save renewal</button>
+            <button type="button" data-save-user-config="${routeKey}">Save renewal</button>
             <button type="button" data-route="#wallet">Wallet</button>
           </div>
         </article>
@@ -3813,8 +3828,8 @@ function renderUserConfigCenter(pageSlug = "page-a") {
             <span>Notify me when a new result arrives</span>
           </label>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save results</button>
-            <button type="button" data-results="${page.slug}">Open results</button>
+            <button type="button" data-save-user-config="${routeKey}">Save results</button>
+            <button type="button" data-results="${routeKey}">Open results</button>
           </div>
         </article>
 
@@ -3822,10 +3837,10 @@ function renderUserConfigCenter(pageSlug = "page-a") {
           <small>quick controls</small>
           <h3>Page operations</h3>
           <div class="admin-compact-grid">
-            <button type="button" data-security="${page.slug}" data-security-tab="security"><strong>Security</strong><span>Captcha and device rules</span></button>
-            <button type="button" data-security="${page.slug}" data-security-tab="traffic"><strong>Traffic</strong><span>Visits and blocks</span></button>
-            <button type="button" data-results="${page.slug}"><strong>Results</strong><span>Submissions and sessions</span></button>
-            <button type="button" data-go-live="${page.slug}"><strong>Go Live</strong><span>Hosting and download</span></button>
+            <button type="button" data-security="${routeKey}" data-security-tab="security"><strong>Security</strong><span>Captcha and device rules</span></button>
+            <button type="button" data-security="${routeKey}" data-security-tab="traffic"><strong>Traffic</strong><span>Visits and blocks</span></button>
+            <button type="button" data-results="${routeKey}"><strong>Results</strong><span>Submissions and sessions</span></button>
+            <button type="button" data-go-live="${routeKey}"><strong>Go Live</strong><span>Hosting and download</span></button>
           </div>
         </article>
       </div>
@@ -4805,6 +4820,10 @@ function saveSecurityConfig(page, tab = "security") {
 }
 
 function saveUserConfig(page) {
+  if (!page) {
+    renderMissingPage();
+    return;
+  }
   const getField = (name) => preview.querySelector(`[data-user-config="${name}"]`);
   const fieldValue = (name, fallback = "") => getField(name)?.value.trim() || fallback;
   const fieldChecked = (name, fallback = false) => getField(name)?.checked ?? fallback;
@@ -4837,7 +4856,7 @@ function saveUserConfig(page) {
   };
 
   saveFlowState(page);
-  renderUserConfigCenter(page.slug);
+  renderUserConfigCenter(pageRouteKey(page));
   statusText.textContent = `${page.name.toUpperCase()} USER CONFIG SAVED`;
 }
 
