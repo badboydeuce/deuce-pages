@@ -266,6 +266,10 @@ function pageRouteKey(page = {}) {
   return page.id || page.routeKey || page.slug || page.packageId || "";
 }
 
+function normalizeAllowedHost(value = "") {
+  return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "");
+}
+
 function isResultsRoute(pageSlug = "") {
   const hash = window.location.hash || "";
   return hash.startsWith("#results-") && (!pageSlug || hash.replace("#results-", "") === pageSlug);
@@ -1461,7 +1465,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
   const usesCloudflareRelay = hostingConfig.connectionType === "cloudflare-worker";
   const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
   const liveDomain = hostingConfig.domain || page.domain || "";
-  const strictAllowedDomains = [liveDomain].filter(Boolean);
+  const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
   const entryFile = packageEntryFile(pagePackage);
   const payload = {
     id: page.id,
@@ -1571,6 +1575,10 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
 
+      function normalizeHost(value) {
+        return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
+      }
+
       function blockPage(message) {
         launcher.classList.add("hidden");
         frame.remove();
@@ -1578,7 +1586,9 @@ function createPackageRuntimeIndex(page, pagePackage) {
         blockCopy.textContent = message;
       }
 
-      if (allowed.length && !allowed.includes(host)) {
+      const allowedHosts = allowed.map(normalizeHost).filter(Boolean);
+
+      if (allowedHosts.length && !allowedHosts.includes(normalizeHost(host))) {
         blockPage("ACCESS DENIED");
       } else {
         frame.addEventListener("load", () => {
@@ -1612,7 +1622,7 @@ function createGeneratedIndex(page) {
   const usesCloudflareRelay = hostingConfig.connectionType === "cloudflare-worker";
   const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
   const liveDomain = hostingConfig.domain || page.domain || "";
-  const strictAllowedDomains = [liveDomain].filter(Boolean);
+  const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
   const publicSecurity = {
     ...securityConfig,
     turnstile: {
@@ -1805,9 +1815,13 @@ function createGeneratedIndex(page) {
         progress.textContent = "blocked";
       }
 
+      function normalizeHost(value) {
+        return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
+      }
+
       function enforceDomain() {
-        const allowedDomains = config.allowedDomains || config.security?.domains || [];
-        const hostname = window.location.hostname;
+        const allowedDomains = (config.allowedDomains || config.security?.domains || []).map(normalizeHost).filter(Boolean);
+        const hostname = normalizeHost(window.location.hostname);
 
         if (allowedDomains.length && !allowedDomains.includes(hostname)) {
           blockPage("ACCESS DENIED", "ACCESS DENIED");
@@ -3316,8 +3330,8 @@ function pageRiskSignal(page) {
   const connectionType = hosting.connectionType || "cloudflare-worker";
   const workerReady = connectionType !== "cloudflare-worker" || Boolean(hosting.cloudflare?.routePattern || hosting.workerRoute || hosting.relayVerified);
   const generatedReady = Boolean(generated.lastGeneratedAt || generated.version);
-  const allowedDomains = security.domains || [];
-  const domainAllowed = !domain || !allowedDomains.length || allowedDomains.includes(domain);
+  const allowedDomains = (security.domains || []).map(normalizeAllowedHost).filter(Boolean);
+  const domainAllowed = !domain || !allowedDomains.length || allowedDomains.includes(normalizeAllowedHost(domain));
   const issues = [];
 
   if (renewal.expired || renewal.paymentFailed) {
