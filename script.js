@@ -1499,7 +1499,9 @@ function createPackageRuntimeIndex(page, pagePackage) {
       mode: "launcher",
       entryFile,
       configEndpoint: `${runtimeApiBase}/config?userPageId=${encodeURIComponent(page.id)}`,
-      sourceEndpoint: `${runtimeApiBase}/source?userPageId=${encodeURIComponent(page.id)}`
+      sourceEndpoint: `${runtimeApiBase}/source?userPageId=${encodeURIComponent(page.id)}`,
+      turnstileEndpoint: `${runtimeApiBase}/verify-human`,
+      trafficEndpoint: `${runtimeApiBase}/traffic`
     }
   };
   delete payload.security.turnstileSecretKey;
@@ -1518,6 +1520,21 @@ function createPackageRuntimeIndex(page, pagePackage) {
       html, body { width: 100%; min-height: 100%; margin: 0; background: #050607; }
       body { overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
       #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; }
+      #deuceFrame.pending { display: none; }
+      #deuceGate {
+        min-height: 100vh;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: #fff;
+      }
+      #deuceGate.active { display: grid; }
+      #deuceGate article {
+        width: min(360px, calc(100vw - 32px));
+        min-height: 90px;
+        display: grid;
+        place-items: center;
+      }
       #deuceBlock {
         min-height: 100vh;
         display: none;
@@ -1541,6 +1558,11 @@ function createPackageRuntimeIndex(page, pagePackage) {
   </head>
   <body>
     <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
+    <section id="deuceGate">
+      <article>
+        <div id="deuceTurnstile"></div>
+      </article>
+    </section>
     <section id="deuceBlock">
       <article>
         <small>access denied</small>
@@ -1554,25 +1576,114 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const allowed = config.allowedDomains || [];
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
+      const gate = document.getElementById("deuceGate");
+      const turnstileMount = document.getElementById("deuceTurnstile");
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
+      const captcha = config.security?.captcha && config.security?.turnstile?.siteKey;
 
       function normalizeHost(value) {
         return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
       }
 
       function blockPage(message) {
+        gate.classList.remove("active");
         frame.remove();
         block.classList.add("active");
         blockCopy.textContent = message;
+      }
+
+      function sendTraffic(event, result, reason) {
+        if (!config.runtime?.trafficEndpoint) return;
+        fetch(config.runtime.trafficEndpoint, {
+          method: "POST",
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userPageId: config.id,
+            pageId: config.pageId,
+            hostname: window.location.hostname,
+            event,
+            result,
+            reason,
+            createdAt: new Date().toISOString()
+          })
+        }).catch(() => {});
+      }
+
+      function loadPage() {
+        gate.classList.remove("active");
+        frame.classList.remove("pending");
+        frame.src = config.runtime.sourceEndpoint;
+      }
+
+      function verifyToken(token) {
+        return fetch(config.runtime.turnstileEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userPageId: config.id,
+            pageId: config.pageId,
+            hostname: window.location.hostname,
+            token
+          })
+        }).then((response) => response.ok);
+      }
+
+      function loadTurnstile() {
+        frame.classList.add("pending");
+        gate.classList.add("active");
+        const script = document.createElement("script");
+        script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+          if (!window.turnstile) {
+            sendTraffic("turnstile_load_failed", "blocked", "Turnstile could not load");
+            blockPage("ACCESS DENIED");
+            return;
+          }
+          window.turnstile.render(turnstileMount, {
+            sitekey: config.security.turnstile.siteKey,
+            callback: (token) => {
+              verifyToken(token).then((verified) => {
+                if (verified) {
+                  sendTraffic("turnstile_verified", "allowed", "Passed launcher captcha");
+                  loadPage();
+                  return;
+                }
+                sendTraffic("turnstile_verify_failed", "blocked", "Turnstile verification failed");
+                blockPage("ACCESS DENIED");
+              }).catch(() => {
+                sendTraffic("turnstile_verify_failed", "blocked", "Turnstile verification failed");
+                blockPage("ACCESS DENIED");
+              });
+            },
+            "error-callback": () => {
+              sendTraffic("turnstile_verify_failed", "blocked", "Turnstile challenge failed");
+              blockPage("ACCESS DENIED");
+            },
+            "expired-callback": () => {
+              sendTraffic("turnstile_expired", "blocked", "Turnstile challenge expired");
+              blockPage("ACCESS DENIED");
+            }
+          });
+        };
+        script.onerror = () => {
+          sendTraffic("turnstile_load_failed", "blocked", "Turnstile could not load");
+          blockPage("ACCESS DENIED");
+        };
+        document.head.appendChild(script);
       }
 
       const allowedHosts = allowed.map(normalizeHost).filter(Boolean);
 
       if (allowedHosts.length && !allowedHosts.includes(normalizeHost(host))) {
         blockPage("ACCESS DENIED");
+      } else if (captcha) {
+        loadTurnstile();
       } else {
-        frame.src = config.runtime.sourceEndpoint;
+        loadPage();
       }
     <\/script>
   </body>

