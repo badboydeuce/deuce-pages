@@ -661,15 +661,6 @@ function isOtpDigitField(label = "") {
 }
 
 function normalizeOtpResultFields(fields = {}, screen = "") {
-  const entries = Object.entries(fields);
-  if (!entries.length || !isOtpResultContext(screen, fields)) return fields;
-
-  const otpEntries = entries.filter(([label]) => isOtpDigitField(label));
-  if (entries.length === 1 || otpEntries.length >= 2 || otpEntries.length === entries.length) {
-    const hasBlank = entries.some(([, value]) => value === "[blank]" || value === "");
-    return { Otp: hasBlank && entries.length === 1 ? "[blank]" : "[redacted]" };
-  }
-
   return fields;
 }
 
