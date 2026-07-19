@@ -2,7 +2,7 @@ import { Router } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { pageSubscriptionState, resolveUserPageSubscription, saveTrafficEvent } from "../repositories/appRepository.js";
 import { turnstileSecretFor, verifyTurnstileToken } from "../services/turnstile.js";
-import { deviceBlocked } from "../services/deviceRules.js";
+import { securityDecision } from "../services/securityRules.js";
 
 export const securityRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -81,10 +81,7 @@ securityRouter.post("/check", async (req, res) => {
     const { userPage, hostname } = context;
     const ip = requestIp(req);
 
-    const security = userPage.securityConfig || {};
-    const banned = (security.bannedIps || []).includes(ip) || (security.bannedIps || []).includes(req.body.ip);
-    const device = deviceBlocked(security, req.headers["user-agent"]);
-    const blocked = banned || device.blocked;
+    const decision = securityDecision(userPage, ip, req.headers["user-agent"], req);
 
     const event = await saveTrafficEvent({
       userPageId: userPage.id,
@@ -92,15 +89,23 @@ securityRouter.post("/check", async (req, res) => {
       sessionId: req.body.sessionId,
       event: req.body.event || "security_check",
       hostname,
-      result: blocked ? "blocked" : "allowed",
-      reason: banned ? "Banned IP" : device.blocked ? `${device.deviceType} devices are blocked` : "Passed rules",
-      metadata: { deviceType: device.deviceType }
+      result: decision.allowed ? "allowed" : "blocked",
+      reason: decision.allowed ? "Passed rules" : decision.reason,
+      metadata: {
+        deviceType: decision.deviceType || null,
+        proxyType: decision.proxyType || null
+      }
     }, ip, req.headers["user-agent"]);
 
-    if (banned) return res.status(403).json({ allowed: false, reason: accessDeniedMessage });
-    if (device.blocked) return res.status(403).json({ allowed: false, reason: accessDeniedMessage });
+    if (!decision.allowed) return res.status(403).json({ allowed: false, reason: accessDeniedMessage });
 
-    res.json({ allowed: true, captchaRequired: Boolean(security.captcha), deviceType: device.deviceType, event });
+    res.json({
+      allowed: true,
+      captchaRequired: Boolean(userPage.securityConfig?.captcha),
+      deviceType: decision.deviceType || null,
+      proxyType: decision.proxyType || null,
+      event
+    });
   } catch (error) {
     res.status(400).json({ allowed: false, reason: error.message });
   }

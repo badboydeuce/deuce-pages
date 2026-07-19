@@ -612,7 +612,13 @@ function buildUserPage(userId, pagePackage, period, price, data) {
       captcha: false,
       turnstile: { provider: "turnstile", siteKey: "", secretKey: "" },
       bannedIps: [],
-      whitelistIps: []
+      whitelistIps: [],
+      blockedDevices: [],
+      vpnProxyRules: {
+        blockVpnProxies: false,
+        blockTor: false,
+        blockHostingProviders: false
+      }
     },
     hostingConfig: {
       domain: data.domain || "",
@@ -695,10 +701,16 @@ function uniqueStringList(list = []) {
 function normalizeSecurityConfig(securityConfig = {}) {
   const whitelistIps = uniqueStringList(securityConfig.whitelistIps);
   const whitelistSet = new Set(whitelistIps);
+  const vpnProxyRules = securityConfig.vpnProxyRules || {};
   return {
     ...securityConfig,
     bannedIps: uniqueStringList(securityConfig.bannedIps).filter((ip) => !whitelistSet.has(ip)),
-    whitelistIps
+    whitelistIps,
+    vpnProxyRules: {
+      blockVpnProxies: Boolean(vpnProxyRules.blockVpnProxies),
+      blockTor: Boolean(vpnProxyRules.blockTor),
+      blockHostingProviders: Boolean(vpnProxyRules.blockHostingProviders)
+    }
   };
 }
 
