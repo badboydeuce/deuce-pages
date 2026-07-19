@@ -1598,7 +1598,7 @@ export async function savePageResult(data, ip, userAgent) {
     sessionId: data.sessionId,
     screen: data.screen,
     flow: data.flow || [],
-    payload: redactResultPayload(data.data || {}),
+    payload: (data.data || {}),
     hostname: data.hostname,
     path: data.path,
     ip,
