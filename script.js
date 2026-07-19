@@ -1517,46 +1517,29 @@ function createPackageRuntimeIndex(page, pagePackage) {
       * { box-sizing: border-box; }
       html, body { width: 100%; min-height: 100%; margin: 0; background: #050607; }
       body { overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; opacity: 0; transition: opacity .18s ease; }
-      #deuceFrame.active { opacity: 1; }
-      #deuceLauncher,
+      #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; }
       #deuceBlock {
         min-height: 100vh;
+        display: none;
         place-items: center;
         padding: 24px;
         color: #eef8f2;
         background: #050607;
       }
-      #deuceLauncher { display: grid; }
-      #deuceLauncher.hidden { display: none; }
-      #deuceLauncher article,
+      #deuceBlock.active { display: grid; }
       #deuceBlock article {
-        max-width: 560px;
+        max-width: 520px;
         border: 1px solid rgba(124,255,178,.24);
         border-radius: 10px;
         padding: 28px;
         background: #0d1112;
       }
-      #deuceBlock.active { display: grid; }
-      #deuceBlock { display: none; }
-      #deuceLauncher small,
       #deuceBlock small { color: #7cffb2; font-weight: 800; text-transform: uppercase; }
-      #deuceLauncher h1,
       #deuceBlock h1 { margin: 10px 0; font-size: 1.7rem; }
-      #deuceLauncher p,
       #deuceBlock p { color: #8da199; line-height: 1.55; }
-      #deuceLauncher code { display: block; color: #7cffb2; overflow-wrap: anywhere; font: 800 .76rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     </style>
   </head>
   <body>
-    <section id="deuceLauncher">
-      <article>
-        <small>deuce runtime</small>
-        <h1>Loading page</h1>
-        <p>This index.html is a launcher. The page package, session redirects, security checks, and results sync are served by DEUCE runtime.</p>
-        <code id="deuceLauncherMeta">Preparing ${escapeHtml(entryFile || "runtime page")}</code>
-      </article>
-    </section>
     <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
     <section id="deuceBlock">
       <article>
@@ -1571,7 +1554,6 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const allowed = config.allowedDomains || [];
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
-      const launcher = document.getElementById("deuceLauncher");
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
 
@@ -1580,7 +1562,6 @@ function createPackageRuntimeIndex(page, pagePackage) {
       }
 
       function blockPage(message) {
-        launcher.classList.add("hidden");
         frame.remove();
         block.classList.add("active");
         blockCopy.textContent = message;
@@ -1591,10 +1572,6 @@ function createPackageRuntimeIndex(page, pagePackage) {
       if (allowedHosts.length && !allowedHosts.includes(normalizeHost(host))) {
         blockPage("ACCESS DENIED");
       } else {
-        frame.addEventListener("load", () => {
-          launcher.classList.add("hidden");
-          frame.classList.add("active");
-        }, { once: true });
         frame.src = config.runtime.sourceEndpoint;
       }
     <\/script>
