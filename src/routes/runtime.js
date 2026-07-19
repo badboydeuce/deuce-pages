@@ -394,17 +394,13 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
       if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
       const key = fieldLabel(input).replace(/\s+/g, " ").trim();
       if (!key) return;
-      if (isSensitiveField(key, input)) {
-        data[key] = input.value ? "[redacted]" : "[blank]";
-        return;
-      }
       data[key] = input.value || "";
     });
     data._fieldCount = fields.length;
-    data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
     return data;
   }
 
+  
   function submitButtons(form, submitter) {
     const buttons = Array.from(form.querySelectorAll('button[type="submit"], button:not([type]), input[type="submit"]'));
     if (submitter && !buttons.includes(submitter)) buttons.unshift(submitter);
