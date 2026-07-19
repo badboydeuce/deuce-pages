@@ -4186,9 +4186,9 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       <h3>Block masked traffic</h3>
       <div class="device-rule-list">
         ${[
-          ["blockVpnProxies", "Block VPN and proxy signals", "Blocks obvious proxy headers and proxy-like clients"],
-          ["blockTor", "Block Tor exits", "Blocks Cloudflare Tor country signals and Tor-marked requests"],
-          ["blockHostingProviders", "Block hosting/datacenter IPs", "Saved now; use IP reputation provider for strict enforcement"]
+          ["blockVpnProxies", "Block VPN and proxy traffic", "Uses runtime headers plus IP reputation checks"],
+          ["blockTor", "Block Tor exits", "Blocks Cloudflare Tor signals and reputation-marked Tor requests"],
+          ["blockHostingProviders", "Block hosting/datacenter IPs", "Uses IP reputation to block server/datacenter traffic"]
         ].map(([field, label, hint]) => `
           <label class="device-rule">
             <input type="checkbox" data-security-proxy="${field}" ${vpnProxyRules[field] ? "checked" : ""}>

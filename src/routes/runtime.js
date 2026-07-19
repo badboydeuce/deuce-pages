@@ -215,8 +215,8 @@ async function runtimeContext(req, res, options = {}) {
   return { page, clientHost, ip: requestIp(req) };
 }
 
-function enforceRuntimeSecurity(context, req, res) {
-  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+async function enforceRuntimeSecurity(context, req, res) {
+  const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (decision.allowed) return decision;
   accessDenied(res);
   return null;
@@ -692,7 +692,7 @@ async function packageForRuntimePage(page) {
 async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   const context = await runtimeContext(req, res, { expiredResponse: asAsset ? "json" : "html" });
   if (!context) return;
-  if (!enforceRuntimeSecurity(context, req, res)) return;
+  if (!await enforceRuntimeSecurity(context, req, res)) return;
 
   const pagePackage = await packageForRuntimePage(context.page);
   const requestedFile = String(req.query?.file || "");
@@ -730,7 +730,7 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
 runtimeRouter.get("/config", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
-  if (!enforceRuntimeSecurity(context, req, res)) return;
+  if (!await enforceRuntimeSecurity(context, req, res)) return;
   res.json({ config: publicPageConfig(context.page) });
 });
 
@@ -738,7 +738,7 @@ runtimeRouter.post("/config", async (req, res) => {
   if (payloadTooLarge(req, res, runtimePayloadLimits.config)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
-  if (!enforceRuntimeSecurity(context, req, res)) return;
+  if (!await enforceRuntimeSecurity(context, req, res)) return;
   res.json({ config: publicPageConfig(context.page) });
 });
 
@@ -764,7 +764,7 @@ runtimeRouter.post("/security/check", async (req, res) => {
   if (payloadTooLarge(req, res, runtimePayloadLimits.security)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+  const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
     res.status(403).json({ allowed: false, reason: accessDeniedMessage });
     return;
@@ -776,7 +776,7 @@ runtimeRouter.post("/verify-human", async (req, res) => {
   if (payloadTooLarge(req, res, runtimePayloadLimits.verify)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+  const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
     res.status(403).json({ verified: false, reason: accessDeniedMessage });
     return;
@@ -803,7 +803,7 @@ runtimeRouter.post("/traffic", async (req, res) => {
   if (payloadTooLarge(req, res, runtimePayloadLimits.traffic)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+  const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   const event = await saveTrafficEvent({
     ...req.body,
     userPageId: context.page.id,
@@ -814,7 +814,8 @@ runtimeRouter.post("/traffic", async (req, res) => {
     metadata: {
       ...(req.body?.metadata || {}),
       deviceType: decision.deviceType || null,
-      proxyType: decision.proxyType || null
+      proxyType: decision.proxyType || null,
+      reputation: decision.reputation || null
     }
   }, context.ip, req.headers["user-agent"]);
   res.status(201).json({
@@ -846,7 +847,7 @@ runtimeRouter.post("/results", async (req, res) => {
   if (payloadTooLarge(req, res, runtimePayloadLimits.result)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
-  const decision = securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+  const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
     res.status(403).json({ error: accessDeniedMessage });
     return;

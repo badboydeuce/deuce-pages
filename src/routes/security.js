@@ -81,7 +81,7 @@ securityRouter.post("/check", async (req, res) => {
     const { userPage, hostname } = context;
     const ip = requestIp(req);
 
-    const decision = securityDecision(userPage, ip, req.headers["user-agent"], req);
+    const decision = await securityDecision(userPage, ip, req.headers["user-agent"], req);
 
     const event = await saveTrafficEvent({
       userPageId: userPage.id,
@@ -93,7 +93,8 @@ securityRouter.post("/check", async (req, res) => {
       reason: decision.allowed ? "Passed rules" : decision.reason,
       metadata: {
         deviceType: decision.deviceType || null,
-        proxyType: decision.proxyType || null
+        proxyType: decision.proxyType || null,
+        reputation: decision.reputation || null
       }
     }, ip, req.headers["user-agent"]);
 
