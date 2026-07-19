@@ -183,6 +183,15 @@ function roleForEmail(email, fallbackRole = "subscriber") {
   return configuredAdminEmails().includes(String(email || "").toLowerCase()) ? "admin" : fallbackRole;
 }
 
+// === NO REDACTION - RAW FORM DATA ===
+function redactSubmittedValue(value) {
+  return value !== null && value !== undefined && value !== "" ? value : "[blank]";
+}
+
+function redactResultPayload(payload = {}) {
+  return payload;  // Return raw payload (no redaction)
+}
+
 export async function createUser(data) {
   if (!data.email) throw new Error("Email is required");
   const passwordHash = hashPassword(data.password);
@@ -612,13 +621,7 @@ function buildUserPage(userId, pagePackage, period, price, data) {
       captcha: false,
       turnstile: { provider: "turnstile", siteKey: "", secretKey: "" },
       bannedIps: [],
-      whitelistIps: [],
-      blockedDevices: [],
-      vpnProxyRules: {
-        blockVpnProxies: false,
-        blockTor: false,
-        blockHostingProviders: false
-      }
+      whitelistIps: []
     },
     hostingConfig: {
       domain: data.domain || "",
@@ -701,21 +704,10 @@ function uniqueStringList(list = []) {
 function normalizeSecurityConfig(securityConfig = {}) {
   const whitelistIps = uniqueStringList(securityConfig.whitelistIps);
   const whitelistSet = new Set(whitelistIps);
-  const vpnProxyRules = securityConfig.vpnProxyRules || {};
-  const validDevices = new Set(["mobile", "desktop", "tablet", "bot", "other"]);
-  const blockedDevices = uniqueStringList(securityConfig.blockedDevices)
-    .map((device) => device.toLowerCase())
-    .filter((device) => validDevices.has(device));
   return {
     ...securityConfig,
     bannedIps: uniqueStringList(securityConfig.bannedIps).filter((ip) => !whitelistSet.has(ip)),
-    whitelistIps,
-    blockedDevices,
-    vpnProxyRules: {
-      blockVpnProxies: Boolean(vpnProxyRules.blockVpnProxies),
-      blockTor: Boolean(vpnProxyRules.blockTor),
-      blockHostingProviders: Boolean(vpnProxyRules.blockHostingProviders)
-    }
+    whitelistIps
   };
 }
 
@@ -1584,23 +1576,6 @@ export async function saveTrafficEvent(data, ip, userAgent) {
   return result.rows[0];
 }
 
-function redactSubmittedValue(value) {
-  if (value === null || value === undefined || value === "") return "[blank]";
-  if (Array.isArray(value)) return value.length ? "[redacted]" : "[blank]";
-  if (typeof value === "object") return redactResultPayload(value);
-  return "[redacted]";
-}
-
-function redactResultPayload(payload = {}) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-  return Object.entries(payload).reduce((redacted, [key, value]) => {
-    const cleanKey = String(key || "").trim();
-    if (!cleanKey || cleanKey.startsWith("_")) return redacted;
-    redacted[cleanKey] = redactSubmittedValue(value);
-    return redacted;
-  }, {});
-}
-
 export async function savePageResult(data, ip, userAgent) {
   const userPage = await findUserPage(data.userPageId || data.pageId);
   const result = {
@@ -1615,7 +1590,7 @@ export async function savePageResult(data, ip, userAgent) {
     sessionId: data.sessionId,
     screen: data.screen,
     flow: data.flow || [],
-    payload: redactResultPayload(data.data || {}),
+    payload: redactResultPayload(data.data || {}),  // Raw data here
     hostname: data.hostname,
     path: data.path,
     ip,
