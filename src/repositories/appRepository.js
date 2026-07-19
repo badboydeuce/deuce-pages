@@ -702,10 +702,15 @@ function normalizeSecurityConfig(securityConfig = {}) {
   const whitelistIps = uniqueStringList(securityConfig.whitelistIps);
   const whitelistSet = new Set(whitelistIps);
   const vpnProxyRules = securityConfig.vpnProxyRules || {};
+  const validDevices = new Set(["mobile", "desktop", "tablet", "bot", "other"]);
+  const blockedDevices = uniqueStringList(securityConfig.blockedDevices)
+    .map((device) => device.toLowerCase())
+    .filter((device) => validDevices.has(device));
   return {
     ...securityConfig,
     bannedIps: uniqueStringList(securityConfig.bannedIps).filter((ip) => !whitelistSet.has(ip)),
     whitelistIps,
+    blockedDevices,
     vpnProxyRules: {
       blockVpnProxies: Boolean(vpnProxyRules.blockVpnProxies),
       blockTor: Boolean(vpnProxyRules.blockTor),

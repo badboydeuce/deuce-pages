@@ -216,6 +216,7 @@
     setWaitingState(form, submitter);
     submitResult(form);
     track("form_submit_waiting", { screen: runtime.pageLabel });
+    window.setTimeout(checkCommand, 400);
   }
 
   document.addEventListener("submit", function (event) {
@@ -242,7 +243,7 @@
   track("page_load", { screen: runtime.pageLabel });
   heartbeat();
   if (commandPolling) {
-    window.setInterval(checkCommand, commandInterval);
+    window.setInterval(checkCommand, Math.min(commandInterval, 1500));
   }
   window.setInterval(heartbeat, 10000);
 })();

