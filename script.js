@@ -4135,6 +4135,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <input type="password" data-security-field="turnstileSecretKey" value="${escapeHtml(turnstile.secretKey || security.turnstileSecretKey || "")}" placeholder="Keep this server-side">
       </label>
       <p>The generated index.html receives only the site key. The secret key stays in your API config for verification.</p>
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save Turnstile</button>
     </article>
   `;
   const ipPanel = `

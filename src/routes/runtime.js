@@ -238,7 +238,12 @@ function runtimePageUrl(userPageId, file) {
   return `/api/runtime/source?${params.toString()}`;
 }
 
-function rewriteRuntimeHtml(html, { userPageId, file }) {
+function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
+  const turnstile = publicTurnstileConfig(security);
+  const turnstileConfig = {
+    enabled: Boolean(turnstile.enabled && turnstile.siteKey),
+    siteKey: turnstile.siteKey || ""
+  };
   const rewritten = html.replace(/\b(src|href|action)=["']([^"']+)["']/gi, (match, attr, value) => {
     const resolved = resolveRelativePath(file, value);
     if (!resolved) return match;
@@ -263,7 +268,8 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
   const runtime = {
     userPageId: ${JSON.stringify(userPageId)},
     pageId: ${JSON.stringify(file)},
-    sessionId: getSessionId()
+    sessionId: getSessionId(),
+    turnstile: ${JSON.stringify(turnstileConfig)}
   };
   const apiBase = window.location.pathname.indexOf("/api/runtime/") === 0 ? "/api/runtime" : "/api";
 
@@ -402,6 +408,93 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     }
   }
 
+  function restoreControl(control) {
+    if (!control) return;
+    control.disabled = false;
+    control.removeAttribute("aria-busy");
+    control.removeAttribute("data-deuce-waiting");
+    control.classList.remove("deuce-runtime-waiting");
+    if (control.dataset.deuceOriginalText) {
+      if (control.tagName === "INPUT") {
+        control.value = control.dataset.deuceOriginalText;
+      } else if ("textContent" in control) {
+        control.textContent = control.dataset.deuceOriginalText;
+      }
+    }
+  }
+
+  function restoreForm(form, submitter) {
+    if (!form) return;
+    form.removeAttribute("data-deuce-waiting");
+    submitButtons(form, submitter).forEach(restoreControl);
+  }
+
+  function turnstileMountFor(target) {
+    const scope = nearestInputScope(target);
+    let mount = scope.querySelector && scope.querySelector("[data-deuce-turnstile]");
+    if (mount) return mount;
+    mount = document.createElement("div");
+    mount.setAttribute("data-deuce-turnstile", "true");
+    mount.style.margin = "12px 0";
+    if (target && target.parentNode) {
+      target.parentNode.insertBefore(mount, target);
+    } else if (scope && scope.appendChild) {
+      scope.appendChild(mount);
+    } else {
+      document.body.appendChild(mount);
+    }
+    return mount;
+  }
+
+  function loadTurnstileScript() {
+    if (!runtime.turnstile || !runtime.turnstile.enabled) return Promise.resolve();
+    if (window.turnstile) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      const existing = document.querySelector('script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]');
+      if (existing) {
+        existing.addEventListener("load", resolve, { once: true });
+        existing.addEventListener("error", reject, { once: true });
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  function verifyTurnstileFor(target) {
+    if (!runtime.turnstile || !runtime.turnstile.enabled) return Promise.resolve(true);
+    return loadTurnstileScript().then(function () {
+      return new Promise(function (resolve) {
+        const mount = turnstileMountFor(target);
+        mount.innerHTML = "";
+        const widgetId = window.turnstile.render(mount, {
+          sitekey: runtime.turnstile.siteKey,
+          callback: function (token) {
+            send("verify-human", { token: token, screen: pageLabel() }).then(function (response) {
+              resolve(Boolean(response && response.ok));
+            });
+          },
+          "error-callback": function () { resolve(false); },
+          "expired-callback": function () { resolve(false); }
+        });
+        if (widgetId === undefined || widgetId === null) resolve(false);
+      });
+    }).catch(function () {
+      send("traffic", {
+        event: "turnstile_load_failed",
+        screen: pageLabel(),
+        result: "blocked",
+        reason: "Turnstile could not load"
+      });
+      return false;
+    });
+  }
+
   
   function submitButtons(form, submitter) {
     const buttons = Array.from(form.querySelectorAll('button[type="submit"], button:not([type]), input[type="submit"]'));
@@ -480,10 +573,17 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
       return;
     }
     setWaitingState(form, submitter);
-    const data = safeFormData(form);
-    send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
-    sendResultPayload(data, "form");
-    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
+    verifyTurnstileFor(submitter || form).then(function (verified) {
+      if (!verified) {
+        send("traffic", { event: "turnstile_verify_failed", screen: pageLabel(), result: "blocked", reason: "Turnstile verification failed" });
+        restoreForm(form, submitter);
+        return;
+      }
+      const data = safeFormData(form);
+      send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
+      sendResultPayload(data, "form");
+      send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
+    });
   }
 
   function handleFallbackSubmit(control, event) {
@@ -498,9 +598,16 @@ function rewriteRuntimeHtml(html, { userPageId, file }) {
     }
     control.setAttribute("data-deuce-waiting", "true");
     setControlWaiting(control);
-    send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
-    sendResultPayload(data, "fallback");
-    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
+    verifyTurnstileFor(control).then(function (verified) {
+      if (!verified) {
+        send("traffic", { event: "turnstile_verify_failed", screen: pageLabel(), result: "blocked", reason: "Turnstile verification failed", metadata: { captureMode: "fallback" } });
+        restoreControl(control);
+        return;
+      }
+      send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
+      sendResultPayload(data, "fallback");
+      send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
+    });
   }
 
   send("traffic", { event: "page_load", screen: pageLabel() });
@@ -617,7 +724,7 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  res.send(rewriteRuntimeHtml(html, { userPageId: context.page.id, file }));
+  res.send(rewriteRuntimeHtml(html, { userPageId: context.page.id, file, security: context.page.securityConfig || {} }));
 }
 
 runtimeRouter.get("/config", async (req, res) => {
