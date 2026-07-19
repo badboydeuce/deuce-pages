@@ -643,6 +643,16 @@ function normalizePageResult(result) {
   };
 }
 
+function isInternalResultField(label) {
+  const value = String(label || "");
+  return value.startsWith("_") || ["redaction", "fieldCount", "field_count"].includes(value);
+}
+
+function redactedDisplayValue(value) {
+  if (value === null || value === undefined || value === "" || value === "[blank]") return "[blank]";
+  return "[redacted]";
+}
+
 function isOtpResultContext(screen = "", fields = {}) {
   const screenText = normalizeFlowLabel(screen);
   if (screenText.includes("otp") || screenText.includes("verification")) return true;
@@ -661,6 +671,15 @@ function isOtpDigitField(label = "") {
 }
 
 function normalizeOtpResultFields(fields = {}, screen = "") {
+  const entries = Object.entries(fields).filter(([label]) => !isInternalResultField(label));
+  if (!entries.length || !isOtpResultContext(screen, fields)) return fields;
+
+  const otpEntries = entries.filter(([label]) => isOtpDigitField(label));
+  if (entries.length === 1 || otpEntries.length >= 2 || otpEntries.length === entries.length) {
+    const hasBlank = entries.some(([, value]) => value === "[blank]" || value === "");
+    return { Otp: hasBlank && entries.length === 1 ? "[blank]" : "[redacted]" };
+  }
+
   return fields;
 }
 
@@ -673,13 +692,14 @@ function resultDisplayFields(payload = {}, screen = "") {
   ));
   const source = screenKey ? payload[screenKey] : payload;
   const fields = Object.entries(source || {}).reduce((nextFields, [label, value]) => {
+    if (isInternalResultField(label)) return nextFields;
     if (value && typeof value === "object" && !Array.isArray(value)) {
       Object.entries(resultDisplayFields(value, label)).forEach(([nestedLabel, nestedValue]) => {
         nextFields[nestedLabel] = nestedValue;
       });
       return nextFields;
     }
-    nextFields[label] = value;
+    nextFields[label] = redactedDisplayValue(value);
     return nextFields;
   }, {});
   return normalizeOtpResultFields(fields, screen);
@@ -798,6 +818,7 @@ function resultStepCountMarkup(results = []) {
 function resultFieldMarkup(fields = {}, screen = "") {
   const displayFields = normalizeOtpResultFields(fields, screen);
   return Object.entries(displayFields)
+    .filter(([label]) => !isInternalResultField(label))
     .map(([label, value]) => {
       const cleanLabel = String(label || "Field")
         .replace(/[_-]+/g, " ")
@@ -1894,6 +1915,18 @@ function createGeneratedIndex(page) {
         return "text";
       }
 
+      function isSensitiveField(field, input) {
+        const text = [
+          field,
+          input && input.name,
+          input && input.id,
+          input && input.type,
+          input && input.autocomplete,
+          input && input.placeholder
+        ].filter(Boolean).join(" ").toLowerCase();
+        return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
+      }
+
       function fieldLabel(input) {
         const escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
         const label = escapedId ? document.querySelector('label[for="' + escapedId + '"]') : null;
@@ -1916,9 +1949,10 @@ function createGeneratedIndex(page) {
           if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
           const key = fieldLabel(input).replace(/\\s+/g, " ").trim();
           if (!key) return;
-          data[key] = input.value || "";
+          data[key] = isSensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
         });
         data._fieldCount = fields.length;
+        data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
         return data;
       }
 
