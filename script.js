@@ -3088,7 +3088,23 @@ function renderAdmin() {
 }
 
 function getAdminPackage(packageSlug) {
-  return adminPackages.find((item) => item.slug === packageSlug || item.id === packageSlug) || null;
+  let key = String(packageSlug || "").trim();
+  try { key = decodeURIComponent(key); } catch { /* Keep the original route key. */ }
+  const normalized = key.toLowerCase();
+  return adminPackages.find((item) => (
+    String(item.slug || "").toLowerCase() === normalized
+    || String(item.id || "").toLowerCase() === normalized
+  )) || null;
+}
+
+async function fetchAdminPackage(packageSlug) {
+  let key = String(packageSlug || "").trim();
+  try { key = decodeURIComponent(key); } catch { /* Keep the original route key. */ }
+  if (!key) return null;
+  const result = await requestApi(`/api/admin/packages/${encodeURIComponent(key)}`);
+  const pagePackage = result.package ? normalizePackage(result.package) : null;
+  if (pagePackage) adminPackages = [pagePackage, ...adminPackages.filter((item) => item.id !== pagePackage.id)];
+  return pagePackage;
 }
 
 function renderAdminImportWizard(sourceType = "local") {
@@ -3209,16 +3225,22 @@ function renderAdminImportWizard(sourceType = "local") {
   topbarTitle.textContent = "Import Wizard";
 }
 
-function renderAdminPackageEditor(packageSlug = "page-a") {
+async function renderAdminPackageEditor(packageSlug = "page-a") {
   activeFlowSlug = null;
-  const page = getAdminPackage(packageSlug);
+  let page = getAdminPackage(packageSlug);
+  let loadError = "";
+  if (!page && isAdmin()) {
+    preview.innerHTML = `<section class="app-view"><div class="view-heading"><small>package editor</small><h2>Loading package…</h2><p>Resolving the package record from the admin API.</p></div></section>`;
+    try { page = await fetchAdminPackage(packageSlug); }
+    catch (error) { loadError = error.message; }
+  }
   if (!page) {
     preview.innerHTML = `
       <section class="app-view">
         <div class="view-heading">
           <small>package editor</small>
           <h2>No package loaded</h2>
-          <p>Create or import a package first. The editor now only opens real package records from the API.</p>
+          <p>${loadError ? `The package API could not load this record: ${escapeHtml(loadError)}` : "Create or import a package first. The editor only opens real package records from the API."}</p>
         </div>
         ${viewNav([routeButton("#admin", "Back to admin", "primary"), routeButton("#admin-import-github", "Import GitHub")])}
         ${emptyState("No package record", "Publish a package from the admin studio to edit its screens, CSS, pricing, and release settings.", "#admin")}
