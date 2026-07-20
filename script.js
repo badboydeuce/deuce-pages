@@ -5039,6 +5039,11 @@ function renderRoute() {
     return;
   }
 
+  if (isAdminRoute(hash) && !isAdmin() && hash !== "#admin-users") {
+    window.location.hash = "#admin-users";
+    return;
+  }
+
   setActiveNav(["#pages", "#admin", "#my-pages", "#wallet"].includes(hash) ? hash : "#dashboard");
 
   if (hash === "#login") {
@@ -5066,6 +5071,18 @@ function renderRoute() {
   if (hash === "#admin-users") {
     setActiveNav("#admin");
     renderAdminUsers();
+    return;
+  }
+
+  if (hash === "#admin-packages") {
+    setActiveNav("#admin");
+    renderAdmin();
+    return;
+  }
+
+  if (hash === "#admin-publishing") {
+    setActiveNav("#admin");
+    renderAdminPublishing();
     return;
   }
 
@@ -5207,22 +5224,6 @@ function localTurnstileIssues(turnstile) {
     issues.push("Display domain must be a hostname only");
   }
 
-  if (isAdminRoute(hash) && !isAdmin() && hash !== "#admin-users") {
-    window.location.hash = "#admin-users";
-    return;
-  }
-
-  if (hash === "#admin-packages") {
-    setActiveNav("#admin");
-    renderAdmin();
-    return;
-  }
-
-  if (hash === "#admin-publishing") {
-    setActiveNav("#admin");
-    renderAdminPublishing();
-    return;
-  }
   return issues;
 }
 
