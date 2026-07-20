@@ -28,3 +28,25 @@ export async function requireAdmin(req, res, next) {
     next();
   });
 }
+
+export function requireCapability(capability) {
+  return async function capabilityMiddleware(req, res, next) {
+    await requireAuth(req, res, () => {
+      if (String(req.user?.role || "").toLowerCase() === "admin") return next();
+      const collaboration = req.user?.collaboration || {};
+      if (collaboration.enabled && collaboration[capability]) return next();
+      res.status(403).json({ error: `${capability} permission required` });
+    });
+  };
+}
+
+export function requireAnyCapability(...capabilities) {
+  return async function anyCapabilityMiddleware(req, res, next) {
+    await requireAuth(req, res, () => {
+      if (String(req.user?.role || "").toLowerCase() === "admin") return next();
+      const collaboration = req.user?.collaboration || {};
+      if (collaboration.enabled && capabilities.some((capability) => collaboration[capability])) return next();
+      res.status(403).json({ error: "Support permission required" });
+    });
+  };
+}

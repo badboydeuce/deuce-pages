@@ -6,20 +6,18 @@ import {
   listAdminUsers,
   updateAdminUser
 } from "../repositories/appRepository.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireAdmin, requireAnyCapability, requireCapability } from "../middleware/auth.js";
 
 export const adminUsersRouter = Router();
 
-adminUsersRouter.use(requireAdmin);
-
-adminUsersRouter.get("/", (req, res) => {
+adminUsersRouter.get("/", requireAnyCapability("supportAccess", "pageEditor", "walletReview"), (req, res) => {
   listAdminUsers()
     .then((users) => res.json({ users }))
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-adminUsersRouter.patch("/:id", (req, res) => {
-  updateAdminUser(req.params.id, req.body)
+adminUsersRouter.patch("/:id", requireAdmin, (req, res) => {
+  updateAdminUser(req.params.id, req.body, req.user.id)
     .then((result) => {
       if (result?.error) return res.status(result.status || 400).json(result);
       res.json(result);
@@ -27,7 +25,7 @@ adminUsersRouter.patch("/:id", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-adminUsersRouter.post("/:id/wallet", (req, res) => {
+adminUsersRouter.post("/:id/wallet", requireAdmin, (req, res) => {
   adjustWallet({
     userId: req.params.id,
     amount: req.body.amount,
@@ -41,7 +39,7 @@ adminUsersRouter.post("/:id/wallet", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-adminUsersRouter.post("/:id/pages/:pageId/extend", async (req, res) => {
+adminUsersRouter.post("/:id/pages/:pageId/extend", requireCapability("pageEditor"), async (req, res) => {
   try {
     const page = await findUserPage(req.params.pageId, req.params.id);
     if (!page) return res.status(404).json({ error: "User page not found" });

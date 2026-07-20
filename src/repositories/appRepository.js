@@ -432,6 +432,7 @@ export async function updatePackage(id, data) {
     return updateJsonDb((db) => {
       const index = db.packages.findIndex((item) => item.id === current.id);
       if (index === -1) return null;
+      if (db.packages.some((item) => item.id !== current.id && item.slug === next.slug)) throw new Error("Package slug already exists");
       db.packages[index] = {
         ...next,
         updatedAt: new Date().toISOString(),
@@ -492,7 +493,8 @@ export async function subscribeToPackage(id, data = {}) {
   if (!pagePackage) return { error: "Package not found", status: 404 };
   if (!data.userId) return { error: "Authentication required", status: 401 };
   const period = data.billingPeriod || "weekly";
-  const price = Number(pagePackage.billingPeriods?.[period] || pagePackage.billingPeriods?.weekly || 25);
+  if (!["daily", "weekly", "biweekly", "monthly"].includes(period)) return { error: "Unsupported billing period", status: 400 };
+  const price = Number(pagePackage.billingPeriods?.[period] ?? pagePackage.billingPeriods?.weekly ?? 25);
   const duplicateSubscription = (userPage) => {
     if (!userPage) return null;
     const state = pageSubscriptionState(userPage);
@@ -1103,7 +1105,7 @@ export async function listAdminUsers() {
   ));
 }
 
-export async function updateAdminUser(userId, data = {}) {
+export async function updateAdminUser(userId, data = {}, actorUserId = "") {
   const allowedRoles = new Set(["subscriber", "support", "admin"]);
   const allowedStatuses = new Set(["active", "review", "suspended"]);
   const role = data.role ? String(data.role).toLowerCase() : null;
@@ -1117,11 +1119,18 @@ export async function updateAdminUser(userId, data = {}) {
   } : null;
   if (role && !allowedRoles.has(role)) throw new Error("Unsupported user role");
   if (status && !allowedStatuses.has(status)) throw new Error("Unsupported user status");
+  if (actorUserId && actorUserId === userId && ((role && role !== "admin") || (status && status !== "active"))) {
+    throw new Error("Administrators cannot demote or suspend their own active account");
+  }
 
   if (useJsonDb()) {
     return updateJsonDb((db) => {
       const user = db.users.find((item) => item.id === userId);
       if (!user) return { error: "User not found", status: 404 };
+      const removesActiveAdmin = user.role === "admin" && user.status === "active" && ((role && role !== "admin") || (status && status !== "active"));
+      if (removesActiveAdmin && db.users.filter((item) => item.role === "admin" && item.status === "active").length <= 1) {
+        throw new Error("The final active administrator cannot be removed or suspended");
+      }
       if (role) user.role = role;
       if (status) user.status = status;
       if (collaboration) user.collaboration = { ...(user.collaboration || {}), ...collaboration };
@@ -1132,6 +1141,12 @@ export async function updateAdminUser(userId, data = {}) {
 
   const current = await query("SELECT * FROM users WHERE id = $1 LIMIT 1", [userId]);
   if (!current.rows[0]) return { error: "User not found", status: 404 };
+  const currentUser = current.rows[0];
+  const removesActiveAdmin = currentUser.role === "admin" && currentUser.status === "active" && ((role && role !== "admin") || (status && status !== "active"));
+  if (removesActiveAdmin) {
+    const activeAdmins = await query("SELECT count(*)::int AS count FROM users WHERE role = 'admin' AND status = 'active'");
+    if (Number(activeAdmins.rows[0]?.count || 0) <= 1) throw new Error("The final active administrator cannot be removed or suspended");
+  }
   const result = await query(
     `UPDATE users
      SET role = COALESCE($2, role),
@@ -1181,6 +1196,7 @@ export async function adjustWallet({ userId, amount, type = "deposit", descripti
     return updateJsonDb((db) => {
       const user = db.users.find((item) => item.id === userId);
       if (!user) return { error: "User not found", status: 404 };
+      if (Number(user.walletBalance || 0) + value < 0) return { error: "Wallet adjustment would create a negative balance", status: 409 };
       user.walletBalance = Number(user.walletBalance || 0) + value;
       user.updatedAt = new Date().toISOString();
       const transaction = buildTransaction(user.id, type, value, description);
@@ -1190,9 +1206,12 @@ export async function adjustWallet({ userId, amount, type = "deposit", descripti
   }
 
   return withTransaction(async (client) => {
-    const userResult = await client.query("UPDATE users SET wallet_balance = wallet_balance + $1, updated_at = now() WHERE id = $2 RETURNING *", [value, userId]);
+    const userResult = await client.query("UPDATE users SET wallet_balance = wallet_balance + $1, updated_at = now() WHERE id = $2 AND wallet_balance + $1 >= 0 RETURNING *", [value, userId]);
     const user = userResult.rows[0];
-    if (!user) return { error: "User not found", status: 404 };
+    if (!user) {
+      const exists = await client.query("SELECT 1 FROM users WHERE id = $1", [userId]);
+      return exists.rows[0] ? { error: "Wallet adjustment would create a negative balance", status: 409 } : { error: "User not found", status: 404 };
+    }
     const txnResult = await client.query(
       `INSERT INTO wallet_transactions (id, user_id, type, amount, description)
        VALUES ($1, $2, $3, $4, $5)

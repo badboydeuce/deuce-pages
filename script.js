@@ -520,7 +520,7 @@ function formatMoney(value) {
 
 function billingPrice(pagePackage, period) {
   const billing = pagePackage.billingPeriods || {};
-  return Number(billing[period] || billing.weekly || 25);
+  return Number(billing[period] ?? billing.weekly ?? 25);
 }
 
 function billingLabel(period) {
@@ -600,7 +600,7 @@ function findPackageThumbnail(pagePackage) {
 
 function normalizePackage(pagePackage) {
   const billing = pagePackage.billingPeriods || {};
-  const weekly = Number(billing.weekly || 25);
+  const weekly = Number(billing.weekly ?? 25);
   const manifestScreens = pagePackage.packageManifest?.screens || [];
   const previewFile = manifestScreens.find((screen) => screen.role === "entry")?.file
     || manifestScreens[0]?.file
@@ -609,18 +609,18 @@ function normalizePackage(pagePackage) {
   return {
     ...pagePackage,
     billingPeriods: {
-      daily: Number(billing.daily || Math.ceil(weekly / 5)),
+      daily: Number(billing.daily ?? Math.ceil(weekly / 5)),
       weekly,
-      biweekly: Number(billing.biweekly || weekly * 2),
-      monthly: Number(billing.monthly || weekly * 4)
+      biweekly: Number(billing.biweekly ?? weekly * 2),
+      monthly: Number(billing.monthly ?? weekly * 4)
     },
     type: pagePackage.packageManifest?.type || pagePackage.sourceType || "Page package",
     weeklyPrice: `${formatMoney(weekly)}/week`,
     prices: [
-      `Daily ${formatMoney(billing.daily || Math.ceil(weekly / 5))}`,
+      `Daily ${formatMoney(billing.daily ?? Math.ceil(weekly / 5))}`,
       `Weekly ${formatMoney(weekly)}`,
-      `Biweekly ${formatMoney(billing.biweekly || weekly * 2)}`,
-      `Monthly ${formatMoney(billing.monthly || weekly * 4)}`
+      `Biweekly ${formatMoney(billing.biweekly ?? weekly * 2)}`,
+      `Monthly ${formatMoney(billing.monthly ?? weekly * 4)}`
     ],
     description: cleanDescription,
     userSummary: cleanDescription,
@@ -1159,7 +1159,7 @@ async function loadAppData() {
   apiLoadError = "";
   try {
     const auth = getAuthState();
-    const packagesResult = await requestApi("/api/packages");
+    const packagesResult = await requestApi(isAdmin() ? "/api/admin/packages" : "/api/packages");
     let userPagesResult = { userPages: [] };
     let walletResult = { balance: 0, currency: "USD", transactions: [] };
     let depositRequestsResult = { requests: [] };
@@ -1172,10 +1172,10 @@ async function loadAppData() {
         requestApi("/api/wallet"),
         requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
         requestApi("/api/wallet/funding-options").catch(() => ({ options: walletFundingOptions })),
-        isAdmin()
+        hasAdminCapability("walletReview")
           ? requestApi("/api/wallet/admin/fund-requests").catch(() => ({ requests: [] }))
           : Promise.resolve({ requests: [] }),
-        isAdmin()
+        canAccessAdminPanel()
           ? requestApi("/api/admin/users").catch(() => ({ users: [] }))
           : Promise.resolve({ users: [] })
       ]);
@@ -1254,6 +1254,16 @@ function isAdmin() {
   return String(getAuthState().user?.role || "").toLowerCase() === "admin";
 }
 
+function hasAdminCapability(capability) {
+  if (isAdmin()) return true;
+  const collaboration = getAuthState().user?.collaboration || {};
+  return Boolean(collaboration.enabled && collaboration[capability]);
+}
+
+function canAccessAdminPanel() {
+  return isAdmin() || ["supportAccess", "pageEditor", "walletReview"].some(hasAdminCapability);
+}
+
 function isAdminRoute(hash) {
   return hash === "#admin" || hash.startsWith("#admin-");
 }
@@ -1261,7 +1271,7 @@ function isAdminRoute(hash) {
 function syncAdminVisibility() {
   const adminNav = document.querySelector('.nav-item[href="#admin"]');
   const auth = getAuthState();
-  const allowed = isAdmin();
+  const allowed = canAccessAdminPanel();
   if (adminNav) {
     adminNav.hidden = !allowed;
     adminNav.classList.toggle("is-hidden", !allowed);
@@ -1439,6 +1449,107 @@ function runtimeScreenTargetUrl(page, file) {
   if (!page?.id || !cleanFile) return "";
   const params = new URLSearchParams({ userPageId: page.id, file: cleanFile });
   return `/api/runtime/source?${params.toString()}`;
+}
+
+function collectAdminPackagePayload(page) {
+  const value = (name, fallback = "") => preview.querySelector(`[data-package-field="${name}"]`)?.value.trim() ?? fallback;
+  const billingPeriods = {};
+  for (const period of ["daily", "weekly", "biweekly", "monthly"]) {
+    const number = Number(preview.querySelector(`[data-package-price="${period}"]`)?.value);
+    if (!Number.isFinite(number) || number < 0 || number > 100000) throw new Error(`${period} price must be between 0 and 100000`);
+    billingPeriods[period] = Math.round(number * 100) / 100;
+  }
+  const designTokens = { ...(page.designTokens || {}) };
+  preview.querySelectorAll("[data-package-token]").forEach((field) => { designTokens[field.dataset.packageToken] = field.value.trim(); });
+  const existingScreens = page.packageManifest?.screens || [];
+  const mappedScreens = [...preview.querySelectorAll("[data-package-screen-role]")].map((field) => {
+    const file = field.dataset.packageScreenRole;
+    const existing = existingScreens.find((item) => (item.file || item.path || item) === file);
+    return { ...(typeof existing === "object" ? existing : {}), file, role: field.value };
+  });
+  const packageManifest = {
+    ...(page.packageManifest || {}),
+    type: value("type", page.type || page.sourceType || "Page package"),
+    description: value("description", page.description || ""),
+    screens: mappedScreens.length ? mappedScreens : existingScreens
+  };
+  return {
+    name: value("name", page.name),
+    slug: value("slug", page.slug).toLowerCase(),
+    version: value("version", page.version || "v0.1"),
+    status: value("status", page.status || "draft").toLowerCase(),
+    sourceType: value("sourceType", page.sourceType || "upload"),
+    repoUrl: value("repoUrl", page.repoUrl || ""),
+    billingPeriods,
+    designTokens,
+    packageManifest
+  };
+}
+
+async function saveAdminPackage(page, { rerender = true } = {}) {
+  if (!page) throw new Error("Package not found");
+  const payload = collectAdminPackagePayload(page);
+  const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  const updated = normalizePackage(result.package);
+  adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
+  marketPages = adminPackages.filter((item) => item.status === "published");
+  if (rerender) {
+    window.location.hash = `#admin-package-${updated.slug}`;
+    renderAdminPackageEditor(updated.slug);
+  }
+  statusText.textContent = `${updated.name.toUpperCase()} SAVED`;
+  return updated;
+}
+
+function openAdminPackagePreview(page) {
+  if (!page) throw new Error("Package not found");
+  const url = packagePreviewUrl(page);
+  if (!url) throw new Error("Package preview is unavailable");
+  window.open(url, "_blank", "noopener");
+  statusText.textContent = `${page.name.toUpperCase()} PREVIEW OPENED`;
+}
+
+async function publishAdminPackage(page) {
+  if (!page) throw new Error("Package not found");
+  const inEditor = Boolean(preview.querySelector("[data-package-field]"));
+  const current = inEditor ? await saveAdminPackage(page, { rerender: false }) : page;
+  const result = await requestApi(`/api/admin/packages/${encodeURIComponent(current.id || current.slug)}/publish`, { method: "POST" });
+  const updated = normalizePackage(result.package);
+  adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
+  marketPages = adminPackages.filter((item) => item.status === "published");
+  if (window.location.hash === "#admin-publishing") renderAdminPublishing();
+  else renderAdminPackageEditor(updated.slug);
+  statusText.textContent = `${updated.name.toUpperCase()} PUBLISHED`;
+}
+
+async function refreshAdminPackages({ publishing = false } = {}) {
+  const result = await requestApi("/api/admin/packages");
+  adminPackages = (result.packages || []).map(normalizePackage);
+  marketPages = adminPackages.filter((item) => item.status === "published");
+  if (publishing) renderAdminPublishing(); else renderAdmin();
+  statusText.textContent = publishing ? "PUBLISHING QUEUE REFRESHED" : "PACKAGE LIBRARY REFRESHED";
+}
+
+function exportAdminUsersCsv() {
+  const rows = [["id", "name", "email", "role", "status", "wallet_balance", "page_count", "total_spent"]];
+  adminUsers.forEach((user) => rows.push([user.id, user.name, user.email, user.role, user.status, user.walletBalance, user.pages?.length || 0, user.spend?.totalSpent || 0]));
+  const csv = rows.map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  downloadBlob(`deuce-users-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv;charset=utf-8");
+  statusText.textContent = "USER EXPORT DOWNLOADED";
+}
+
+function downloadBlob(fileName, content, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function canonicalRuntimeFlowTargets(page, discoveredFiles = []) {
@@ -2860,8 +2971,8 @@ function renderAdmin() {
       <small>${escapeHtml(page.source || "Package")}</small>
       <div class="admin-row-actions">
         <button type="button" data-route="#admin-package-${escapeHtml(page.slug)}">Editor</button>
-        <button type="button" data-admin-action="${escapeHtml(page.name).toUpperCase()} PREVIEW OPENED">Preview</button>
-        <button type="button" data-admin-action="${escapeHtml(page.name).toUpperCase()} PUBLISH CHECKLIST OPENED">Publish</button>
+        <button type="button" data-admin-package-preview="${escapeHtml(page.slug)}">Preview</button>
+        <button type="button" data-admin-package-publish="${escapeHtml(page.slug)}">Publish</button>
       </div>
     </article>
   `).join("") : emptyState("No packages imported yet", "Connect a GitHub repo or upload a local page bundle to create your first package.", "#admin-import-github");
@@ -2880,11 +2991,11 @@ function renderAdmin() {
       ])}
 
       <div class="admin-command-tabs" aria-label="Admin modules">
-        <button type="button" class="active" data-admin-action="ADMIN OVERVIEW OPENED">Overview</button>
+        <button type="button" class="active" data-route="#admin">Overview</button>
         <button type="button" data-route="#admin-import-github">Import</button>
-        <button type="button" data-admin-action="PACKAGE LIBRARY FOCUSED">Packages</button>
+        <button type="button" data-route="#admin-packages">Packages</button>
         <button type="button" data-route="#admin-users">Users</button>
-        <button type="button" data-admin-action="PUBLISHING QUEUE OPENED">Publishing</button>
+        <button type="button" data-route="#admin-publishing">Publishing</button>
       </div>
 
       <div class="admin-kpis">
@@ -2915,7 +3026,7 @@ function renderAdmin() {
                 <small>package library</small>
                 <h3>Manage packages</h3>
               </div>
-              <button type="button" data-admin-action="PACKAGE LIBRARY REFRESHED">Refresh</button>
+              <button type="button" data-refresh-admin-packages>Refresh</button>
             </div>
             <div class="admin-package-list">
               ${packageRows}
@@ -3120,6 +3231,10 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
 
   const thumbnailUrl = packageThumbnailUrl(page);
   const thumbnailLabel = page.thumbnailDataUrl ? "Manual thumbnail active" : page.thumbnailPath ? page.thumbnailPath : "No thumbnail override";
+  const editorScreens = Array.from(new Set([
+    ...(page.packageManifest?.screens || []).map((item) => item.file || item.path || item),
+    ...(page.screens || []).map((item) => item.file || item.path || item)
+  ].filter(Boolean)));
 
   preview.innerHTML = `
     <section class="app-view">
@@ -3141,9 +3256,9 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
           <p>${page.source} / ${page.cssMode} / ${page.repo}</p>
         </div>
         <div class="admin-actions">
-          <button type="button" data-admin-action="${page.name.toUpperCase()} DRAFT SAVED">Save draft</button>
-          <button type="button" data-admin-action="${page.name.toUpperCase()} PREVIEW GENERATED">Preview</button>
-          <button type="button" data-admin-action="${page.name.toUpperCase()} VERSION PUBLISHED">Publish</button>
+          <button type="button" data-save-admin-package="${escapeHtml(page.slug)}">Save draft</button>
+          <button type="button" data-admin-package-preview="${escapeHtml(page.slug)}">Preview</button>
+          <button type="button" data-admin-package-publish="${escapeHtml(page.slug)}">Publish</button>
         </div>
       </article>
 
@@ -3151,14 +3266,14 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
         <article class="security-panel package-form">
           <small>package details</small>
           <h3>Listing settings</h3>
-          <label><span>Package ID</span><input type="text" value="${page.id}"></label>
-          <label><span>Package name</span><input type="text" value="${page.name}"></label>
-          <label><span>Package type</span><input type="text" value="${page.type}"></label>
-          <label><span>Weekly price</span><input type="text" value="${page.price}"></label>
-          <label><span>Version</span><input type="text" value="${page.version}"></label>
-          <label><span>Source type</span><input type="text" value="${page.sourceType}"></label>
-          <label><span>Source path</span><input type="text" value="${page.repo}"></label>
-          <label><span>Status</span><select><option>${page.status}</option><option>Draft</option><option>Review</option><option>Published</option></select></label>
+          <label><span>Package ID</span><input type="text" value="${escapeHtml(page.id)}" readonly></label>
+          <label><span>Package name</span><input type="text" data-package-field="name" value="${escapeHtml(page.name)}"></label>
+          <label><span>Slug</span><input type="text" data-package-field="slug" value="${escapeHtml(page.slug)}"></label>
+          <label><span>Package type</span><input type="text" data-package-field="type" value="${escapeHtml(page.type)}"></label>
+          <label><span>Version</span><input type="text" data-package-field="version" value="${escapeHtml(page.version)}"></label>
+          <label><span>Source type</span><input type="text" data-package-field="sourceType" value="${escapeHtml(page.sourceType)}"></label>
+          <label><span>Source path</span><input type="text" data-package-field="repoUrl" value="${escapeHtml(page.repo)}"></label>
+          <label><span>Status</span><select data-package-field="status">${["draft", "review", "published", "archived"].map((status) => `<option value="${status}" ${String(page.status).toLowerCase() === status ? "selected" : ""}>${status}</option>`).join("")}</select></label>
         </article>
 
         <article class="security-panel package-form thumbnail-uploader">
@@ -3177,31 +3292,33 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
         <article class="security-panel package-form">
           <small>billing periods</small>
           <h3>Subscription prices</h3>
-          <label><span>Daily</span><input type="text" value="$${page.billingPeriods.daily}"></label>
-          <label><span>Weekly</span><input type="text" value="$${page.billingPeriods.weekly}"></label>
-          <label><span>Biweekly</span><input type="text" value="$${page.billingPeriods.biweekly}"></label>
-          <label><span>Monthly</span><input type="text" value="$${page.billingPeriods.monthly}"></label>
+          <label><span>Daily</span><input type="number" min="0" max="100000" step="0.01" data-package-price="daily" value="${page.billingPeriods.daily}"></label>
+          <label><span>Weekly</span><input type="number" min="0" max="100000" step="0.01" data-package-price="weekly" value="${page.billingPeriods.weekly}"></label>
+          <label><span>Biweekly</span><input type="number" min="0" max="100000" step="0.01" data-package-price="biweekly" value="${page.billingPeriods.biweekly}"></label>
+          <label><span>Monthly</span><input type="number" min="0" max="100000" step="0.01" data-package-price="monthly" value="${page.billingPeriods.monthly}"></label>
         </article>
 
         <article class="security-panel package-form">
           <small>design tokens</small>
           <h3>CSS controls</h3>
-          <label><span>Brand color</span><input type="text" value="${page.tokens.brand}"></label>
-          <label><span>Font family</span><input type="text" value="${page.tokens.font}"></label>
-          <label><span>Border radius</span><input type="text" value="${page.tokens.radius}"></label>
-          <label><span>Custom CSS override</span><textarea>.package-${page.slug} .button { background: var(--brand); }</textarea></label>
+          <label><span>Brand color</span><input type="text" data-package-token="brand" value="${escapeHtml(page.tokens.brand || "")}"></label>
+          <label><span>Font family</span><input type="text" data-package-token="font" value="${escapeHtml(page.tokens.font || "")}"></label>
+          <label><span>Border radius</span><input type="text" data-package-token="radius" value="${escapeHtml(page.tokens.radius || "")}"></label>
+          <label><span>Description</span><textarea data-package-field="description">${escapeHtml(page.description || "")}</textarea></label>
         </article>
 
         <article class="security-panel">
           <small>file mapping</small>
           <h3>Imported screens</h3>
           <div class="file-map-list">
-            ${page.screens.map((screen, index) => `
+            ${editorScreens.map((screen, index) => `
               <div>
                 <strong>${String(index + 1).padStart(2, "0")}</strong>
                 <span>${screen}</span>
-                <em>${index === 0 ? "Entry" : index === page.screens.length - 1 ? "Final" : "Screen"}</em>
-                <button type="button" data-admin-action="${screen.toUpperCase()} MAPPING EDITED">Map</button>
+                <em>${index === 0 ? "Entry" : index === editorScreens.length - 1 ? "Final" : "Screen"}</em>
+                <select data-package-screen-role="${escapeHtml(screen)}">
+                  ${["entry", "form", "verification", "success", "other"].map((role) => `<option value="${role}" ${String(page.packageManifest?.screens?.find((item) => (item.file || item) === screen)?.role || "other") === role ? "selected" : ""}>${role}</option>`).join("")}
+                </select>
               </div>
             `).join("")}
           </div>
@@ -3260,6 +3377,10 @@ function renderAdminPackageEditor(packageSlug = "page-a") {
 
 function renderAdminUsers() {
   activeFlowSlug = null;
+  const canManageAccounts = isAdmin();
+  const canAdjustWallets = isAdmin();
+  const canReviewFunding = hasAdminCapability("walletReview");
+  const canEditUserPages = hasAdminCapability("pageEditor");
   const activeCount = adminUsers.filter((user) => String(user.status).toLowerCase() === "active").length;
   const reviewCount = adminUsers.filter((user) => String(user.status).toLowerCase() === "review").length;
   const activeFunding = adminDepositRequests.filter((request) => ["pending", "reviewing"].includes(request.status));
@@ -3294,17 +3415,17 @@ function renderAdminUsers() {
         </div>
         <div class="admin-actions">
           <button type="button" data-refresh-admin-users>Refresh users</button>
-          <button type="button" data-admin-action="USER EXPORT QUEUED">Export users</button>
+          <button type="button" data-export-admin-users>Export users</button>
         </div>
       </article>
 
-      <article class="admin-table-card">
+      ${canReviewFunding ? `<article class="admin-table-card">
         <div class="builder-heading">
           <div>
             <small>crypto funding</small>
             <h3>Pending wallet credits</h3>
           </div>
-          <button type="button" data-admin-action="FUNDING QUEUE REFRESHED">Refresh</button>
+          <button type="button" data-refresh-admin-users>Refresh</button>
         </div>
         <div class="fund-request-list">
           ${activeFunding.length ? activeFunding.map((request) => `
@@ -3343,7 +3464,7 @@ function renderAdminUsers() {
             `).join("")}
           </div>
         ` : ""}
-      </article>
+      </article>` : ""}
 
       <article class="admin-table-card">
         <div class="builder-heading">
@@ -3351,7 +3472,7 @@ function renderAdminUsers() {
             <small>user directory</small>
             <h3>Accounts</h3>
           </div>
-          <button type="button" data-admin-action="USER DIRECTORY REFRESHED">Refresh</button>
+          <button type="button" data-refresh-admin-users>Refresh</button>
         </div>
         <div class="user-manager-list">
           ${adminUsers.length ? adminUsers.map((user) => {
@@ -3378,11 +3499,11 @@ function renderAdminUsers() {
               </div>
               <div class="user-actions admin-user-actions">
                 <button type="button" data-admin-user-expand="${escapeHtml(user.id)}">${isExpanded ? "Collapse" : "Expand"}</button>
-                <button type="button" data-admin-user-collabs="${escapeHtml(user.id)}">${collabsOpen ? "Hide collabs" : "Collabs"}</button>
+                ${canManageAccounts ? `<button type="button" data-admin-user-collabs="${escapeHtml(user.id)}">${collabsOpen ? "Hide collabs" : "Collabs"}</button>` : ""}
               </div>
 
               ${isExpanded ? `
-              <div class="admin-user-controls">
+              ${canManageAccounts ? `<div class="admin-user-controls">
                 <label>
                   <span>Role</span>
                   <select data-admin-user-field="role" data-admin-user="${escapeHtml(user.id)}">
@@ -3396,7 +3517,7 @@ function renderAdminUsers() {
                   </select>
                 </label>
                 <button type="button" data-save-admin-user="${escapeHtml(user.id)}">Save access</button>
-              </div>
+              </div>` : ""}
 
               <div class="admin-user-controls admin-spend-control">
                 <div>
@@ -3428,14 +3549,14 @@ function renderAdminUsers() {
                 ` : ""}
               </div>
 
-              <div class="admin-user-controls wallet-control">
+              ${canAdjustWallets ? `<div class="admin-user-controls wallet-control">
                 <label><span>Wallet amount</span><input type="number" step="0.01" data-admin-wallet-amount="${escapeHtml(user.id)}" placeholder="100"></label>
                 <label><span>Note</span><input type="text" data-admin-wallet-note="${escapeHtml(user.id)}" placeholder="Manual credit / correction"></label>
                 <button type="button" data-admin-wallet-credit="${escapeHtml(user.id)}">Credit</button>
                 <button type="button" data-admin-wallet-debit="${escapeHtml(user.id)}">Debit</button>
-              </div>
+              </div>` : ""}
 
-              <div class="admin-user-controls page-control">
+              ${canEditUserPages ? `<div class="admin-user-controls page-control">
                 <label>
                   <span>User page</span>
                   <select data-admin-page-select="${escapeHtml(user.id)}">
@@ -3446,10 +3567,10 @@ function renderAdminUsers() {
                 <label class="toggle-row"><input type="checkbox" data-admin-page-free="${escapeHtml(user.id)}" ${selectedPage?.subscription?.adminFreeSubscription ? "checked" : ""}><span>Admin free</span></label>
                 <label class="toggle-row"><input type="checkbox" data-admin-page-autorenew="${escapeHtml(user.id)}" ${selectedPage?.subscription?.autoRenew ? "checked" : ""}><span>Auto renew</span></label>
                 <button type="button" data-admin-page-extend="${escapeHtml(user.id)}">Extend / Reactivate</button>
-              </div>
+              </div>` : ""}
               ` : ""}
 
-              ${collabsOpen ? `
+              ${collabsOpen && canManageAccounts ? `
               <div class="admin-user-controls collab-control">
                 <label class="toggle-row"><input type="checkbox" data-admin-collab-field="enabled" data-admin-collab="${escapeHtml(user.id)}" ${collab.enabled ? "checked" : ""}><span>Enable collab access</span></label>
                 <label class="toggle-row"><input type="checkbox" data-admin-collab-field="pageEditor" data-admin-collab="${escapeHtml(user.id)}" ${collab.pageEditor ? "checked" : ""}><span>Page editor</span></label>
@@ -4890,7 +5011,7 @@ function renderRoute() {
   }
 
   setAuthLayout(false);
-  if (isAdminRoute(hash) && !isAdmin()) {
+  if (isAdminRoute(hash) && !canAccessAdminPanel()) {
     window.location.hash = "#dashboard";
     statusText.textContent = "ADMIN ACCESS REQUIRED";
     return;
@@ -5027,12 +5148,58 @@ function pendingTurnstileConfig(page) {
   };
 }
 
+function renderAdminPublishing() {
+  const rows = adminPackages.map((page) => {
+    const htmlFiles = [
+      ...(page.packageManifest?.files || []),
+      ...(page.packageManifest?.screens || []),
+      ...(page.screens || [])
+    ].filter((item) => /\.html?$/i.test(String(item?.path || item?.file || item)));
+    const prices = Object.values(page.billingPeriods || {}).filter((value) => Number(value) > 0);
+    const ready = Boolean(page.name && page.slug && htmlFiles.length && prices.length);
+    return `<article class="admin-package-row">
+      <div><strong>${escapeHtml(page.name)}</strong><span>${escapeHtml(page.slug)} / ${escapeHtml(page.version || "v1")}</span></div>
+      <em>${ready ? "Ready" : "Needs attention"}</em>
+      <small>${htmlFiles.length} HTML / ${prices.length} prices</small>
+      <div class="admin-row-actions">
+        <button type="button" data-route="#admin-package-${escapeHtml(page.slug)}">Review</button>
+        <button type="button" data-admin-package-preview="${escapeHtml(page.slug)}">Preview</button>
+        <button type="button" data-admin-package-publish="${escapeHtml(page.slug)}" ${ready ? "" : "disabled"}>Publish</button>
+      </div>
+    </article>`;
+  }).join("");
+  preview.innerHTML = `<section class="app-view">
+    <div class="view-heading"><small>admin publishing</small><h2>Publishing queue</h2><p>Review package readiness before marketplace release.</p></div>
+    ${viewNav([routeButton("#admin", "&#8592; Admin Studio", "primary"), routeButton("#admin-import-local", "Import")])}
+    <article class="admin-table-card"><div class="builder-heading compact"><div><small>release checks</small><h3>Packages</h3></div><button type="button" data-refresh-admin-publishing>Refresh</button></div><div class="admin-package-list">${rows || emptyState("No packages", "Import a package to start publishing.", "#admin-import-local")}</div></article>
+  </section>`;
+  statusText.textContent = "PUBLISHING QUEUE READY";
+  topbarTitle.textContent = "Publishing";
+}
+
 function localTurnstileIssues(turnstile) {
   const issues = [];
   if (!turnstile.siteKey) issues.push("Turnstile site key is required");
   if (turnstile.siteKey && turnstile.siteKey === turnstile.secretKey) issues.push("Site key and secret key cannot be the same");
   if (turnstile.displayDomain && (!/^[a-z0-9.-]+$/i.test(turnstile.displayDomain) || turnstile.displayDomain.includes(".."))) {
     issues.push("Display domain must be a hostname only");
+  }
+
+  if (isAdminRoute(hash) && !isAdmin() && hash !== "#admin-users") {
+    window.location.hash = "#admin-users";
+    return;
+  }
+
+  if (hash === "#admin-packages") {
+    setActiveNav("#admin");
+    renderAdmin();
+    return;
+  }
+
+  if (hash === "#admin-publishing") {
+    setActiveNav("#admin");
+    renderAdminPublishing();
+    return;
   }
   return issues;
 }
@@ -6128,9 +6295,40 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
-  const adminActionButton = event.target.closest("[data-admin-action]");
-  if (adminActionButton) {
-    statusText.textContent = adminActionButton.dataset.adminAction;
+  const saveAdminPackageButton = event.target.closest("[data-save-admin-package]");
+  if (saveAdminPackageButton) {
+    await withButtonBusy(saveAdminPackageButton, "Saving", () => saveAdminPackage(getAdminPackage(saveAdminPackageButton.dataset.saveAdminPackage)));
+    return;
+  }
+
+  const previewAdminPackageButton = event.target.closest("[data-admin-package-preview]");
+  if (previewAdminPackageButton) {
+    try { openAdminPackagePreview(getAdminPackage(previewAdminPackageButton.dataset.adminPackagePreview)); }
+    catch (error) { statusText.textContent = `PREVIEW FAILED: ${error.message}`.toUpperCase(); }
+    return;
+  }
+
+  const publishAdminPackageButton = event.target.closest("[data-admin-package-publish]");
+  if (publishAdminPackageButton) {
+    await withButtonBusy(publishAdminPackageButton, "Publishing", () => publishAdminPackage(getAdminPackage(publishAdminPackageButton.dataset.adminPackagePublish)));
+    return;
+  }
+
+  const refreshAdminPackagesButton = event.target.closest("[data-refresh-admin-packages]");
+  if (refreshAdminPackagesButton) {
+    await withButtonBusy(refreshAdminPackagesButton, "Refreshing", () => refreshAdminPackages());
+    return;
+  }
+
+  const refreshAdminPublishingButton = event.target.closest("[data-refresh-admin-publishing]");
+  if (refreshAdminPublishingButton) {
+    await withButtonBusy(refreshAdminPublishingButton, "Refreshing", () => refreshAdminPackages({ publishing: true }));
+    return;
+  }
+
+  const exportAdminUsersButton = event.target.closest("[data-export-admin-users]");
+  if (exportAdminUsersButton) {
+    exportAdminUsersCsv();
     return;
   }
 

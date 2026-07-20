@@ -7,7 +7,7 @@ import {
   listWalletDepositRequests,
   updateWalletDepositRequestStatus
 } from "../repositories/appRepository.js";
-import { requireAdmin, requireAuth } from "../middleware/auth.js";
+import { requireAdmin, requireAuth, requireCapability } from "../middleware/auth.js";
 
 export const walletRouter = Router();
 
@@ -194,13 +194,13 @@ walletRouter.post("/admin-adjust", requireAdmin, (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-walletRouter.get("/admin/fund-requests", requireAdmin, (req, res) => {
+walletRouter.get("/admin/fund-requests", requireCapability("walletReview"), (req, res) => {
   listWalletDepositRequests({ status: req.query.status || null })
     .then((requests) => res.json({ requests }))
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-walletRouter.post("/admin/fund-requests/:id/approve", requireAdmin, (req, res) => {
+walletRouter.post("/admin/fund-requests/:id/approve", requireCapability("walletReview"), (req, res) => {
   approveWalletDepositRequest({
     requestId: req.params.id,
     adminUserId: req.user.id,
@@ -214,7 +214,7 @@ walletRouter.post("/admin/fund-requests/:id/approve", requireAdmin, (req, res) =
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-walletRouter.post("/admin/fund-requests/:id/reviewing", requireAdmin, (req, res) => {
+walletRouter.post("/admin/fund-requests/:id/reviewing", requireCapability("walletReview"), (req, res) => {
   updateWalletDepositRequestStatus({
     requestId: req.params.id,
     adminUserId: req.user.id,
@@ -228,7 +228,7 @@ walletRouter.post("/admin/fund-requests/:id/reviewing", requireAdmin, (req, res)
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-walletRouter.post("/admin/fund-requests/:id/reject", requireAdmin, (req, res) => {
+walletRouter.post("/admin/fund-requests/:id/reject", requireCapability("walletReview"), (req, res) => {
   updateWalletDepositRequestStatus({
     requestId: req.params.id,
     adminUserId: req.user.id,
