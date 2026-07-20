@@ -39,6 +39,7 @@ let activeTemplate = templates[0];
 
 let marketPages = [];
 let adminPackages = [];
+const adminPackageLibraryState = { search: "", status: "all", source: "all", sort: "updated" };
 
 const packageDataModel = {
   identity: ["id", "slug", "name", "type", "status", "version"],
@@ -1521,6 +1522,7 @@ async function publishAdminPackage(page) {
   adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
   marketPages = adminPackages.filter((item) => item.status === "published");
   if (window.location.hash === "#admin-publishing") renderAdminPublishing();
+  else if (window.location.hash === "#admin-packages") renderAdminPackages();
   else renderAdminPackageEditor(updated.slug);
   statusText.textContent = `${updated.name.toUpperCase()} PUBLISHED`;
 }
@@ -1529,7 +1531,7 @@ async function refreshAdminPackages({ publishing = false } = {}) {
   const result = await requestApi("/api/admin/packages");
   adminPackages = (result.packages || []).map(normalizePackage);
   marketPages = adminPackages.filter((item) => item.status === "published");
-  if (publishing) renderAdminPublishing(); else renderAdmin();
+  if (publishing) renderAdminPublishing(); else renderAdminPackages();
   statusText.textContent = publishing ? "PUBLISHING QUEUE REFRESHED" : "PACKAGE LIBRARY REFRESHED";
 }
 
@@ -2954,6 +2956,74 @@ function renderPages() {
   `;
   statusText.textContent = "PAGES MARKETPLACE READY";
   topbarTitle.textContent = "Pages";
+}
+
+function packageSubscriberCount(pagePackage) {
+  return adminUsers.reduce((total, user) => total + (user.pages || []).filter((page) => page.packageId === pagePackage.id).length, 0);
+}
+
+function renderAdminPackages() {
+  activeFlowSlug = null;
+  const state = adminPackageLibraryState;
+  const sources = Array.from(new Set(adminPackages.map((page) => page.sourceType || "upload"))).sort();
+  const filtered = adminPackages.filter((page) => {
+    const searchText = [page.name, page.slug, page.id, page.version].join(" ").toLowerCase();
+    return (!state.search || searchText.includes(state.search.toLowerCase()))
+      && (state.status === "all" || String(page.status).toLowerCase() === state.status)
+      && (state.source === "all" || String(page.sourceType || "upload").toLowerCase() === state.source);
+  }).sort((a, b) => {
+    if (state.sort === "name") return String(a.name).localeCompare(String(b.name));
+    if (state.sort === "price") return billingPrice(b, "weekly") - billingPrice(a, "weekly");
+    if (state.sort === "subscribers") return packageSubscriberCount(b) - packageSubscriberCount(a);
+    return String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""));
+  });
+  const counts = {
+    published: adminPackages.filter((page) => page.status === "published").length,
+    draft: adminPackages.filter((page) => page.status === "draft").length,
+    review: adminPackages.filter((page) => page.status === "review").length,
+    archived: adminPackages.filter((page) => page.status === "archived").length
+  };
+  const rows = filtered.map((page) => {
+    const subscribers = packageSubscriberCount(page);
+    return `<article class="admin-package-row package-library-row">
+      <div><strong>${escapeHtml(page.name)}</strong><span>${escapeHtml(page.slug)} / ${escapeHtml(page.version || "v1")}</span></div>
+      <em>${escapeHtml(page.status || "draft")}</em>
+      <small>${escapeHtml(page.source || page.sourceType || "upload")}</small>
+      <div class="feature-row"><span>${formatMoney(page.billingPeriods?.weekly ?? 0)}/week</span><span>${subscribers} subscriber${subscribers === 1 ? "" : "s"}</span><span>${escapeHtml(String(page.updatedAt || "").slice(0, 10) || "not updated")}</span></div>
+      <div class="admin-row-actions">
+        <button type="button" data-route="#admin-package-${escapeHtml(page.slug)}">Edit</button>
+        <button type="button" data-admin-package-preview="${escapeHtml(page.slug)}">Preview</button>
+        ${page.status === "published"
+          ? `<button type="button" data-admin-package-status="draft" data-admin-package-key="${escapeHtml(page.slug)}">Unpublish</button>`
+          : `<button type="button" data-admin-package-publish="${escapeHtml(page.slug)}">Publish</button>`}
+        ${page.status === "archived"
+          ? `<button type="button" data-admin-package-status="draft" data-admin-package-key="${escapeHtml(page.slug)}">Restore</button>`
+          : `<button type="button" data-admin-package-status="archived" data-admin-package-key="${escapeHtml(page.slug)}">Archive</button>`}
+      </div>
+    </article>`;
+  }).join("");
+  preview.innerHTML = `<section class="app-view">
+    <div class="view-heading"><small>admin package library</small><h2>Package Library</h2><p>Search, price, publish, archive, and monitor every package from one view.</p></div>
+    ${viewNav([routeButton("#admin", "&#8592; Admin Studio", "primary"), routeButton("#admin-import-local", "Import package"), routeButton("#admin-publishing", "Publishing queue")])}
+    <div class="admin-kpis">
+      <article><small>Total</small><strong>${adminPackages.length}</strong><span>All packages</span></article>
+      <article><small>Published</small><strong>${counts.published}</strong><span>Marketplace live</span></article>
+      <article><small>Draft / Review</small><strong>${counts.draft + counts.review}</strong><span>Work in progress</span></article>
+      <article><small>Archived</small><strong>${counts.archived}</strong><span>Hidden packages</span></article>
+    </div>
+    <article class="admin-table-card">
+      <div class="builder-heading compact"><div><small>library controls</small><h3>Manage packages</h3></div><button type="button" data-refresh-admin-packages>Refresh</button></div>
+      <div class="import-settings-grid">
+        <label><span>Search</span><input type="search" data-admin-package-search value="${escapeHtml(state.search)}" placeholder="Name, slug, ID, version"></label>
+        <label><span>Status</span><select data-admin-package-filter="status">${["all", "published", "draft", "review", "archived"].map((value) => `<option value="${value}" ${state.status === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
+        <label><span>Source</span><select data-admin-package-filter="source"><option value="all">all</option>${sources.map((value) => `<option value="${escapeHtml(value)}" ${state.source === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label><span>Sort</span><select data-admin-package-filter="sort">${[["updated", "Recently updated"], ["name", "Name"], ["price", "Weekly price"], ["subscribers", "Subscribers"]].map(([value, label]) => `<option value="${value}" ${state.sort === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      </div>
+      <div class="admin-package-list">${rows || emptyState("No matching packages", "Change the filters or import a new package.", "#admin-import-local")}</div>
+    </article>
+  </section>`;
+  statusText.textContent = `PACKAGE LIBRARY READY / ${filtered.length} SHOWN`;
+  topbarTitle.textContent = "Package Library";
 }
 
 function renderAdmin() {
@@ -5076,7 +5146,7 @@ function renderRoute() {
 
   if (hash === "#admin-packages") {
     setActiveNav("#admin");
-    renderAdmin();
+    renderAdminPackages();
     return;
   }
 
@@ -6159,6 +6229,13 @@ window.addEventListener("hashchange", () => {
 });
 
 preview.addEventListener("change", (event) => {
+  const packageFilter = event.target.closest("[data-admin-package-filter]");
+  if (packageFilter) {
+    adminPackageLibraryState[packageFilter.dataset.adminPackageFilter] = packageFilter.value;
+    renderAdminPackages();
+    return;
+  }
+
   const packageThumbnailInput = event.target.closest("[data-package-thumbnail]");
   if (packageThumbnailInput) {
     uploadPackageThumbnail(packageThumbnailInput);
@@ -6185,6 +6262,13 @@ preview.addEventListener("change", (event) => {
 });
 
 preview.addEventListener("input", (event) => {
+  const packageSearch = event.target.closest("[data-admin-package-search]");
+  if (packageSearch) {
+    adminPackageLibraryState.search = packageSearch.value;
+    renderAdminPackages();
+    preview.querySelector("[data-admin-package-search]")?.focus();
+    return;
+  }
   if (event.target.closest("[data-session-search-input]")) {
     applyCompactSessionFilters();
   }
@@ -6334,6 +6418,24 @@ preview.addEventListener("click", async (event) => {
   const publishAdminPackageButton = event.target.closest("[data-admin-package-publish]");
   if (publishAdminPackageButton) {
     await withButtonBusy(publishAdminPackageButton, "Publishing", () => publishAdminPackage(getAdminPackage(publishAdminPackageButton.dataset.adminPackagePublish)));
+    return;
+  }
+
+  const packageStatusButton = event.target.closest("[data-admin-package-status]");
+  if (packageStatusButton) {
+    const page = getAdminPackage(packageStatusButton.dataset.adminPackageKey);
+    await withButtonBusy(packageStatusButton, "Saving", async () => {
+      if (!page) throw new Error("Package not found");
+      const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: packageStatusButton.dataset.adminPackageStatus })
+      });
+      const updated = normalizePackage(result.package);
+      adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
+      marketPages = adminPackages.filter((item) => item.status === "published");
+      renderAdminPackages();
+      statusText.textContent = `${updated.name.toUpperCase()} ${updated.status.toUpperCase()}`;
+    });
     return;
   }
 
