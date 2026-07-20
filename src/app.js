@@ -11,6 +11,7 @@ import { eventsRouter } from "./routes/events.js";
 import { importsRouter } from "./routes/imports.js";
 import { previewRouter } from "./routes/preview.js";
 import { runtimeRouter } from "./routes/runtime.js";
+import { notificationsRouter } from "./routes/notifications.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,6 +62,7 @@ export function createApp() {
   app.use("/api/admin/import", importsRouter);
   app.use("/api/admin/users", adminUsersRouter);
   app.use("/api/user-pages", userPagesRouter);
+  app.use("/api/notifications", notificationsRouter);
   app.use("/api/wallet", walletRouter);
   app.use("/api/page-security", securityRouter);
   app.use("/api/runtime/runtime", runtimeRouter);

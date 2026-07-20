@@ -77,6 +77,21 @@
             <h2 id="topbarTitle">Login</h2>
           </div>
 
+          <div class="topbar-actions">
+          <div class="notification-center" id="notificationCenter" hidden>
+            <button class="notification-toggle" id="notificationToggle" type="button" aria-label="Open notifications" aria-expanded="false">
+              <span aria-hidden="true">&#128276;</span>
+              <strong id="notificationBadge" hidden>0</strong>
+            </button>
+            <section class="notification-panel" id="notificationPanel" aria-label="Notifications" hidden>
+              <header>
+                <div><small>notification center</small><strong>Recent results</strong></div>
+                <button type="button" data-notification-read-all>Mark all read</button>
+              </header>
+              <div class="notification-list" id="notificationList"><p>No notifications yet.</p></div>
+            </section>
+          </div>
+
           <details class="topbar-menu">
             <summary aria-label="Open dashboard controls">
               <span class="profile-avatar" aria-hidden="true">&#128187;</span>
@@ -114,6 +129,7 @@
               </button>
             </div>
           </details>
+          </div>
         </header>
 
         <article class="preview" id="preview" aria-live="polite">

@@ -27,6 +27,11 @@ const randomButton = document.querySelector("#randomButton");
 const swatches = document.querySelector("#swatches");
 const themeToggle = document.querySelector("#themeToggle");
 const topbarTitle = document.querySelector("#topbarTitle");
+const notificationCenter = document.querySelector("#notificationCenter");
+const notificationToggle = document.querySelector("#notificationToggle");
+const notificationBadge = document.querySelector("#notificationBadge");
+const notificationPanel = document.querySelector("#notificationPanel");
+const notificationList = document.querySelector("#notificationList");
 const appShell = document.querySelector(".app-shell");
 const matrix = document.querySelector("#matrix");
 const context = matrix.getContext("2d");
@@ -62,6 +67,11 @@ let walletFundOpen = false;
 let walletHistoryOpen = false;
 let walletFundingOptions = [];
 let walletQuoteTimer = null;
+let notificationItems = [];
+let notificationUnreadCount = 0;
+let notificationPollTimer = null;
+let notificationInitialized = false;
+const notificationSeenIds = new Set();
 const expandedAdminUsers = new Set();
 const collabAdminUsers = new Set();
 const selectedMarketPlans = {};
@@ -123,7 +133,6 @@ const resultsAutoRefreshMs = 5000;
 let resultsAutoRefreshTimer = null;
 let resultsAutoRefreshSlug = "";
 let resultsAutoRefreshBusy = false;
-const resultNotificationSeenIds = new Map();
 let resultNotificationAudioContext = null;
 
 function setAppBusy(isBusy, label = "Working") {
@@ -304,10 +313,6 @@ function startResultsAutoRefresh(pageSlug) {
   }, resultsAutoRefreshMs);
 }
 
-function resultNotificationId(result = {}) {
-  return result.id || [result.sessionId, result.screen, result.createdAt, result.date, result.time].filter(Boolean).join(":");
-}
-
 function playNewResultTone() {
   const AudioContextType = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextType) return;
@@ -333,16 +338,65 @@ function playNewResultTone() {
   }
 }
 
-function syncResultNotificationState(page, results = [], options = {}) {
-  const pageKey = page.id || page.slug;
-  if (!pageKey) return;
-  const currentIds = new Set(results.map(resultNotificationId).filter(Boolean));
-  const previousIds = resultNotificationSeenIds.get(pageKey);
-  const hasNewSubmittedResult = Boolean(previousIds) && [...currentIds].some((id) => !previousIds.has(id));
-  resultNotificationSeenIds.set(pageKey, currentIds);
-  if (options.autoRefresh && hasNewSubmittedResult && page.resultSettings?.notifyOnResult !== false) {
-    playNewResultTone();
+function notificationTimeLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Just now";
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function renderNotificationCenter() {
+  if (!notificationCenter || !notificationBadge || !notificationList) return;
+  notificationCenter.hidden = !isLoggedIn();
+  notificationBadge.hidden = notificationUnreadCount < 1;
+  notificationBadge.textContent = notificationUnreadCount > 99 ? "99+" : String(notificationUnreadCount);
+  notificationToggle?.setAttribute("aria-label", `Open notifications${notificationUnreadCount ? `, ${notificationUnreadCount} unread` : ""}`);
+  notificationList.innerHTML = notificationItems.length
+    ? notificationItems.map((notification) => `
+        <button type="button" class="notification-item ${notification.readAt ? "" : "is-unread"}" data-notification-open="${escapeHtml(notification.id)}" data-notification-page="${escapeHtml(notification.metadata?.pageSlug || notification.userPageId || "")}">
+          <strong>${escapeHtml(notification.title || "New result")}</strong>
+          <span>${escapeHtml(notification.message || "A new result was submitted.")}</span>
+          <small>${escapeHtml(notificationTimeLabel(notification.createdAt))}</small>
+        </button>
+      `).join("")
+    : "<p>No notifications yet.</p>";
+}
+
+async function refreshNotifications({ silent = false } = {}) {
+  if (!isLoggedIn()) return;
+  try {
+    const result = await requestApi("/api/notifications?limit=40");
+    const incoming = result.notifications || [];
+    if (notificationInitialized && !silent) {
+      const hasNewUnread = incoming.some((notification) => !notification.readAt && !notificationSeenIds.has(notification.id));
+      if (hasNewUnread) playNewResultTone();
+    }
+    incoming.forEach((notification) => notificationSeenIds.add(notification.id));
+    notificationItems = incoming;
+    notificationUnreadCount = Number(result.unreadCount || 0);
+    notificationInitialized = true;
+    renderNotificationCenter();
+  } catch (error) {
+    console.debug("Notification refresh skipped", error);
   }
+}
+
+function startNotificationPolling() {
+  if (notificationPollTimer) window.clearInterval(notificationPollTimer);
+  notificationPollTimer = null;
+  if (!isLoggedIn()) return;
+  notificationPollTimer = window.setInterval(() => refreshNotifications(), 10000);
+}
+
+function resetNotifications() {
+  if (notificationPollTimer) window.clearInterval(notificationPollTimer);
+  notificationPollTimer = null;
+  notificationItems = [];
+  notificationUnreadCount = 0;
+  notificationInitialized = false;
+  notificationSeenIds.clear();
+  if (notificationPanel) notificationPanel.hidden = true;
+  if (notificationToggle) notificationToggle.setAttribute("aria-expanded", "false");
+  renderNotificationCenter();
 }
 
 function renderMissingPage() {
@@ -1040,7 +1094,6 @@ async function loadResultsControlData(page, options = {}) {
       requestApi(`/api/user-pages/${page.id}/sessions`)
     ]);
     const results = (resultsData.results || []).map(normalizePageResult);
-    syncResultNotificationState(page, results, options);
     page.results = results;
     page.activeSessions = sessionsData.sessions || [];
     ownedPages = ownedPages.map((item) => item.id === page.id ? { ...item, results, activeSessions: page.activeSessions } : item);
@@ -1189,6 +1242,7 @@ function clearAuthState() {
   walletFundOpen = false;
   walletHistoryOpen = false;
   walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
+  resetNotifications();
   syncAdminVisibility();
 }
 
@@ -2653,6 +2707,8 @@ async function handleLogin() {
     });
     saveAuthState({ mode: "api", user: result.user, token: result.token });
     await loadAppData();
+    await refreshNotifications({ silent: true });
+    startNotificationPolling();
     statusText.textContent = "API SESSION OPENED";
   } catch (error) {
     statusText.textContent = error.message.toUpperCase();
@@ -2685,6 +2741,8 @@ async function handleSignup() {
     });
     saveAuthState({ mode: "api", user: result.user, token: result.token });
     await loadAppData();
+    await refreshNotifications({ silent: true });
+    startNotificationPolling();
     statusText.textContent = "ACCOUNT CREATED";
   } catch (error) {
     statusText.textContent = error.message.toUpperCase();
@@ -5769,6 +5827,8 @@ async function initApp() {
     syncAdminVisibility();
     await refreshAuthUser();
     await loadAppData();
+    await refreshNotifications({ silent: true });
+    startNotificationPolling();
     syncAdminVisibility();
     await renderRoute();
   } finally {
@@ -5777,6 +5837,48 @@ async function initApp() {
 }
 
 initApp();
+
+document.addEventListener("pointerdown", () => {
+  const AudioContextType = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextType) return;
+  try {
+    resultNotificationAudioContext ||= new AudioContextType();
+    if (resultNotificationAudioContext.state === "suspended") resultNotificationAudioContext.resume().catch(() => {});
+  } catch {
+    // Sound remains optional when the browser blocks audio initialization.
+  }
+}, { once: true });
+
+notificationToggle?.addEventListener("click", () => {
+  const willOpen = notificationPanel?.hidden !== false;
+  if (notificationPanel) notificationPanel.hidden = !willOpen;
+  notificationToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  if (willOpen) refreshNotifications({ silent: true });
+});
+
+notificationCenter?.addEventListener("click", async (event) => {
+  const readAll = event.target.closest("[data-notification-read-all]");
+  if (readAll) {
+    await requestApi("/api/notifications/read-all", { method: "PATCH" });
+    notificationItems = notificationItems.map((notification) => ({ ...notification, readAt: notification.readAt || new Date().toISOString() }));
+    notificationUnreadCount = 0;
+    renderNotificationCenter();
+    return;
+  }
+  const item = event.target.closest("[data-notification-open]");
+  if (!item) return;
+  const notification = notificationItems.find((entry) => entry.id === item.dataset.notificationOpen);
+  if (notification && !notification.readAt) {
+    await requestApi(`/api/notifications/${encodeURIComponent(notification.id)}/read`, { method: "PATCH" });
+    notification.readAt = new Date().toISOString();
+    notificationUnreadCount = Math.max(0, notificationUnreadCount - 1);
+    renderNotificationCenter();
+  }
+  if (notificationPanel) notificationPanel.hidden = true;
+  notificationToggle?.setAttribute("aria-expanded", "false");
+  if (item.dataset.notificationPage) window.location.hash = `#results-${item.dataset.notificationPage}`;
+});
+
 window.addEventListener("hashchange", () => {
   renderRoute();
 });

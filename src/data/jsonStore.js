@@ -16,7 +16,8 @@ function emptyDb() {
     walletTransactions: [],
     walletDepositRequests: [],
     pageResults: [],
-    trafficEvents: []
+    trafficEvents: [],
+    notificationOutbox: []
   };
 }
 

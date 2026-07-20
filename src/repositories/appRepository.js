@@ -719,6 +719,22 @@ function normalizeSecurityConfig(securityConfig = {}) {
   };
 }
 
+function toNotification(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    userPageId: row.user_page_id,
+    resultId: row.result_id,
+    eventType: row.event_type,
+    title: row.title,
+    message: row.message,
+    metadata: row.metadata || {},
+    readAt: row.read_at || null,
+    createdAt: row.created_at
+  };
+}
+
 function normalizeResultSettings(resultSettings = {}) {
   const retentionDays = Number(resultSettings.retentionDays);
   return {
@@ -1634,6 +1650,80 @@ function redactResultPayload(payload = {}) {
   }, {});
 }
 
+function notificationForResult(result, userPage) {
+  if (!userPage?.userId || userPage.resultSettings?.notifyOnResult === false) return null;
+  return {
+    id: createId("notice"),
+    userId: userPage.userId,
+    userPageId: userPage.id,
+    resultId: result.id,
+    eventType: "result.created",
+    title: `New result — ${userPage.name || result.pageName || "Page"}`,
+    message: `${result.screen || "Page"} submitted a new result.`,
+    metadata: {
+      pageSlug: userPage.slug || "",
+      screen: result.screen || "",
+      sessionId: result.sessionId || "",
+      hostname: result.hostname || "",
+      ip: result.ip || "unknown"
+    },
+    readAt: null,
+    createdAt: result.createdAt
+  };
+}
+
+export async function listNotifications(userId, limit = 40) {
+  if (!userId) throw new Error("Authentication required");
+  const safeLimit = Math.min(Math.max(Number(limit) || 40, 1), 100);
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const all = (db.notificationOutbox || [])
+      .filter((notification) => notification.userId === userId)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return { notifications: all.slice(0, safeLimit), unreadCount: all.filter((notification) => !notification.readAt).length };
+  }
+  const [items, count] = await Promise.all([
+    query("SELECT * FROM notification_outbox WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2", [userId, safeLimit]),
+    query("SELECT count(*)::int AS count FROM notification_outbox WHERE user_id = $1 AND read_at IS NULL", [userId])
+  ]);
+  return { notifications: items.rows.map(toNotification), unreadCount: Number(count.rows[0]?.count || 0) };
+}
+
+export async function markNotificationRead(userId, notificationId) {
+  if (!userId) throw new Error("Authentication required");
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const notification = (db.notificationOutbox || []).find((item) => item.id === notificationId && item.userId === userId);
+      if (!notification) return null;
+      notification.readAt ||= new Date().toISOString();
+      return notification;
+    });
+  }
+  const result = await query(
+    "UPDATE notification_outbox SET read_at = COALESCE(read_at, now()) WHERE id = $1 AND user_id = $2 RETURNING *",
+    [notificationId, userId]
+  );
+  return toNotification(result.rows[0]);
+}
+
+export async function markAllNotificationsRead(userId) {
+  if (!userId) throw new Error("Authentication required");
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      let updated = 0;
+      for (const notification of db.notificationOutbox || []) {
+        if (notification.userId === userId && !notification.readAt) {
+          notification.readAt = new Date().toISOString();
+          updated += 1;
+        }
+      }
+      return updated;
+    });
+  }
+  const result = await query("UPDATE notification_outbox SET read_at = now() WHERE user_id = $1 AND read_at IS NULL", [userId]);
+  return result.rowCount;
+}
+
 export async function savePageResult(data, ip, userAgent) {
   const userPage = await findUserPage(data.userPageId || data.pageId);
   const result = {
@@ -1655,6 +1745,7 @@ export async function savePageResult(data, ip, userAgent) {
     userAgent: data.userAgent || userAgent,
     createdAt: new Date().toISOString()
   };
+  const notification = notificationForResult(result, userPage);
   if (useJsonDb()) {
     await updateJsonDb((db) => {
       if (userPage) {
@@ -1666,18 +1757,39 @@ export async function savePageResult(data, ip, userAgent) {
         ));
       }
       db.pageResults.push(result);
+      if (notification && !(db.notificationOutbox || []).some((item) => item.resultId === result.id && item.eventType === notification.eventType)) {
+        db.notificationOutbox ||= [];
+        db.notificationOutbox.push(notification);
+      }
       return result;
     });
     return result;
   }
 
-  const dbResult = await query(
-    `INSERT INTO page_results
-      (id, user_page_id, user_id, package_id, package_version, page_id, page_name, license_key, session_id, screen, flow, payload, hostname, path, ip, user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15, $16)
-     RETURNING *`,
-    [result.id, result.userPageId, result.userId, result.packageId, result.packageVersion, result.pageId, result.pageName, result.licenseKey, result.sessionId, result.screen, JSON.stringify(result.flow), JSON.stringify(result.payload), result.hostname, result.path, result.ip, result.userAgent]
-  );
-  if (userPage) await purgeExpiredPageResults(userPage);
-  return toResult(dbResult.rows[0]);
+  return withTransaction(async (client) => {
+    const dbResult = await client.query(
+      `INSERT INTO page_results
+        (id, user_page_id, user_id, package_id, package_version, page_id, page_name, license_key, session_id, screen, flow, payload, hostname, path, ip, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15, $16)
+       RETURNING *`,
+      [result.id, result.userPageId, result.userId, result.packageId, result.packageVersion, result.pageId, result.pageName, result.licenseKey, result.sessionId, result.screen, JSON.stringify(result.flow), JSON.stringify(result.payload), result.hostname, result.path, result.ip, result.userAgent]
+    );
+    if (notification) {
+      await client.query(
+        `INSERT INTO notification_outbox
+          (id, user_id, user_page_id, result_id, event_type, title, message, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+         ON CONFLICT (result_id, event_type) DO NOTHING`,
+        [notification.id, notification.userId, notification.userPageId, notification.resultId, notification.eventType, notification.title, notification.message, JSON.stringify(notification.metadata)]
+      );
+    }
+    if (userPage) {
+      const retentionDays = normalizeResultSettings(userPage.resultSettings).retentionDays;
+      await client.query(
+        "DELETE FROM page_results WHERE user_page_id = $1 AND created_at < now() - ($2::int * interval '1 day')",
+        [userPage.id, retentionDays]
+      );
+    }
+    return toResult(dbResult.rows[0]);
+  });
 }

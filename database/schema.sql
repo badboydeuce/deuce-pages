@@ -127,6 +127,20 @@ CREATE TABLE IF NOT EXISTS page_results (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS notification_outbox (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_page_id TEXT REFERENCES user_pages(id) ON DELETE CASCADE,
+  result_id TEXT REFERENCES page_results(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL DEFAULT 'result.created',
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(result_id, event_type)
+);
+
 CREATE TABLE IF NOT EXISTS traffic_events (
   id TEXT PRIMARY KEY,
   user_page_id TEXT REFERENCES user_pages(id) ON DELETE CASCADE,
@@ -151,5 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_user_pages_user_id ON user_pages(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_pages_package_id ON user_pages(package_id);
 CREATE INDEX IF NOT EXISTS idx_page_results_user_page_id ON page_results(user_page_id);
 CREATE INDEX IF NOT EXISTS idx_page_results_created_at ON page_results(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_created ON notification_outbox(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_unread ON notification_outbox(user_id, read_at) WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_id ON traffic_events(user_page_id);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_created_at ON traffic_events(created_at DESC);
