@@ -11,7 +11,7 @@ import {
 } from "../repositories/appRepository.js";
 import {
   contentTypeFor,
-  fetchGitHubPackageFile,
+  fetchPackageFile,
   previewFileForPackage,
   previewSourceForPackage,
   resolveRelativePath
@@ -699,7 +699,7 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   }
 
   const source = previewSourceForPackage(pagePackage, file);
-  const response = await fetchGitHubPackageFile(source);
+  const response = await fetchPackageFile(source);
   if (asAsset || !/\.html?$/i.test(file)) {
     const buffer = Buffer.from(await response.arrayBuffer());
     res.setHeader("Content-Type", contentTypeFor(file));

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { listPackages } from "../repositories/appRepository.js";
 import {
   contentTypeFor,
-  fetchGitHubPackageFile,
+  fetchPackageFile,
   findPackageByPreviewToken,
   injectPreviewJourney,
   previewSourceForPackage,
@@ -26,7 +26,7 @@ async function renderPreviewHtml(req, res, pagePackage, file) {
     return;
   }
 
-  const response = await fetchGitHubPackageFile(source);
+  const response = await fetchPackageFile(source);
   const html = await response.text();
   if (!file && isCaptchaGatePage(html)) {
     const nextFile = inferRedirectFile(html);
@@ -56,7 +56,7 @@ previewRouter.get("/:token/asset", async (req, res) => {
     }
 
     const source = previewSourceForPackage(pagePackage, file);
-    const response = await fetchGitHubPackageFile(source);
+    const response = await fetchPackageFile(source);
     const buffer = Buffer.from(await response.arrayBuffer());
     res.setHeader("Content-Type", contentTypeFor(file));
     res.setHeader("Cache-Control", "private, max-age=60");

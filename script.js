@@ -2958,18 +2958,22 @@ function renderAdminImportWizard(sourceType = "local") {
               <button type="button" data-github-publish>Import & Publish</button>
             </div>
           ` : `
-            <div class="upload-dropzone">
-              <strong>Local upload is next</strong>
-              <span>Use GitHub import for live package creation today.</span>
+            <div class="import-settings-grid">
+              <label><span>Package name</span><input type="text" data-local-field="packageName" value="Local Imported Page"></label>
+              <label><span>Slug</span><input type="text" data-local-field="slug" value="local-imported-page"></label>
             </div>
+            <label><span>Upload ZIP</span><input type="file" accept=".zip,application/zip" data-local-zip></label>
+            <label><span>Upload individual files</span><input type="file" multiple data-local-files></label>
+            <label><span>Upload a folder</span><input type="file" multiple webkitdirectory directory data-local-folder></label>
             <div class="feature-row">
-              <span>Zip parser</span>
-              <span>Asset storage</span>
-              <span>CSS scope</span>
-              <span>Draft create</span>
+              <span>Private R2 storage</span>
+              <span>PHP rejected</span>
+              <span>100 MB package limit</span>
+              <span>Versioned source</span>
             </div>
             <div class="admin-actions">
-              <button type="button" data-route="#admin-import-github">Use GitHub import</button>
+              <button type="button" data-local-import="draft">Upload & create draft</button>
+              <button type="button" data-local-import="publish">Upload & publish</button>
             </div>
           `}
         </article>
@@ -2978,8 +2982,8 @@ function renderAdminImportWizard(sourceType = "local") {
           <small>live result</small>
           <h3>Scan and preview</h3>
           <div class="admin-code-sample" data-github-result>
-            <code>${isGithub ? `API connection required: ${escapeHtml(apiBase())}` : "Local importer is not wired to the API yet."}</code>
-            <code>${isGithub ? "Scan a repo to detect screens, CSS, scripts, and assets." : "GitHub import can create real package records now."}</code>
+            <code>${isGithub ? `API connection required: ${escapeHtml(apiBase())}` : "R2 connection required. Select one ZIP, loose files, or a folder."}</code>
+            <code>${isGithub ? "Scan a repo to detect screens, CSS, scripts, and assets." : "index.html is required. PHP and unsafe paths are rejected."}</code>
           </div>
         </article>
 
@@ -3960,7 +3964,7 @@ function renderUserConfigCenter(pageSlug = "page-a") {
         <article class="security-panel package-form">
           <small>results</small>
           <h3>Result handling</h3>
-          <label><span>Keep results for</span><input type="number" min="1" data-user-config="retentionDays" value="${escapeHtml(resultSettings.retentionDays || 30)}"></label>
+          <label><span>Keep results for</span><input type="number" min="1" max="3650" data-user-config="retentionDays" value="${escapeHtml(resultSettings.retentionDays || 30)}"></label>
           <label class="toggle-row">
             <input type="checkbox" data-user-config="notifyOnResult" ${resultSettings.notifyOnResult ? "checked" : ""}>
             <span>Notify me when a new result arrives</span>
@@ -5153,6 +5157,90 @@ function collectGithubImportFields() {
   };
 }
 
+function collectLocalImportFields() {
+  const field = (name) => preview.querySelector(`[data-local-field="${name}"]`)?.value.trim() || "";
+  return {
+    packageName: field("packageName") || "Local Imported Page",
+    slug: field("slug") || "local-imported-page",
+    version: "v0.1"
+  };
+}
+
+function selectedLocalFiles() {
+  const zip = preview.querySelector("[data-local-zip]")?.files?.[0] || null;
+  if (zip) return { mode: "zip", zip, files: [] };
+  const loose = [...(preview.querySelector("[data-local-files]")?.files || [])]
+    .map((file) => ({ file, path: file.name }));
+  const folder = [...(preview.querySelector("[data-local-folder]")?.files || [])]
+    .map((file) => {
+      const relativePath = file.webkitRelativePath || file.name;
+      const parts = relativePath.split("/");
+      return { file, path: parts.length > 1 ? parts.slice(1).join("/") : relativePath };
+    });
+  return { mode: "loose", zip: null, files: [...loose, ...folder] };
+}
+
+function renderLocalImportResult(result) {
+  const resultPanel = preview.querySelector("[data-github-result]");
+  if (!resultPanel) return;
+  const scan = result.scan || {};
+  const review = scan.review || {};
+  const pagePackage = result.package;
+  const previewUrl = pagePackage ? packagePreviewUrl(pagePackage) : "";
+  resultPanel.innerHTML = `
+    <code>${escapeHtml(pagePackage ? `${pagePackage.name} ${pagePackage.status}` : "Local import complete")}</code>
+    <code>${Number(result.files || scan.files?.length || 0)} files saved to private R2 storage.</code>
+    <code>${escapeHtml(review.status || "ready")} — ${(review.warnings || []).length} warning(s)</code>
+    ${(review.warnings || []).map((warning) => `<code>${escapeHtml(warning)}</code>`).join("")}
+    ${previewUrl ? `<div class="import-result-actions"><a href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener">Open package preview</a><button type="button" data-route="#admin-package-${escapeHtml(pagePackage.slug)}">Edit package</button></div>` : ""}
+  `;
+}
+
+async function uploadLocalPackage(mode = "draft") {
+  const resultPanel = preview.querySelector("[data-github-result]");
+  const selection = selectedLocalFiles();
+  if (!selection.zip && !selection.files.length) {
+    if (resultPanel) resultPanel.innerHTML = "<code>Select a ZIP, individual files, or a folder first.</code>";
+    statusText.textContent = "LOCAL FILES REQUIRED";
+    return;
+  }
+  const base = collectLocalImportFields();
+  const startPayload = selection.mode === "zip"
+    ? { ...base, mode: "zip", file: { name: selection.zip.name, size: selection.zip.size } }
+    : { ...base, mode: "loose", files: selection.files.map(({ file, path }) => ({ path, size: file.size, type: file.type })) };
+  if (resultPanel) resultPanel.innerHTML = "<code>Creating secure R2 upload session...</code>";
+  statusText.textContent = "PREPARING LOCAL IMPORT";
+
+  try {
+    const session = await requestApi("/api/admin/import/local/start", { method: "POST", body: JSON.stringify(startPayload) });
+    if (selection.mode === "zip") {
+      const response = await fetch(session.upload.uploadUrl, { method: "PUT", headers: { "Content-Type": "application/zip" }, body: selection.zip });
+      if (!response.ok) throw new Error(`R2 ZIP upload failed: ${response.status}`);
+    } else {
+      const localByPath = new Map(selection.files.map((item) => [item.path, item.file]));
+      for (let index = 0; index < session.uploads.length; index += 1) {
+        const upload = session.uploads[index];
+        const file = localByPath.get(upload.path);
+        if (!file) throw new Error(`Local file was not found: ${upload.path}`);
+        if (resultPanel) resultPanel.innerHTML = `<code>Uploading ${index + 1} / ${session.uploads.length}</code><code>${escapeHtml(upload.path)}</code>`;
+        const response = await fetch(upload.uploadUrl, { method: "PUT", headers: { "Content-Type": upload.contentType }, body: file });
+        if (!response.ok) throw new Error(`R2 upload failed for ${upload.path}: ${response.status}`);
+      }
+    }
+    if (resultPanel) resultPanel.innerHTML = "<code>Verifying uploaded objects and creating package...</code>";
+    const result = await requestApi("/api/admin/import/local/finalize", {
+      method: "POST",
+      body: JSON.stringify({ importToken: session.importToken, publish: mode === "publish" })
+    });
+    renderLocalImportResult(result);
+    await loadAppData();
+    statusText.textContent = mode === "publish" ? "LOCAL R2 PACKAGE PUBLISHED" : "LOCAL R2 PACKAGE DRAFT CREATED";
+  } catch (error) {
+    if (resultPanel) resultPanel.innerHTML = `<code>Local import failed</code><code>${escapeHtml(error.message)}</code>`;
+    statusText.textContent = "LOCAL IMPORT FAILED";
+  }
+}
+
 function githubFileUrl(scan, filePath, mode = "blob") {
   const base = mode === "raw"
     ? `https://raw.githubusercontent.com/${scan.owner}/${scan.repo}/${scan.branch}`
@@ -5765,6 +5853,12 @@ preview.addEventListener("click", async (event) => {
   const githubScanButton = event.target.closest("[data-github-scan]");
   if (githubScanButton) {
     await withButtonBusy(githubScanButton, "Scanning", () => scanGithubImport("scan", githubScanButton));
+    return;
+  }
+
+  const localImportButton = event.target.closest("[data-local-import]");
+  if (localImportButton) {
+    await withButtonBusy(localImportButton, "Uploading", () => uploadLocalPackage(localImportButton.dataset.localImport));
     return;
   }
 

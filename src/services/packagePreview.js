@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { classifyFile, githubRawUrl, normalizeRepoUrl } from "./githubImport.js";
+import { getObjectBuffer } from "./objectStorage.js";
 
 function previewSecret() {
   return process.env.PREVIEW_TOKEN_SECRET || process.env.JWT_SECRET || "deuce-pages-local-preview-secret";
@@ -92,17 +93,38 @@ export function previewScreensForPackage(pagePackage) {
 }
 
 export function previewSourceForPackage(pagePackage, fileOverride = "") {
+  const r2 = pagePackage.packageManifest?.r2;
   const github = pagePackage.packageManifest?.github;
   const file = fileOverride || previewFileForPackage(pagePackage);
+  const manifestFiles = pagePackage.packageManifest?.files || [];
+  if (fileOverride && !manifestFiles.some((item) => String(item.path || item).replace(/^\/+/, "") === String(fileOverride).replace(/^\/+/, ""))) {
+    throw new Error("Package file is not available");
+  }
+  if (r2?.prefix && file) {
+    return {
+      provider: "r2",
+      key: `${String(r2.prefix).replace(/\/$/, "")}/${String(file).replace(/^\/+/, "")}`,
+      file
+    };
+  }
   if (!github || !file) throw new Error("Package preview source is not available");
   if (classifyFile(file) === "html" || fileOverride) {
     return {
+      provider: "github",
       repoUrl: pagePackage.repoUrl || `https://github.com/${github.owner}/${github.repo}.git`,
       branch: github.branch || "main",
       file
     };
   }
   throw new Error("Preview file must be HTML");
+}
+
+export async function fetchPackageFile(source) {
+  if (source?.provider === "r2") {
+    const buffer = await getObjectBuffer(source.key);
+    return new Response(buffer, { status: 200, headers: { "Content-Type": contentTypeFor(source.file) } });
+  }
+  return fetchGitHubPackageFile(source);
 }
 
 export async function fetchGitHubPackageFile(source) {

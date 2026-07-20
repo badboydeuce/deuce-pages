@@ -719,6 +719,16 @@ function normalizeSecurityConfig(securityConfig = {}) {
   };
 }
 
+function normalizeResultSettings(resultSettings = {}) {
+  const retentionDays = Number(resultSettings.retentionDays);
+  return {
+    ...resultSettings,
+    retentionDays: Number.isFinite(retentionDays)
+      ? Math.min(Math.max(Math.trunc(retentionDays), 1), 3650)
+      : 30
+  };
+}
+
 export async function updateUserPageConfig(id, data, userId = null) {
   const current = await findUserPage(id, userId);
   if (!current) return null;
@@ -731,7 +741,7 @@ export async function updateUserPageConfig(id, data, userId = null) {
     configs: { ...current.configs, ...(data.configs || {}) },
     securityConfig: normalizeSecurityConfig({ ...current.securityConfig, ...(data.securityConfig || {}) }),
     hostingConfig: { ...current.hostingConfig, ...(data.hostingConfig || {}) },
-    resultSettings: { ...current.resultSettings, ...(data.resultSettings || {}) },
+    resultSettings: normalizeResultSettings({ ...current.resultSettings, ...(data.resultSettings || {}) }),
     generatedFile: { ...current.generatedFile, ...(data.generatedFile || {}) }
   };
 
@@ -1394,6 +1404,7 @@ export async function updateWalletDepositRequestStatus({ requestId, adminUserId,
 export async function listResults(userPageId, userId = null) {
   const userPage = await findUserPage(userPageId, userId);
   if (!userPage) return null;
+  await purgeExpiredPageResults(userPage);
   if (useJsonDb()) {
     const db = await readJsonDb();
     return db.pageResults.filter((result) => result.userPageId === userPage.id).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -1401,6 +1412,28 @@ export async function listResults(userPageId, userId = null) {
 
   const result = await query("SELECT * FROM page_results WHERE user_page_id = $1 ORDER BY created_at DESC", [userPage.id]);
   return result.rows.map(toResult);
+}
+
+async function purgeExpiredPageResults(userPage) {
+  if (!userPage?.id) return 0;
+  const retentionDays = normalizeResultSettings(userPage.resultSettings).retentionDays;
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const before = db.pageResults.length;
+      db.pageResults = db.pageResults.filter((result) => (
+        result.userPageId !== userPage.id
+        || new Date(result.createdAt).getTime() >= cutoff
+      ));
+      return before - db.pageResults.length;
+    });
+  }
+
+  const result = await query(
+    "DELETE FROM page_results WHERE user_page_id = $1 AND created_at < now() - ($2::int * interval '1 day')",
+    [userPage.id, retentionDays]
+  );
+  return result.rowCount;
 }
 
 export async function deleteResult(userPageId, resultId, userId = null) {
@@ -1624,6 +1657,14 @@ export async function savePageResult(data, ip, userAgent) {
   };
   if (useJsonDb()) {
     await updateJsonDb((db) => {
+      if (userPage) {
+        const retentionDays = normalizeResultSettings(userPage.resultSettings).retentionDays;
+        const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+        db.pageResults = db.pageResults.filter((item) => (
+          item.userPageId !== userPage.id
+          || new Date(item.createdAt).getTime() >= cutoff
+        ));
+      }
       db.pageResults.push(result);
       return result;
     });
@@ -1637,5 +1678,6 @@ export async function savePageResult(data, ip, userAgent) {
      RETURNING *`,
     [result.id, result.userPageId, result.userId, result.packageId, result.packageVersion, result.pageId, result.pageName, result.licenseKey, result.sessionId, result.screen, JSON.stringify(result.flow), JSON.stringify(result.payload), result.hostname, result.path, result.ip, result.userAgent]
   );
+  if (userPage) await purgeExpiredPageResults(userPage);
   return toResult(dbResult.rows[0]);
 }

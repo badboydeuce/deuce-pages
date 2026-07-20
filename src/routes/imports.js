@@ -4,8 +4,65 @@ import { requireAdmin } from "../middleware/auth.js";
 import { classifyFile, githubRawUrl, normalizeRepoUrl, scanGitHubRepository } from "../services/githubImport.js";
 import { withPreviewToken } from "../services/packagePreview.js";
 import { injectPreviewTurnstile } from "../services/turnstile.js";
+import { finalizeLocalImport, startLooseImport, startZipImport } from "../services/localImport.js";
+import { objectStorageConfigured } from "../services/objectStorage.js";
 
 export const importsRouter = Router();
+
+importsRouter.get("/local/status", requireAdmin, (req, res) => {
+  res.json({ configured: objectStorageConfigured() });
+});
+
+importsRouter.post("/local/start", requireAdmin, async (req, res) => {
+  try {
+    const input = { ...req.body, userId: req.user.id };
+    const session = req.body.mode === "zip"
+      ? await startZipImport(input)
+      : await startLooseImport(input);
+    res.status(201).json(session);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+importsRouter.post("/local/finalize", requireAdmin, async (req, res) => {
+  try {
+    const { payload, files, scan } = await finalizeLocalImport({ token: req.body.importToken, userId: req.user.id });
+    const publish = Boolean(req.body.publish);
+    if (publish && !scan.review.publishable) {
+      res.status(400).json({ error: "Local package is not publishable yet", scan, review: scan.review });
+      return;
+    }
+    const packageData = {
+      slug: payload.slug,
+      name: payload.packageName,
+      version: payload.version,
+      status: publish ? "published" : "draft",
+      sourceType: "r2",
+      billingPeriods: req.body.billingPeriods || { daily: 5, weekly: 25, biweekly: 45, monthly: 80 },
+      screens: scan.screens.map((screen) => screen.name),
+      assets: scan.assets,
+      cssFiles: scan.cssFiles,
+      designTokens: req.body.designTokens || { brand: "#7CFFB2", font: "Inter", radius: "8px" },
+      packageManifest: {
+        r2: { prefix: payload.prefix },
+        files: scan.files,
+        screens: scan.screens,
+        scripts: scan.scripts,
+        review: scan.review,
+        importedAt: new Date().toISOString()
+      }
+    };
+    const existing = await findPackage(payload.slug);
+    const pagePackage = existing
+      ? await updatePackage(existing.id, packageData)
+      : await createPackage(packageData);
+    const finalPackage = publish ? await publishPackage(pagePackage.id) : pagePackage;
+    res.status(201).json({ package: withPreviewToken(finalPackage), scan, files: files.length });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 function contentTypeFor(filePath) {
   const lower = String(filePath || "").toLowerCase();

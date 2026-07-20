@@ -73,7 +73,7 @@ async function getRepositoryTree(owner, repo, branch) {
   return githubJson(`https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, `GitHub scan for branch ${branch}`);
 }
 
-function inferScreenName(filePath) {
+export function inferScreenName(filePath) {
   const name = filePath.split("/").pop().replace(/\.[^.]+$/, "").toLowerCase();
   if (name.includes("otp") || name.includes("verify")) return "OTP";
   if (name.includes("login") || name.includes("signin")) return "Login";
@@ -87,7 +87,7 @@ function inferScreenName(filePath) {
   return name.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens }) {
+export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens }) {
   const hasEntry = screens.some((screen) => screen.role === "entry");
   const issues = [];
   const warnings = [];
