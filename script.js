@@ -2996,10 +2996,11 @@ function renderAdminPackages() {
         <button type="button" data-admin-package-preview="${escapeHtml(page.slug)}">Preview</button>
         ${page.status === "published"
           ? `<button type="button" data-admin-package-status="draft" data-admin-package-key="${escapeHtml(page.slug)}">Unpublish</button>`
-          : `<button type="button" data-admin-package-publish="${escapeHtml(page.slug)}">Publish</button>`}
+          : page.status === "archived" ? "" : `<button type="button" data-admin-package-publish="${escapeHtml(page.slug)}">Publish</button>`}
         ${page.status === "archived"
           ? `<button type="button" data-admin-package-status="draft" data-admin-package-key="${escapeHtml(page.slug)}">Restore</button>`
           : `<button type="button" data-admin-package-status="archived" data-admin-package-key="${escapeHtml(page.slug)}">Archive</button>`}
+        ${page.status === "archived" ? `<button type="button" data-admin-package-delete="${escapeHtml(page.slug)}">Delete permanently</button>` : ""}
       </div>
     </article>`;
   }).join("");
@@ -6401,11 +6402,28 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const deletePackageButton = event.target.closest("[data-admin-package-delete]");
+  if (deletePackageButton) {
+    const page = getAdminPackage(deletePackageButton.dataset.adminPackageDelete);
+    if (!page) throw new Error("Package not found");
+    const confirmed = window.confirm(`Permanently delete ${page.name}? This removes its package record and R2 files and cannot be undone.`);
+    if (!confirmed) return;
+    await withButtonBusy(deletePackageButton, "Deleting", async () => {
+      const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}`, { method: "DELETE" });
+      adminPackages = adminPackages.filter((item) => item.id !== page.id);
+      marketPages = marketPages.filter((item) => item.id !== page.id);
+      renderAdminPackages();
+      statusText.textContent = `${page.name.toUpperCase()} DELETED / ${result.objectsDeleted || 0} R2 FILES REMOVED`;
+    });
+    return;
+  }
+
   const packageStatusButton = event.target.closest("[data-admin-package-status]");
   if (packageStatusButton) {
     const page = getAdminPackage(packageStatusButton.dataset.adminPackageKey);
     await withButtonBusy(packageStatusButton, "Saving", async () => {
       if (!page) throw new Error("Package not found");
+      if (packageStatusButton.dataset.adminPackageStatus === "archived" && !window.confirm(`Archive ${page.name}? New subscriptions will be blocked, but existing subscriber pages will remain active.`)) return;
       const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}`, {
         method: "PATCH",
         body: JSON.stringify({ status: packageStatusButton.dataset.adminPackageStatus })

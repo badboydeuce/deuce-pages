@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client
 } from "@aws-sdk/client-s3";
@@ -81,4 +82,19 @@ export async function putObject(key, body, contentType) {
 export async function deleteObject(key) {
   const { client, bucket } = storageClient();
   return client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+export async function deleteObjectPrefix(prefix) {
+  const cleanPrefix = String(prefix || "").replace(/^\/+|\/+$/g, "");
+  if (!cleanPrefix || !cleanPrefix.startsWith("packages/")) throw new Error("Invalid package storage prefix");
+  const { client, bucket } = storageClient();
+  let deleted = 0;
+  while (true) {
+    const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: `${cleanPrefix}/`, MaxKeys: 1000 }));
+    const keys = (listed.Contents || []).map((item) => item.Key).filter(Boolean);
+    if (!keys.length) break;
+    await Promise.all(keys.map((Key) => client.send(new DeleteObjectCommand({ Bucket: bucket, Key }))));
+    deleted += keys.length;
+  }
+  return deleted;
 }

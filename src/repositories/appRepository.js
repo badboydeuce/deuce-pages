@@ -469,6 +469,32 @@ export async function updatePackage(id, data) {
   return toPackage(result.rows[0]);
 }
 
+export async function packageSubscriberCount(id) {
+  const current = await findPackage(id);
+  if (!current) return 0;
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    return db.userPages.filter((page) => page.packageId === current.id).length;
+  }
+  const result = await query("SELECT count(*)::int AS count FROM user_pages WHERE package_id = $1", [current.id]);
+  return Number(result.rows[0]?.count || 0);
+}
+
+export async function deletePackage(id) {
+  const current = await findPackage(id);
+  if (!current) return null;
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      if (db.userPages.some((page) => page.packageId === current.id)) throw new Error("Package still has subscriber pages");
+      const index = db.packages.findIndex((item) => item.id === current.id);
+      if (index === -1) return null;
+      return db.packages.splice(index, 1)[0];
+    });
+  }
+  const result = await query("DELETE FROM page_packages WHERE id = $1 RETURNING *", [current.id]);
+  return toPackage(result.rows[0]);
+}
+
 export async function publishPackage(id) {
   if (useJsonDb()) {
     return updateJsonDb((db) => {
@@ -490,7 +516,7 @@ export async function publishPackage(id) {
 
 export async function subscribeToPackage(id, data = {}) {
   const pagePackage = await findPackage(id);
-  if (!pagePackage) return { error: "Package not found", status: 404 };
+  if (!pagePackage || pagePackage.status !== "published") return { error: "Published package not found", status: 404 };
   if (!data.userId) return { error: "Authentication required", status: 401 };
   const period = data.billingPeriod || "weekly";
   if (!["daily", "weekly", "biweekly", "monthly"].includes(period)) return { error: "Unsupported billing period", status: 400 };

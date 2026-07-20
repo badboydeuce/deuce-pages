@@ -20,7 +20,7 @@ export function validatePackageData(data = {}, { publishing = false } = {}) {
   if (!name) issues.push("Package name is required");
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) issues.push("Slug must contain lowercase letters, numbers, and single hyphens only");
   if (!allowedStatuses.has(status)) issues.push("Unsupported package status");
-  if (!["upload", "local", "github"].includes(sourceType)) issues.push("Unsupported package source type");
+  if (!["upload", "local", "github", "r2"].includes(sourceType)) issues.push("Unsupported package source type");
 
   const billingPeriods = {};
   for (const period of allowedPeriods) {
