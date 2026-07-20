@@ -1,8 +1,9 @@
 import { deviceBlocked } from "./deviceRules.js";
 
 const reputationCache = new Map();
-const reputationTtlMs = 10 * 60 * 1000;
-const reputationTimeoutMs = 1200;
+const reputationSuccessTtlMs = 10 * 60 * 1000;
+const reputationFailureTtlMs = 20 * 1000;
+const reputationTimeoutMs = Math.min(Math.max(Number(process.env.IP_REPUTATION_TIMEOUT_MS) || 1200, 300), 5000);
 
 function headerValue(req, name) {
   return String(req?.headers?.[name] || "").trim();
@@ -21,106 +22,144 @@ function isPublicIp(ip = "") {
   return true;
 }
 
-function normalizeReputation(data = {}) {
-  const security = data.security || {};
+function normalizeReputation(data = {}, provider = "ipwho.is") {
+  const security = data.security || data;
   return {
     vpn: Boolean(security.vpn),
     proxy: Boolean(security.proxy || security.relay),
     tor: Boolean(security.tor),
-    hosting: Boolean(security.hosting),
+    hosting: Boolean(security.hosting || security.datacenter),
     anonymous: Boolean(security.anonymous || security.vpn || security.proxy || security.tor || security.relay),
-    provider: "ipwho.is"
+    provider
   };
 }
 
-async function ipReputation(ip) {
-  if (process.env.IP_REPUTATION_DISABLED === "true" || !isPublicIp(ip)) return null;
-  const cached = reputationCache.get(ip);
-  if (cached && Date.now() - cached.at < reputationTtlMs) return cached.value;
+function publicReputationStatus(result, cacheHit = false) {
+  return {
+    available: Boolean(result.available),
+    provider: result.provider || null,
+    reason: result.reason || null,
+    latencyMs: Number(result.latencyMs || 0),
+    cacheHit: Boolean(cacheHit)
+  };
+}
 
+async function fetchReputation(url, ip, provider, headers = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), reputationTimeoutMs);
+  const startedAt = Date.now();
   try {
-    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}?security=1`, {
+    const response = await fetch(url.replace("{ip}", encodeURIComponent(ip)), {
       signal: controller.signal,
-      headers: { Accept: "application/json" }
+      headers: { Accept: "application/json", ...headers }
     });
     const data = await response.json().catch(() => ({}));
-    const value = response.ok && data.success !== false ? normalizeReputation(data) : null;
-    reputationCache.set(ip, { at: Date.now(), value });
-    return value;
+    if (!response.ok || data.success === false) {
+      return { available: false, provider, reason: `http_${response.status}`, latencyMs: Date.now() - startedAt };
+    }
+    return { available: true, provider, value: normalizeReputation(data, provider), latencyMs: Date.now() - startedAt };
   } catch (error) {
-    reputationCache.set(ip, { at: Date.now(), value: null });
-    return null;
+    return {
+      available: false,
+      provider,
+      reason: error?.name === "AbortError" ? "timeout" : "connection_error",
+      latencyMs: Date.now() - startedAt
+    };
   } finally {
     clearTimeout(timeout);
   }
 }
 
+async function ipReputation(ip) {
+  if (process.env.IP_REPUTATION_DISABLED === "true") {
+    return { available: false, provider: null, reason: "disabled", latencyMs: 0 };
+  }
+  if (!isPublicIp(ip)) {
+    return { available: false, provider: null, reason: "non_public_ip", latencyMs: 0 };
+  }
+  const cached = reputationCache.get(ip);
+  if (cached && Date.now() - cached.at < cached.ttl) {
+    return { ...cached.result, status: publicReputationStatus(cached.result, true) };
+  }
+
+  let result = await fetchReputation(`https://ipwho.is/{ip}?security=1`, ip, "ipwho.is");
+  const fallbackUrl = String(process.env.IP_REPUTATION_FALLBACK_URL || "").trim();
+  if (!result.available && fallbackUrl) {
+    const fallbackToken = String(process.env.IP_REPUTATION_FALLBACK_TOKEN || "").trim();
+    result = await fetchReputation(
+      fallbackUrl,
+      ip,
+      "fallback",
+      fallbackToken ? { Authorization: `Bearer ${fallbackToken}` } : {}
+    );
+  }
+  reputationCache.set(ip, { at: Date.now(), ttl: result.available ? reputationSuccessTtlMs : reputationFailureTtlMs, result });
+  return { ...result, status: publicReputationStatus(result, false) };
+}
+
+function failureMode(rules = {}) {
+  const mode = String(rules.reputationFailureMode || "challenge").toLowerCase();
+  return ["allow", "challenge", "block"].includes(mode) ? mode : "challenge";
+}
+
+function hasTurnstileSiteKey(security = {}) {
+  return Boolean(security.turnstile?.siteKey || security.turnstileSiteKey);
+}
+
 export async function proxySecurityDecision(security = {}, req = null, ip = "") {
   const rules = security.vpnProxyRules || {};
-  const cfCountry = headerValue(req, "cf-ipcountry").toUpperCase();
-  const explicitProxySignal = [
+  const trustedRelay = Boolean(req?.deuceRelayTrusted);
+  const cfCountry = trustedRelay ? headerValue(req, "cf-ipcountry").toUpperCase() : "";
+  const explicitProxySignal = trustedRelay && [
     "x-anonymous-ip",
     "x-vpn",
     "x-proxy-id",
     "x-proxy-type",
-    "x-tor-exit-node",
-    "proxy-authorization",
-    "proxy-connection"
+    "x-tor-exit-node"
   ].some((name) => Boolean(headerValue(req, name)));
-  const reputationType = headerValue(req, "x-deuce-ip-type").toLowerCase()
-    || headerValue(req, "x-ip-type").toLowerCase();
-  const reputationRisk = headerValue(req, "x-deuce-ip-risk").toLowerCase()
-    || headerValue(req, "x-ip-risk").toLowerCase();
+  const reputationType = trustedRelay ? headerValue(req, "x-deuce-ip-type").toLowerCase() : "";
+  const reputationRisk = trustedRelay ? headerValue(req, "x-deuce-ip-risk").toLowerCase() : "";
 
   if (rules.blockTor && (cfCountry === "T1" || reputationType.includes("tor"))) {
-    return { blocked: true, proxyType: "tor", reason: "Tor traffic is blocked" };
+    return { blocked: true, challengeRequired: false, proxyType: "tor", reason: "Tor traffic is blocked", reputationStatus: { available: true, provider: "trusted_relay", reason: null, latencyMs: 0, cacheHit: false } };
   }
-  if (rules.blockVpnProxies && (
-    explicitProxySignal
-    || reputationType.includes("vpn")
-    || reputationType.includes("proxy")
-    || reputationRisk === "anonymous"
-  )) {
-    return { blocked: true, proxyType: "proxy", reason: "VPN or proxy traffic is blocked" };
+  if (rules.blockVpnProxies && (explicitProxySignal || reputationType.includes("vpn") || reputationType.includes("proxy") || reputationRisk === "anonymous")) {
+    return { blocked: true, challengeRequired: false, proxyType: "proxy", reason: "VPN or proxy traffic is blocked", reputationStatus: { available: true, provider: "trusted_relay", reason: null, latencyMs: 0, cacheHit: false } };
   }
-  if (rules.blockHostingProviders && (
-    reputationType.includes("hosting")
-    || reputationType.includes("datacenter")
-    || reputationType.includes("server")
-  )) {
-    return { blocked: true, proxyType: "hosting", reason: "Hosting provider traffic is blocked" };
+  if (rules.blockHostingProviders && (reputationType.includes("hosting") || reputationType.includes("datacenter") || reputationType.includes("server"))) {
+    return { blocked: true, challengeRequired: false, proxyType: "hosting", reason: "Hosting provider traffic is blocked", reputationStatus: { available: true, provider: "trusted_relay", reason: null, latencyMs: 0, cacheHit: false } };
   }
 
   if (rules.blockVpnProxies || rules.blockTor || rules.blockHostingProviders) {
     const reputation = await ipReputation(ip);
-    if (reputation) {
-      if (rules.blockTor && reputation.tor) {
-        return { blocked: true, proxyType: "tor", reason: "Tor traffic is blocked", reputation };
-      }
-      if (rules.blockVpnProxies && (reputation.vpn || reputation.proxy || reputation.anonymous)) {
-        return { blocked: true, proxyType: reputation.vpn ? "vpn" : "proxy", reason: "VPN or proxy traffic is blocked", reputation };
-      }
-      if (rules.blockHostingProviders && reputation.hosting) {
-        return { blocked: true, proxyType: "hosting", reason: "Hosting provider traffic is blocked", reputation };
-      }
-      return { blocked: false, proxyType: null, reputation };
+    if (reputation.available) {
+      if (rules.blockTor && reputation.value.tor) return { blocked: true, challengeRequired: false, proxyType: "tor", reason: "Tor traffic is blocked", reputation: reputation.value, reputationStatus: reputation.status };
+      if (rules.blockVpnProxies && (reputation.value.vpn || reputation.value.proxy || reputation.value.anonymous)) return { blocked: true, challengeRequired: false, proxyType: reputation.value.vpn ? "vpn" : "proxy", reason: "VPN or proxy traffic is blocked", reputation: reputation.value, reputationStatus: reputation.status };
+      if (rules.blockHostingProviders && reputation.value.hosting) return { blocked: true, challengeRequired: false, proxyType: "hosting", reason: "Hosting provider traffic is blocked", reputation: reputation.value, reputationStatus: reputation.status };
+      return { blocked: false, challengeRequired: false, proxyType: null, reputation: reputation.value, reputationStatus: reputation.status };
     }
+
+    const mode = failureMode(rules);
+    if (mode === "block") return { blocked: true, challengeRequired: false, proxyType: null, reason: "IP reputation is unavailable", reputationStatus: reputation.status };
+    if (mode === "challenge") {
+      if (!hasTurnstileSiteKey(security)) return { blocked: true, challengeRequired: false, proxyType: null, reason: "IP reputation is unavailable and Turnstile is not configured", reputationStatus: reputation.status };
+      return { blocked: false, challengeRequired: true, proxyType: null, reason: "IP reputation unavailable; human verification required", reputationStatus: reputation.status };
+    }
+    return { blocked: false, challengeRequired: false, proxyType: null, reason: "IP reputation unavailable; allowed by policy", reputationStatus: reputation.status };
   }
-  return { blocked: false, proxyType: null };
+  return { blocked: false, challengeRequired: false, proxyType: null, reputationStatus: { available: true, provider: null, reason: "not_required", latencyMs: 0, cacheHit: false } };
 }
 
 export async function securityDecision(page, ip, userAgent = "", req = null) {
   const security = page.securityConfig || {};
   const bannedIps = security.bannedIps || [];
   const whitelistIps = security.whitelistIps || [];
-  if (whitelistIps.includes(ip)) return { allowed: true, reason: "IP whitelisted" };
-  if (bannedIps.includes(ip)) return { allowed: false, reason: "IP blocked by page security rules" };
+  if (whitelistIps.includes(ip)) return { allowed: true, challengeRequired: false, reason: "IP whitelisted", reputationStatus: { available: true, provider: "whitelist", reason: null, latencyMs: 0, cacheHit: false } };
+  if (bannedIps.includes(ip)) return { allowed: false, challengeRequired: false, reason: "IP blocked by page security rules" };
   const proxy = await proxySecurityDecision(security, req, ip);
-  if (proxy.blocked) return { allowed: false, reason: proxy.reason, proxyType: proxy.proxyType, reputation: proxy.reputation || null };
+  if (proxy.blocked) return { allowed: false, challengeRequired: false, reason: proxy.reason, proxyType: proxy.proxyType, reputation: proxy.reputation || null, reputationStatus: proxy.reputationStatus || null };
   const device = deviceBlocked(security, userAgent);
-  if (device.blocked) return { allowed: false, reason: `${device.deviceType} devices are blocked`, deviceType: device.deviceType, proxyType: proxy.proxyType, reputation: proxy.reputation || null };
-  if (page.status && page.status !== "active") return { allowed: false, reason: "Page subscription is not active", deviceType: device.deviceType, proxyType: proxy.proxyType, reputation: proxy.reputation || null };
-  return { allowed: true, reason: "Allowed", deviceType: device.deviceType, proxyType: proxy.proxyType, reputation: proxy.reputation || null };
+  if (device.blocked) return { allowed: false, challengeRequired: false, reason: `${device.deviceType} devices are blocked`, deviceType: device.deviceType, proxyType: proxy.proxyType, reputation: proxy.reputation || null, reputationStatus: proxy.reputationStatus || null };
+  if (page.status && page.status !== "active") return { allowed: false, challengeRequired: false, reason: "Page subscription is not active", deviceType: device.deviceType, proxyType: proxy.proxyType, reputation: proxy.reputation || null, reputationStatus: proxy.reputationStatus || null };
+  return { allowed: true, challengeRequired: Boolean(proxy.challengeRequired), reason: proxy.reason || "Allowed", deviceType: device.deviceType, proxyType: proxy.proxyType, reputation: proxy.reputation || null, reputationStatus: proxy.reputationStatus || null };
 }

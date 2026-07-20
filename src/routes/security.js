@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { pageSubscriptionState, resolveUserPageSubscription, saveTrafficEvent } from "../repositories/appRepository.js";
 import { turnstileSecretFor, verifyTurnstileToken } from "../services/turnstile.js";
 import { securityDecision } from "../services/securityRules.js";
+import { createChallengeProof } from "../services/challengeProof.js";
 
 export const securityRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -56,6 +57,7 @@ async function securityContext(req, res) {
     res.status(403).json({ allowed: false, reason: accessDeniedMessage });
     return null;
   }
+  req.deuceRelayTrusted = Boolean(expectedSecret);
 
   const hostname = normalizeHost(req.headers["x-deuce-client-host"] || req.body.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(userPage);
@@ -94,7 +96,9 @@ securityRouter.post("/check", async (req, res) => {
       metadata: {
         deviceType: decision.deviceType || null,
         proxyType: decision.proxyType || null,
-        reputation: decision.reputation || null
+        reputation: decision.reputation || null,
+        reputationStatus: decision.reputationStatus || null,
+        challengeRequired: Boolean(decision.challengeRequired)
       }
     }, ip, req.headers["user-agent"]);
 
@@ -102,7 +106,8 @@ securityRouter.post("/check", async (req, res) => {
 
     res.json({
       allowed: true,
-      captchaRequired: Boolean(userPage.securityConfig?.captcha),
+      captchaRequired: Boolean(userPage.securityConfig?.captcha || decision.challengeRequired),
+      challengeRequired: Boolean(decision.challengeRequired),
       deviceType: decision.deviceType || null,
       proxyType: decision.proxyType || null,
       event
@@ -120,7 +125,12 @@ securityRouter.post("/turnstile/verify", async (req, res) => {
     const { userPage, hostname } = context;
 
     const security = userPage.securityConfig || {};
-    if (!security.captcha) {
+    const decision = await securityDecision(userPage, requestIp(req), req.headers["user-agent"], req);
+    if (!decision.allowed) {
+      res.status(403).json({ verified: false, reason: accessDeniedMessage });
+      return;
+    }
+    if (!security.captcha && !decision.challengeRequired) {
       res.json({ verified: true, skipped: true });
       return;
     }
@@ -146,7 +156,10 @@ securityRouter.post("/turnstile/verify", async (req, res) => {
       reason: "Turnstile passed"
     }, requestIp(req), req.headers["user-agent"]);
 
-    res.json({ verified: true });
+    res.json({
+      verified: true,
+      challengeProof: createChallengeProof({ userPageId: userPage.id, sessionId: req.body.sessionId, ip: requestIp(req) })
+    });
   } catch (error) {
     res.status(400).json({ verified: false, reason: accessDeniedMessage });
   }

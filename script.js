@@ -1933,7 +1933,7 @@ function createGeneratedIndex(page) {
       .blocked h1 { color: #ff8aae; }
       .hidden { display: none; }
     </style>
-    ${publicSecurity.captcha && publicSecurity.turnstile.siteKey ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>' : ""}
+    ${publicSecurity.turnstile.siteKey && (publicSecurity.captcha || publicSecurity.vpnProxyRules?.reputationFailureMode === "challenge") ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>' : ""}
   </head>
   <body>
     <main>
@@ -1958,6 +1958,7 @@ function createGeneratedIndex(page) {
       let runtimeAllowed = true;
       let captchaPassed = !config.security?.captcha;
       let captchaToken = "";
+      let challengeProof = "";
       let captchaWidgetId = null;
       const pageName = document.querySelector("#pageName");
       const progress = document.querySelector("#progress");
@@ -2023,15 +2024,30 @@ function createGeneratedIndex(page) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
-          if (!response.ok) return true;
-          const decision = await response.json();
-          if (decision.allowed === false) {
+          const decision = await response.json().catch(() => ({}));
+          if (!response.ok || decision.allowed === false) {
             blockPage("ACCESS DENIED", "ACCESS DENIED");
             return false;
           }
+          if (decision.captchaRequired && !config.security?.captcha) {
+            config.security.captcha = true;
+            captchaPassed = false;
+          }
           return true;
         } catch (error) {
-          console.info("DEUCE Pages security check queued for Render API", payload);
+          const mode = config.security?.vpnProxyRules?.reputationFailureMode || "challenge";
+          if (mode === "block") {
+            blockPage("ACCESS DENIED", "SECURITY CHECK UNAVAILABLE");
+            return false;
+          }
+          if (mode === "challenge") {
+            if (!turnstileSiteKey()) {
+              blockPage("ACCESS DENIED", "HUMAN VERIFICATION UNAVAILABLE");
+              return false;
+            }
+            config.security.captcha = true;
+            captchaPassed = false;
+          }
           return true;
         }
       }
@@ -2217,6 +2233,7 @@ function createGeneratedIndex(page) {
             return false;
           }
           captchaPassed = true;
+          challengeProof = result.challengeProof || "";
           return true;
         } catch (error) {
           screenCopy.textContent = "Turnstile verification could not reach the API.";
@@ -2276,6 +2293,7 @@ function createGeneratedIndex(page) {
           path: window.location.pathname,
           userAgent: navigator.userAgent,
           resultSettings: config.resultSettings,
+          challengeProof,
           createdAt: new Date().toISOString()
         };
 
@@ -4343,7 +4361,11 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <input type="text" data-security-field="turnstileDisplayDomain" value="${escapeHtml(turnstile.displayDomain || "")}" placeholder="online-cashpro.help">
       </label>
       <p>The generated index.html receives only the site key. The secret key stays in your API config for verification.</p>
-      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save Turnstile</button>
+      <div class="manage-actions">
+        <button type="button" data-validate-turnstile="${routeKey}">Validate configuration</button>
+        <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save Turnstile</button>
+      </div>
+      <p data-turnstile-validation>Not validated in this session.</p>
     </article>
   `;
   const ipPanel = `
@@ -4407,6 +4429,15 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           </label>
         `).join("")}
       </div>
+      <label>
+        <span>When reputation providers are unavailable</span>
+        <select data-security-failure-mode>
+          <option value="challenge" ${(vpnProxyRules.reputationFailureMode || "challenge") === "challenge" ? "selected" : ""}>Require Turnstile (recommended)</option>
+          <option value="block" ${vpnProxyRules.reputationFailureMode === "block" ? "selected" : ""}>Block access</option>
+          <option value="allow" ${vpnProxyRules.reputationFailureMode === "allow" ? "selected" : ""}>Allow and log</option>
+        </select>
+      </label>
+      <p>Challenge mode requires a valid Turnstile site and secret key. Provider failures are cached briefly, while successful reputation results use the normal cache.</p>
       <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save shield</button>
     </article>
   `;
@@ -4987,6 +5018,49 @@ themeToggle.addEventListener("click", () => {
 
 document.querySelector("[data-logout]")?.addEventListener("click", handleLogout);
 
+function pendingTurnstileConfig(page) {
+  const current = page?.securityConfig?.turnstile || {};
+  return {
+    siteKey: preview.querySelector('[data-security-field="turnstileSiteKey"]')?.value.trim() ?? current.siteKey ?? "",
+    secretKey: preview.querySelector('[data-security-field="turnstileSecretKey"]')?.value.trim() ?? current.secretKey ?? "",
+    displayDomain: preview.querySelector('[data-security-field="turnstileDisplayDomain"]')?.value.trim() ?? current.displayDomain ?? ""
+  };
+}
+
+function localTurnstileIssues(turnstile) {
+  const issues = [];
+  if (!turnstile.siteKey) issues.push("Turnstile site key is required");
+  if (turnstile.siteKey && turnstile.siteKey === turnstile.secretKey) issues.push("Site key and secret key cannot be the same");
+  if (turnstile.displayDomain && (!/^[a-z0-9.-]+$/i.test(turnstile.displayDomain) || turnstile.displayDomain.includes(".."))) {
+    issues.push("Display domain must be a hostname only");
+  }
+  return issues;
+}
+
+async function validateTurnstileForPage(page) {
+  if (!page) return;
+  const output = preview.querySelector("[data-turnstile-validation]");
+  const turnstile = pendingTurnstileConfig(page);
+  const issues = localTurnstileIssues(turnstile);
+  if (issues.length) {
+    if (output) output.textContent = `Invalid: ${issues.join("; ")}`;
+    statusText.textContent = "TURNSTILE CONFIGURATION INVALID";
+    return;
+  }
+  try {
+    const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/turnstile/validate`, {
+      method: "POST",
+      body: JSON.stringify({ turnstile })
+    });
+    if (output) output.textContent = result.validation?.note || "Cloudflare accepted the Turnstile configuration.";
+    statusText.textContent = "TURNSTILE CONFIGURATION VALID";
+  } catch (error) {
+    const remoteIssues = error.data?.validation?.issues || [error.message];
+    if (output) output.textContent = `Invalid: ${remoteIssues.join("; ")}`;
+    statusText.textContent = "TURNSTILE VALIDATION FAILED";
+  }
+}
+
 function saveSecurityConfig(page, tab = "security") {
   if (!page) {
     renderMissingPage();
@@ -5001,16 +5075,29 @@ function saveSecurityConfig(page, tab = "security") {
   const whitelistField = preview.querySelector('[data-security-field="whitelistIps"]');
   const blockedDevices = [...preview.querySelectorAll("[data-security-device]:checked")].map((field) => field.dataset.securityDevice);
   const proxyRuleFields = [...preview.querySelectorAll("[data-security-proxy]")];
+  const reputationFailureModeField = preview.querySelector("[data-security-failure-mode]");
   const current = page.securityConfig || {};
   const currentTurnstile = current.turnstile || {};
   const currentProxyRules = current.vpnProxyRules || {};
   const vpnProxyRules = proxyRuleFields.length
-    ? proxyRuleFields.reduce((rules, field) => ({ ...rules, [field.dataset.securityProxy]: field.checked }), {})
+    ? {
+        ...proxyRuleFields.reduce((rules, field) => ({ ...rules, [field.dataset.securityProxy]: field.checked }), {}),
+        reputationFailureMode: reputationFailureModeField?.value || currentProxyRules.reputationFailureMode || "challenge"
+      }
     : currentProxyRules;
   const ipRules = reconcileIpRules(
     bannedField ? splitRuleList(bannedField.value) : current.bannedIps || [],
     whitelistField ? splitRuleList(whitelistField.value) : current.whitelistIps || []
   );
+
+  const nextTurnstile = pendingTurnstileConfig(page);
+  const turnstileRequired = Boolean(captchaField?.checked)
+    || (vpnProxyRules.reputationFailureMode === "challenge" && Boolean(vpnProxyRules.blockVpnProxies || vpnProxyRules.blockTor || vpnProxyRules.blockHostingProviders));
+  const turnstileIssues = turnstileRequired ? localTurnstileIssues(nextTurnstile) : [];
+  if (turnstileIssues.length) {
+    statusText.textContent = `SAVE BLOCKED: ${turnstileIssues.join("; ")}`.toUpperCase();
+    return;
+  }
 
   applyPageSecurityConfig(page, {
     ...current,
@@ -5018,9 +5105,7 @@ function saveSecurityConfig(page, tab = "security") {
     captcha: captchaField ? captchaField.checked : Boolean(current.captcha),
     turnstile: {
       provider: "turnstile",
-      siteKey: turnstileSiteKeyField ? turnstileSiteKeyField.value.trim() : currentTurnstile.siteKey || current.turnstileSiteKey || "",
-      secretKey: turnstileSecretKeyField ? turnstileSecretKeyField.value.trim() : currentTurnstile.secretKey || current.turnstileSecretKey || "",
-      displayDomain: turnstileDisplayDomainField ? turnstileDisplayDomainField.value.trim() : currentTurnstile.displayDomain || ""
+      ...nextTurnstile
     },
     bannedIps: ipRules.bannedIps,
     whitelistIps: ipRules.whitelistIps,
@@ -6168,6 +6253,12 @@ preview.addEventListener("click", async (event) => {
   const saveSecurityButton = event.target.closest("[data-save-security]");
   if (saveSecurityButton) {
     saveSecurityConfig(getPageBySlug(saveSecurityButton.dataset.saveSecurity), saveSecurityButton.dataset.saveSecurityTab || "security");
+    return;
+  }
+
+  const validateTurnstileButton = event.target.closest("[data-validate-turnstile]");
+  if (validateTurnstileButton) {
+    await withButtonBusy(validateTurnstileButton, "Validating", () => validateTurnstileForPage(getPageBySlug(validateTurnstileButton.dataset.validateTurnstile)));
     return;
   }
 

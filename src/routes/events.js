@@ -6,6 +6,8 @@ import {
   savePageResult,
   saveTrafficEvent
 } from "../repositories/appRepository.js";
+import { securityDecision } from "../services/securityRules.js";
+import { verifyChallengeProof } from "../services/challengeProof.js";
 
 export const eventsRouter = Router();
 const pageExpiredMessage = "Page Expired Renew to continue using";
@@ -62,6 +64,7 @@ async function legacyRuntimeContext(req, res) {
     res.status(403).json({ error: "Relay secret rejected" });
     return null;
   }
+  req.deuceRelayTrusted = Boolean(expectedSecret);
 
   const host = normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(page);
@@ -83,6 +86,11 @@ eventsRouter.post("/page-traffic", async (req, res) => {
     if (payloadTooLarge(req, res, legacyPayloadLimits.traffic)) return;
     const context = await legacyRuntimeContext(req, res);
     if (!context) return;
+    const decision = await securityDecision(context.page, requestIp(req), req.headers["user-agent"], req);
+    if (!decision.allowed) {
+      res.status(403).json({ error: "ACCESS DENIED" });
+      return;
+    }
     const event = await saveTrafficEvent({
       ...req.body,
       userPageId: context.page.id,
@@ -100,13 +108,23 @@ eventsRouter.post("/page-results", async (req, res) => {
     if (payloadTooLarge(req, res, legacyPayloadLimits.result)) return;
     const context = await legacyRuntimeContext(req, res);
     if (!context) return;
+    const ip = requestIp(req);
+    const decision = await securityDecision(context.page, ip, req.headers["user-agent"], req);
+    if (!decision.allowed || (decision.challengeRequired && !verifyChallengeProof(req.body?.challengeProof, {
+      userPageId: context.page.id,
+      sessionId: req.body?.sessionId,
+      ip
+    }))) {
+      res.status(403).json({ error: "ACCESS DENIED" });
+      return;
+    }
     const result = await savePageResult({
       ...req.body,
       userPageId: context.page.id,
       pageId: context.page.slug,
       pageName: context.page.name,
       hostname: context.host || req.body?.hostname
-    }, requestIp(req), req.headers["user-agent"]);
+    }, ip, req.headers["user-agent"]);
     res.status(201).json({ result });
   } catch (error) {
     res.status(400).json({ error: error.message });

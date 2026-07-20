@@ -15,6 +15,7 @@ import {
 } from "../repositories/appRepository.js";
 import { requireAuth } from "../middleware/auth.js";
 import { installCloudflareWorker, verifyCloudflareZone } from "../services/cloudflareDeploy.js";
+import { validateTurnstileConfiguration } from "../services/turnstile.js";
 
 export const userPagesRouter = Router();
 
@@ -77,6 +78,27 @@ userPagesRouter.patch("/:id/security", (req, res) => {
       res.json({ securityConfig: userPage.securityConfig });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.post("/:id/turnstile/validate", async (req, res) => {
+  try {
+    const userPage = await findUserPage(req.params.id, req.user.id);
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    const pending = req.body?.turnstile || {};
+    const security = {
+      ...(userPage.securityConfig || {}),
+      turnstile: {
+        ...(userPage.securityConfig?.turnstile || {}),
+        siteKey: String(pending.siteKey ?? userPage.securityConfig?.turnstile?.siteKey ?? "").trim(),
+        secretKey: String(pending.secretKey ?? userPage.securityConfig?.turnstile?.secretKey ?? "").trim(),
+        displayDomain: String(pending.displayDomain ?? userPage.securityConfig?.turnstile?.displayDomain ?? "").trim()
+      }
+    };
+    const validation = await validateTurnstileConfiguration(security);
+    res.status(validation.valid ? 200 : 422).json({ validation });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 userPagesRouter.post("/:id/ban-ip", (req, res) => {

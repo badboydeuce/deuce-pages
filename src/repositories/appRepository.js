@@ -617,7 +617,8 @@ function buildUserPage(userId, pagePackage, period, price, data) {
       vpnProxyRules: {
         blockVpnProxies: false,
         blockTor: false,
-        blockHostingProviders: false
+        blockHostingProviders: false,
+        reputationFailureMode: "challenge"
       }
     },
     hostingConfig: {
@@ -714,7 +715,10 @@ function normalizeSecurityConfig(securityConfig = {}) {
     vpnProxyRules: {
       blockVpnProxies: Boolean(vpnProxyRules.blockVpnProxies),
       blockTor: Boolean(vpnProxyRules.blockTor),
-      blockHostingProviders: Boolean(vpnProxyRules.blockHostingProviders)
+      blockHostingProviders: Boolean(vpnProxyRules.blockHostingProviders),
+      reputationFailureMode: ["allow", "challenge", "block"].includes(String(vpnProxyRules.reputationFailureMode || "challenge").toLowerCase())
+        ? String(vpnProxyRules.reputationFailureMode || "challenge").toLowerCase()
+        : "challenge"
     }
   };
 }
