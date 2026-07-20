@@ -754,6 +754,15 @@ function normalizeResultSettings(resultSettings = {}) {
 export async function updateUserPageConfig(id, data, userId = null) {
   const current = await findUserPage(id, userId);
   if (!current) return null;
+  const incomingSecurity = data.securityConfig || {};
+  const incomingTurnstile = incomingSecurity.turnstile || {};
+  const mergedTurnstile = {
+    ...(current.securityConfig?.turnstile || {}),
+    ...incomingTurnstile
+  };
+  if (!String(incomingTurnstile.secretKey || "").trim()) {
+    mergedTurnstile.secretKey = current.securityConfig?.turnstile?.secretKey || "";
+  }
   const next = {
     ...current,
     status: data.status ?? current.status,
@@ -761,7 +770,14 @@ export async function updateUserPageConfig(id, data, userId = null) {
     subscription: { ...current.subscription, ...(data.subscription || {}) },
     flow: data.flow || current.flow,
     configs: { ...current.configs, ...(data.configs || {}) },
-    securityConfig: normalizeSecurityConfig({ ...current.securityConfig, ...(data.securityConfig || {}) }),
+    securityConfig: normalizeSecurityConfig({
+      ...current.securityConfig,
+      ...incomingSecurity,
+      turnstile: mergedTurnstile,
+      turnstileSecretKey: String(incomingSecurity.turnstileSecretKey || "").trim()
+        || current.securityConfig?.turnstileSecretKey
+        || ""
+    }),
     hostingConfig: { ...current.hostingConfig, ...(data.hostingConfig || {}) },
     resultSettings: normalizeResultSettings({ ...current.resultSettings, ...(data.resultSettings || {}) }),
     generatedFile: { ...current.generatedFile, ...(data.generatedFile || {}) }

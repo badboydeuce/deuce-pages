@@ -1321,7 +1321,8 @@ function generateRelaySecret() {
 function cloudflareWorkerScript(page) {
   const hosting = page.hostingConfig || {};
   const backendApi = (hosting.relayTarget || apiBase()).replace(/\/$/, "");
-  const relaySecret = hosting.relaySecret || "";
+  const relaySecret = "";
+  const relaySecretConfigured = Boolean(hosting.relaySecretConfigured || hosting.relaySecret);
   return `const DEUCE_API = "${backendApi}";
 const RELAY_SECRET = "${relaySecret}";
 
@@ -3961,7 +3962,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const isRenderStatic = hostingType === "render-static-site";
   const installPath = hosting.installPath || (isRenderStatic ? "root / public directory" : "public_html");
   const connectionType = hosting.connectionType || "cloudflare-worker";
-  const relaySecret = hosting.relaySecret || "";
+  const relaySecret = "";
+  const relaySecretConfigured = Boolean(hosting.relaySecretConfigured || hosting.relaySecret);
   const relayTarget = hosting.relayTarget || apiBase();
   const cloudflare = hosting.cloudflare || {};
   const managedInstalled = Boolean(cloudflare.managed && cloudflare.routePattern);
@@ -3969,7 +3971,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const hasDomain = Boolean(domain);
   const hasRenderOrigin = Boolean(serverIp);
   const hasRelayTarget = Boolean(relayTarget);
-  const hasRelaySecret = Boolean(relaySecret);
+  const hasRelaySecret = relaySecretConfigured;
   const hasWorkerRoute = managedInstalled || (hasDomain && hasRelaySecret);
   const hasVerified = Boolean(hosting.verified || hosting.relayVerified);
   const readyToDownload = hasDomain && hasRelaySecret && hasRelayTarget;
@@ -4093,11 +4095,11 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           <h3>Generate relay secret</h3>
           <p>This secret is stored in the Cloudflare Worker only. It lets your backend reject direct runtime traffic.</p>
           <div class="traffic-log">
-            <div><span>01</span><strong>Secret</strong><em>${relaySecret ? "Saved" : "Needed"}</em><small>${relaySecret ? "Ready for Worker install." : "Generate before copying Worker code."}</small></div>
+            <div><span>01</span><strong>Secret</strong><em>${hasRelaySecret ? "Saved" : "Needed"}</em><small>${hasRelaySecret ? "Ready for managed Worker install." : "Generate before installing the Worker route."}</small></div>
             <div><span>02</span><strong>Relay</strong><em>Hidden backend</em><small>Cloudflare forwards runtime calls privately.</small></div>
           </div>
           <div class="admin-actions">
-            <button type="button" data-generate-relay-secret="${routeKey}">${relaySecret ? "Regenerate secret" : "Generate secret"}</button>
+            <button type="button" data-generate-relay-secret="${routeKey}">${hasRelaySecret ? "Rotate secret" : "Generate secret"}</button>
           </div>
         </article>
 
@@ -4554,13 +4556,13 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       </label>
       <label>
         <span>Turnstile secret key</span>
-        <input type="password" data-security-field="turnstileSecretKey" value="${escapeHtml(turnstile.secretKey || security.turnstileSecretKey || "")}" placeholder="Keep this server-side">
+        <input type="password" data-security-field="turnstileSecretKey" value="" placeholder="${turnstile.secretConfigured || security.turnstileSecretConfigured ? "Secret configured — enter only to replace" : "Enter secret key"}">
       </label>
       <label>
         <span>Display Domain</span>
         <input type="text" data-security-field="turnstileDisplayDomain" value="${escapeHtml(turnstile.displayDomain || "")}" placeholder="online-cashpro.help">
       </label>
-      <p>The generated index.html receives only the site key. The secret key stays in your API config for verification.</p>
+      <p>${turnstile.secretConfigured || security.turnstileSecretConfigured ? "Secret is configured server-side. Enter a value only to replace it." : "No server-side secret is configured yet."}</p>
       <div class="manage-actions">
         <button type="button" data-validate-turnstile="${routeKey}">Validate configuration</button>
         <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save Turnstile</button>
@@ -5237,9 +5239,11 @@ document.querySelector("[data-logout]")?.addEventListener("click", handleLogout)
 
 function pendingTurnstileConfig(page) {
   const current = page?.securityConfig?.turnstile || {};
+  const enteredSecret = preview.querySelector('[data-security-field="turnstileSecretKey"]')?.value.trim() || "";
   return {
     siteKey: preview.querySelector('[data-security-field="turnstileSiteKey"]')?.value.trim() ?? current.siteKey ?? "",
-    secretKey: preview.querySelector('[data-security-field="turnstileSecretKey"]')?.value.trim() ?? current.secretKey ?? "",
+    ...(enteredSecret ? { secretKey: enteredSecret } : {}),
+    secretConfigured: Boolean(current.secretConfigured || enteredSecret),
     displayDomain: preview.querySelector('[data-security-field="turnstileDisplayDomain"]')?.value.trim() ?? current.displayDomain ?? ""
   };
 }
@@ -5415,7 +5419,7 @@ function collectHostingFields(page) {
     hostingType: selectedHostingType,
     installPath: field("installPath") || (selectedHostingType === "render-static-site" ? "root / public directory" : "public_html"),
     relayTarget: page.hostingConfig?.relayTarget || apiBase(),
-    relaySecret: page.hostingConfig?.relaySecret || ""
+    relaySecretConfigured: Boolean(page.hostingConfig?.relaySecretConfigured || page.hostingConfig?.relaySecret)
   };
 }
 
@@ -5428,7 +5432,7 @@ function saveHostingConfig(page, verify = false) {
   const hasRelay = hosting.connectionType === "cloudflare-worker";
   const isRenderStatic = hosting.hostingType === "render-static-site";
   const needsOrigin = !hasRelay && !isRenderStatic;
-  const hasMinimumConfig = Boolean(hosting.domain && (hasRelay ? hosting.relaySecret : needsOrigin ? hosting.serverIp : true));
+  const hasMinimumConfig = Boolean(hosting.domain && (hasRelay ? hosting.relaySecretConfigured : needsOrigin ? hosting.serverIp : true));
 
   page.domain = hosting.domain;
   page.hostingConfig = {
@@ -5458,24 +5462,13 @@ function saveHostingConfig(page, verify = false) {
     : "HOSTING SETTINGS SAVED";
 }
 
-function generateRelaySecretForPage(page) {
+async function generateRelaySecretForPage(page) {
   if (!page) return;
-  const hosting = collectHostingFields(page);
-  page.hostingConfig = {
-    ...(page.hostingConfig || {}),
-    ...hosting,
-    connectionType: hosting.connectionType || "cloudflare-worker",
-    relaySecret: generateRelaySecret(),
-    relayVerified: false,
-    workerRoute: hosting.domain ? `${hosting.domain}/api/*` : ""
-  };
-  page.generatedFile = {
-    ...(page.generatedFile || {}),
-    apiBase: page.hostingConfig.connectionType === "cloudflare-worker" ? "/api" : page.hostingConfig.relayTarget
-  };
-  saveFlowState(page);
-  renderGoLiveCenter(pageRouteKey(page));
-  statusText.textContent = "CLOUDFLARE RELAY SECRET GENERATED";
+  const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/relay-secret/rotate`, { method: "POST" });
+  const updated = normalizeUserPage(result.userPage);
+  ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+  renderGoLiveCenter(pageRouteKey(updated));
+  statusText.textContent = "CLOUDFLARE RELAY SECRET ROTATED SERVER-SIDE";
 }
 
 function collectCloudflareFields(page) {
@@ -5517,7 +5510,7 @@ async function installCloudflareForPage(page) {
     statusText.textContent = "DOMAIN, ACCOUNT ID, AND CLOUDFLARE TOKEN REQUIRED";
     return;
   }
-  if (!page.hostingConfig?.relaySecret) {
+  if (!page.hostingConfig?.relaySecretConfigured) {
     statusText.textContent = "GENERATE RELAY SECRET FIRST";
     return;
   }
@@ -6598,7 +6591,7 @@ preview.addEventListener("click", async (event) => {
 
   const relaySecretButton = event.target.closest("[data-generate-relay-secret]");
   if (relaySecretButton) {
-    generateRelaySecretForPage(getPageBySlug(relaySecretButton.dataset.generateRelaySecret));
+    await withButtonBusy(relaySecretButton, "Rotating", () => generateRelaySecretForPage(getPageBySlug(relaySecretButton.dataset.generateRelaySecret)));
     return;
   }
 

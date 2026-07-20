@@ -12,6 +12,7 @@ import { importsRouter } from "./routes/imports.js";
 import { previewRouter } from "./routes/preview.js";
 import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
+import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +43,11 @@ export function createApp() {
   app.use(corsMiddleware);
   app.use(express.json({ limit: "1mb" }));
   app.use(express.urlencoded({ extended: true }));
+  app.use((req, res, next) => {
+    const sendJson = res.json.bind(res);
+    res.json = (body) => sendJson(sanitizeResponseSecrets(body));
+    next();
+  });
 
   app.get("/api/health", (req, res) => {
     res.json({

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { randomBytes } from "node:crypto";
 import {
   deleteResult,
   findUserPage,
@@ -60,6 +61,26 @@ userPagesRouter.patch("/:id/config", (req, res) => {
       res.json({ userPage });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.post("/:id/relay-secret/rotate", async (req, res) => {
+  try {
+    const userPage = await findUserPage(req.params.id, req.user.id);
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    const relaySecret = `deuce_${randomBytes(32).toString("hex")}`;
+    const userPageUpdated = await updateUserPageConfig(userPage.id, {
+      hostingConfig: {
+        ...(userPage.hostingConfig || {}),
+        relaySecret,
+        relayVerified: false,
+        relayVerifiedAt: null,
+        workerRoute: userPage.domain ? `${userPage.domain}/api/*` : ""
+      }
+    }, req.user.id);
+    res.json({ userPage: userPageUpdated, relaySecretConfigured: true });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 userPagesRouter.post("/:id/renew", (req, res) => {
