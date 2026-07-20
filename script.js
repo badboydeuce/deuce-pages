@@ -471,7 +471,8 @@ async function requestApi(path, options = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data.error || `API request failed: ${response.status}`);
+    const issueDetail = Array.isArray(data.issues) && data.issues.length ? `: ${data.issues.join("; ")}` : "";
+    const error = new Error(`${data.error || `API request failed: ${response.status}`}${issueDetail}`);
     error.status = response.status;
     error.data = data;
     throw error;
@@ -636,7 +637,7 @@ function normalizePackage(pagePackage) {
     previewFile,
     thumbnailDataUrl: pagePackage.packageManifest?.thumbnailDataUrl || "",
     thumbnailPath: findPackageThumbnail(pagePackage),
-    previewReady: Boolean(pagePackage.packageManifest?.github && previewFile && pagePackage.previewToken)
+    previewReady: Boolean((pagePackage.packageManifest?.github || pagePackage.packageManifest?.r2) && previewFile && pagePackage.previewToken)
   };
 }
 
@@ -1491,11 +1492,16 @@ function collectAdminPackagePayload(page) {
 async function saveAdminPackage(page, { rerender = true } = {}) {
   if (!page) throw new Error("Package not found");
   const payload = collectAdminPackagePayload(page);
-  const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}`, {
+  await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}`, {
     method: "PATCH",
     body: JSON.stringify(payload)
   });
-  const updated = normalizePackage(result.package);
+  const verification = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}`);
+  const updated = normalizePackage(verification.package);
+  const pricesMatch = ["daily", "weekly", "biweekly", "monthly"].every((period) => Number(updated.billingPeriods?.[period]) === Number(payload.billingPeriods[period]));
+  if (updated.name !== payload.name || updated.version !== payload.version || !pricesMatch) {
+    throw new Error("The API responded, but PostgreSQL did not retain all package details and prices");
+  }
   adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
   marketPages = adminPackages.filter((item) => item.status === "published");
   if (rerender) {
@@ -6385,7 +6391,11 @@ preview.addEventListener("click", async (event) => {
 
   const saveAdminPackageButton = event.target.closest("[data-save-admin-package]");
   if (saveAdminPackageButton) {
-    await withButtonBusy(saveAdminPackageButton, "Saving", () => saveAdminPackage(getAdminPackage(saveAdminPackageButton.dataset.saveAdminPackage)));
+    try {
+      await withButtonBusy(saveAdminPackageButton, "Saving", () => saveAdminPackage(getAdminPackage(saveAdminPackageButton.dataset.saveAdminPackage)));
+    } catch (error) {
+      statusText.textContent = `PACKAGE SAVE FAILED: ${error.message}`.toUpperCase();
+    }
     return;
   }
 
@@ -6398,7 +6408,11 @@ preview.addEventListener("click", async (event) => {
 
   const publishAdminPackageButton = event.target.closest("[data-admin-package-publish]");
   if (publishAdminPackageButton) {
-    await withButtonBusy(publishAdminPackageButton, "Publishing", () => publishAdminPackage(getAdminPackage(publishAdminPackageButton.dataset.adminPackagePublish)));
+    try {
+      await withButtonBusy(publishAdminPackageButton, "Publishing", () => publishAdminPackage(getAdminPackage(publishAdminPackageButton.dataset.adminPackagePublish)));
+    } catch (error) {
+      statusText.textContent = `PACKAGE PUBLISH FAILED: ${error.message}`.toUpperCase();
+    }
     return;
   }
 
