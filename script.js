@@ -4023,11 +4023,6 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       detail: readyToDownload && runtimeSourceReady ? "Download one launcher index.html for the host root." : "Complete domain, relay, and runtime checks first."
     }
   ];
-  const workerScript = cloudflareWorkerScript({
-    ...page,
-    hostingConfig: { ...hosting, domain, relaySecret, relayTarget, connectionType }
-  });
-
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
@@ -4122,14 +4117,6 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             <button type="button" data-install-cloudflare="${routeKey}" ${hasDomain && hasRelaySecret ? "" : "disabled"}>Install Worker route</button>
             <button type="button" data-verify-cloudflare="${routeKey}" ${hasDomain ? "" : "disabled"}>Verify zone</button>
           </div>
-          <details class="advanced-worker">
-            <summary>Advanced manual Worker</summary>
-            <p>Manual install is only for debugging. Managed install keeps normal users away from Worker code.</p>
-            <textarea class="worker-code-box" readonly data-worker-code="${routeKey}">${escapeHtml(workerScript)}</textarea>
-            <div class="admin-actions">
-              <button type="button" data-copy-worker="${routeKey}" ${relaySecret ? "" : "disabled"}>Copy Worker script</button>
-            </div>
-          </details>
         </article>
 
         <article class="security-panel go-live-step-card ${hasVerified ? "is-complete" : hasWorkerRoute ? "is-active" : ""}">
@@ -6612,18 +6599,6 @@ preview.addEventListener("click", async (event) => {
   const relaySecretButton = event.target.closest("[data-generate-relay-secret]");
   if (relaySecretButton) {
     generateRelaySecretForPage(getPageBySlug(relaySecretButton.dataset.generateRelaySecret));
-    return;
-  }
-
-  const copyWorkerButton = event.target.closest("[data-copy-worker]");
-  if (copyWorkerButton) {
-    const workerCode = preview.querySelector(`[data-worker-code="${copyWorkerButton.dataset.copyWorker}"]`);
-    if (!workerCode) {
-      statusText.textContent = "WORKER SCRIPT NOT FOUND";
-      return;
-    }
-    await withButtonBusy(copyWorkerButton, "Copying", () => navigator.clipboard.writeText(workerCode.value));
-    statusText.textContent = "CLOUDFLARE WORKER SCRIPT COPIED";
     return;
   }
 
