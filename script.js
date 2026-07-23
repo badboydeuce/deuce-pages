@@ -1454,6 +1454,21 @@ function runtimeScreenTargetUrl(page, file) {
   return `/api/runtime/source?${params.toString()}`;
 }
 
+function refreshImportedScreenOrder() {
+  const rows = [...preview.querySelectorAll("[data-package-screen-row]")];
+  rows.forEach((row, index) => {
+    const order = row.querySelector("strong");
+    const position = row.querySelector("em");
+    const role = row.querySelector("[data-package-screen-role]");
+    if (order) order.innerHTML = `&#8942;&#8942; ${String(index + 1).padStart(2, "0")}`;
+    if (position) position.textContent = index === 0 ? "Entry" : index === rows.length - 1 ? "Final" : "Screen";
+    if (role && index === 0) role.value = "entry";
+    else if (role?.value === "entry") role.value = "other";
+    row.querySelector('[data-package-screen-move="up"]')?.toggleAttribute("disabled", index === 0);
+    row.querySelector('[data-package-screen-move="down"]')?.toggleAttribute("disabled", index === rows.length - 1);
+  });
+}
+
 function collectAdminPackagePayload(page) {
   const value = (name, fallback = "") => preview.querySelector(`[data-package-field="${name}"]`)?.value.trim() ?? fallback;
   const billingPeriods = {};
@@ -1484,6 +1499,7 @@ function collectAdminPackagePayload(page) {
     sourceType: value("sourceType", page.sourceType || "upload"),
     repoUrl: value("repoUrl", page.repoUrl || ""),
     billingPeriods,
+    screens: mappedScreens.map((screen) => screen.name || String(screen.file || "").split("/").pop().replace(/\.html?$/i, "").replace(/[-_]+/g, " ")),
     designTokens,
     packageManifest
   };
@@ -3412,13 +3428,14 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
           <h3>Imported screens</h3>
           <div class="file-map-list">
             ${editorScreens.map((screen, index) => `
-              <div>
-                <strong>${String(index + 1).padStart(2, "0")}</strong>
-                <span>${screen}</span>
+              <div draggable="true" data-package-screen-row="${escapeHtml(screen)}">
+                <strong title="Drag to reorder">&#8942;&#8942; ${String(index + 1).padStart(2, "0")}</strong>
+                <span>${escapeHtml(screen)}</span>
                 <em>${index === 0 ? "Entry" : index === editorScreens.length - 1 ? "Final" : "Screen"}</em>
                 <select data-package-screen-role="${escapeHtml(screen)}">
                   ${["entry", "form", "verification", "success", "other"].map((role) => `<option value="${role}" ${String(page.packageManifest?.screens?.find((item) => (item.file || item) === screen)?.role || "other") === role ? "selected" : ""}>${role}</option>`).join("")}
                 </select>
+                <span class="screen-order-actions"><button type="button" data-package-screen-move="up" aria-label="Move ${escapeHtml(screen)} up">&#8593;</button><button type="button" data-package-screen-move="down" aria-label="Move ${escapeHtml(screen)} down">&#8595;</button></span>
               </div>
             `).join("")}
           </div>
@@ -3471,6 +3488,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
     </section>
   `;
 
+  refreshImportedScreenOrder();
   statusText.textContent = `${page.name.toUpperCase()} PACKAGE EDITOR OPEN`;
   topbarTitle.textContent = `${page.name} Editor`;
 }
@@ -6389,6 +6407,19 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const screenMoveButton = event.target.closest("[data-package-screen-move]");
+  if (screenMoveButton) {
+    const row = screenMoveButton.closest("[data-package-screen-row]");
+    const sibling = screenMoveButton.dataset.packageScreenMove === "up" ? row?.previousElementSibling : row?.nextElementSibling;
+    if (row && sibling) {
+      if (screenMoveButton.dataset.packageScreenMove === "up") row.parentElement.insertBefore(row, sibling);
+      else row.parentElement.insertBefore(sibling, row);
+      refreshImportedScreenOrder();
+      statusText.textContent = "SCREEN ORDER CHANGED / SAVE DRAFT TO PERSIST";
+    }
+    return;
+  }
+
   const saveAdminPackageButton = event.target.closest("[data-save-admin-package]");
   if (saveAdminPackageButton) {
     try {
@@ -6796,4 +6827,35 @@ preview.addEventListener("click", async (event) => {
     }
   }
 
+});
+preview.addEventListener("dragstart", (event) => {
+  const row = event.target.closest?.("[data-package-screen-row]");
+  if (!row) return;
+  draggedScreenName = row.dataset.packageScreenRow;
+  row.classList.add("dragging");
+  event.dataTransfer?.setData("text/plain", draggedScreenName);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+});
+
+preview.addEventListener("dragover", (event) => {
+  const target = event.target.closest?.("[data-package-screen-row]");
+  if (!target || !draggedScreenName) return;
+  const dragged = [...preview.querySelectorAll("[data-package-screen-row]")].find((row) => row.dataset.packageScreenRow === draggedScreenName);
+  if (!dragged || dragged === target) return;
+  event.preventDefault();
+  const bounds = target.getBoundingClientRect();
+  target.parentElement.insertBefore(dragged, event.clientY < bounds.top + bounds.height / 2 ? target : target.nextElementSibling);
+  refreshImportedScreenOrder();
+});
+
+preview.addEventListener("drop", (event) => {
+  if (!draggedScreenName) return;
+  event.preventDefault();
+  statusText.textContent = "SCREEN ORDER CHANGED / SAVE DRAFT TO PERSIST";
+});
+
+preview.addEventListener("dragend", () => {
+  preview.querySelectorAll("[data-package-screen-row].dragging").forEach((row) => row.classList.remove("dragging"));
+  draggedScreenName = null;
+  refreshImportedScreenOrder();
 });

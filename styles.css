@@ -3335,7 +3335,7 @@ code,
 
 .file-map-list div {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto auto;
+  grid-template-columns: 62px minmax(0, 1fr) auto auto auto;
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -3348,6 +3348,24 @@ code,
   font: 900 0.82rem var(--mono);
 }
 
+.file-map-list [data-package-screen-row] {
+  cursor: grab;
+}
+
+.file-map-list [data-package-screen-row].dragging {
+  opacity: 0.62;
+  outline: 2px solid var(--accent);
+}
+
+.file-map-list .screen-order-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.file-map-list button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
 .file-map-list span,
 .file-map-list em {
   min-width: 0;

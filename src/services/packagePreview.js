@@ -43,55 +43,29 @@ export function previewFileForPackage(pagePackage) {
 }
 
 export function previewScreensForPackage(pagePackage) {
-  const preferredOrder = [
-    "index.html",
-    "login.html",
-    "login2.html",
-    "otp.html",
-    "otp2.html",
-    "email.html",
-    "personal.html",
-    "c.html",
-    "card.html",
-    "upload.html",
-    "thnks.html",
-    "thanks.html",
-    "thank-you.html"
-  ];
   const seen = new Set();
-  const screens = [
+  return [
     ...(pagePackage.packageManifest?.screens || []),
     ...(pagePackage.screens || [])
   ]
+    .map((screen) => typeof screen === "string" ? { file: screen } : screen)
     .filter((screen) => screen?.file && classifyFile(screen.file) === "html")
     .filter((screen) => {
-      const key = String(screen.file).replace(/^\/+/, "");
+      const key = String(screen.file).replace(/^\/+/, "").toLowerCase();
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     })
-    .map((screen, index) => {
-      const file = String(screen.file || "").replace(/^\/+/, "");
-      const fileName = file.split("/").pop().toLowerCase();
-      const preferredIndex = preferredOrder.indexOf(fileName);
+    .map((screen) => {
+      const file = String(screen.file).replace(/^\/+/, "");
+      const fileName = file.split("/").pop();
       return {
         file,
         name: screen.name || fileName.replace(/\.html?$/i, "").replace(/[-_]+/g, " "),
-        role: screen.role || (fileName === "index.html" ? "entry" : "screen"),
-        index,
-        preferredIndex: preferredIndex === -1 ? preferredOrder.length + index : preferredIndex
+        role: screen.role || (fileName.toLowerCase() === "index.html" ? "entry" : "screen")
       };
-    })
-    .sort((a, b) => {
-      if (a.role === "entry" && b.role !== "entry") return -1;
-      if (b.role === "entry" && a.role !== "entry") return 1;
-      if (a.preferredIndex !== b.preferredIndex) return a.preferredIndex - b.preferredIndex;
-      return a.index - b.index;
     });
-
-  return screens.map(({ preferredIndex, index, ...screen }) => screen);
 }
-
 export function previewSourceForPackage(pagePackage, fileOverride = "") {
   const r2 = pagePackage.packageManifest?.r2;
   const github = pagePackage.packageManifest?.github;
