@@ -339,6 +339,16 @@ function playNewResultTone() {
   }
 }
 
+function notificationPageKey(notification = {}) {
+  return String(
+    notification.userPageId
+    || notification.metadata?.userPageId
+    || notification.metadata?.pageId
+    || notification.metadata?.pageSlug
+    || ""
+  );
+}
+
 function notificationTimeLabel(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Just now";
@@ -353,7 +363,7 @@ function renderNotificationCenter() {
   notificationToggle?.setAttribute("aria-label", `Open notifications${notificationUnreadCount ? `, ${notificationUnreadCount} unread` : ""}`);
   notificationList.innerHTML = notificationItems.length
     ? notificationItems.map((notification) => `
-        <button type="button" class="notification-item ${notification.readAt ? "" : "is-unread"}" data-notification-open="${escapeHtml(notification.id)}" data-notification-page="${escapeHtml(notification.metadata?.pageSlug || notification.userPageId || "")}">
+        <button type="button" class="notification-item ${notification.readAt ? "" : "is-unread"}" data-notification-open="${escapeHtml(notification.id)}" data-notification-page="${escapeHtml(notificationPageKey(notification))}">
           <strong>${escapeHtml(notification.title || "New result")}</strong>
           <span>${escapeHtml(notification.message || "A new result was submitted.")}</span>
           <small>${escapeHtml(notificationTimeLabel(notification.createdAt))}</small>
@@ -6237,7 +6247,27 @@ notificationCenter?.addEventListener("click", async (event) => {
   }
   if (notificationPanel) notificationPanel.hidden = true;
   notificationToggle?.setAttribute("aria-expanded", "false");
-  if (item.dataset.notificationPage) window.location.hash = `#results-${item.dataset.notificationPage}`;
+  const pageKey = notificationPageKey(notification || { userPageId: item.dataset.notificationPage });
+  if (!pageKey) {
+    statusText.textContent = "RESULT NOTIFICATION HAS NO PAGE RECORD";
+    return;
+  }
+  let resultPage = getPageBySlug(pageKey);
+  if (!resultPage && notification?.userPageId) {
+    try {
+      const response = await requestApi(`/api/user-pages/${encodeURIComponent(notification.userPageId)}`);
+      resultPage = normalizeUserPage(response.userPage);
+      ownedPages = [...ownedPages.filter((page) => page.id !== resultPage.id), resultPage];
+    } catch (error) {
+      statusText.textContent = `RESULT PAGE LOAD FAILED: ${error.message}`.toUpperCase();
+      return;
+    }
+  }
+  if (!resultPage) {
+    statusText.textContent = "RESULT PAGE RECORD NOT FOUND";
+    return;
+  }
+  window.location.hash = `#results-${pageRouteKey(resultPage)}`;
 });
 
 window.addEventListener("hashchange", () => {

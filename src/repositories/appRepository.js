@@ -1723,9 +1723,10 @@ function notificationForResult(result, userPage) {
     userPageId: userPage.id,
     resultId: result.id,
     eventType: "result.created",
-    title: `New result — ${userPage.name || result.pageName || "Page"}`,
+    title: `New result - ${userPage.name || result.pageName || "Page"}`,
     message: `${result.screen || "Page"} submitted a new result.`,
     metadata: {
+      userPageId: userPage.id,
       pageSlug: userPage.slug || "",
       screen: result.screen || "",
       sessionId: result.sessionId || "",
