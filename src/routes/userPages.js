@@ -279,9 +279,9 @@ userPagesRouter.post("/:id/cloudflare/install", async (req, res) => {
         workerRoute: deployment.routePattern,
         relayVerified: true,
         relayVerifiedAt: deployment.installedAt,
-        verified: true,
-        verifiedAt: deployment.installedAt,
-        liveStatus: "Cloudflare Worker installed",
+        verified: false,
+        verifiedAt: null,
+        liveStatus: "Worker installed / deploy index.html",
         cloudflare: {
           ...(userPage.hostingConfig?.cloudflare || {}),
           accountId: deployment.accountId,

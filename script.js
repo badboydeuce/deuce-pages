@@ -1641,9 +1641,10 @@ function sessionPageTargets(page) {
 }
 
 function shouldUsePackageRuntime(page, pagePackage) {
+  const sourceReady = (pagePackage?.sourceType === "github" && pagePackage?.packageManifest?.github)
+    || (pagePackage?.sourceType === "r2" && pagePackage?.packageManifest?.r2);
   return Boolean(
-    pagePackage?.sourceType === "github"
-    && pagePackage?.packageManifest?.github
+    sourceReady
     && packageEntryFile(pagePackage)
     && (page.hostingConfig?.connectionType || "cloudflare-worker") === "cloudflare-worker"
   );
@@ -3992,14 +3993,16 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const relayTarget = hosting.relayTarget || apiBase();
   const cloudflare = hosting.cloudflare || {};
   const managedInstalled = Boolean(cloudflare.managed && cloudflare.routePattern);
+  const zoneVerified = Boolean(cloudflare.zoneId && cloudflare.verifiedAt);
   const workerRoute = domain ? `${domain}/api/*` : "clientdomain.com/api/*";
   const hasDomain = Boolean(domain);
   const hasRenderOrigin = Boolean(serverIp);
   const hasRelayTarget = Boolean(relayTarget);
   const hasRelaySecret = relaySecretConfigured;
-  const hasWorkerRoute = managedInstalled || (hasDomain && hasRelaySecret);
-  const hasVerified = Boolean(hosting.verified || hosting.relayVerified);
-  const readyToDownload = hasDomain && hasRelaySecret && hasRelayTarget;
+  const usesManagedWorker = connectionType === "cloudflare-worker";
+  const hasWorkerRoute = !usesManagedWorker || managedInstalled;
+  const hasVerified = Boolean(hosting.verified);
+  const readyToDownload = hasDomain && hasRelayTarget && (usesManagedWorker ? hasRelaySecret && managedInstalled : true);
   const displayDomain = domain || "clientdomain.com";
   const pagePackage = packageForUserPage(page);
   const runtimeEntryFile = packageEntryFile(pagePackage);
@@ -4015,19 +4018,14 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       detail: hasDomain ? `${displayDomain} is the only allowed hostname.` : "Set the user's live domain in Config."
     },
     {
-      label: "Raw host URL",
-      done: hasRenderOrigin,
-      detail: hasRenderOrigin ? "Origin host is saved for the uploaded index.html." : "Save the static host URL where index.html will live."
-    },
-    {
       label: "Relay secret",
-      done: hasRelaySecret,
-      detail: hasRelaySecret ? "Runtime API calls can be relayed privately." : "Generate the relay secret before Worker install."
+      done: !usesManagedWorker || hasRelaySecret,
+      detail: !usesManagedWorker ? "Not required for this connection type." : hasRelaySecret ? "Runtime API calls can be relayed privately." : "Generate the relay secret before Worker install."
     },
     {
-      label: "Worker route",
+      label: "Worker installed",
       done: hasWorkerRoute,
-      detail: hasWorkerRoute ? `${workerRoute} is ready or derivable from the saved domain.` : "Install or verify the Cloudflare Worker route."
+      detail: hasWorkerRoute ? `${workerRoute} is installed.` : "Install the managed Cloudflare Worker route."
     },
     {
       label: "Runtime pages",
@@ -4045,9 +4043,19 @@ function renderGoLiveCenter(pageSlug = "page-a") {
       detail: resultsEndpointReady ? "Submissions and page events can sync to this user page." : "Runtime API target is not ready yet."
     },
     {
-      label: "Download ready",
-      done: readyToDownload && runtimeSourceReady,
-      detail: readyToDownload && runtimeSourceReady ? "Download one launcher index.html for the host root." : "Complete domain, relay, and runtime checks first."
+      label: "Index downloaded",
+      done: Boolean(page.generatedFile?.lastGeneratedAt),
+      detail: page.generatedFile?.lastGeneratedAt ? "The generated launcher is ready to deploy." : readyToDownload && runtimeSourceReady ? "Download index.html before configuring the static host URL." : "Complete domain, relay, Worker, and runtime checks first."
+    },
+    {
+      label: "Raw host URL",
+      done: hasRenderOrigin,
+      detail: hasRenderOrigin ? "The static host deployment URL is saved." : "Deploy index.html, then add the URL supplied by the static host."
+    },
+    {
+      label: "Final connection",
+      done: hasVerified,
+      detail: hasVerified ? `https://${displayDomain}/ is marked connected.` : "Connect the custom domain, keep Cloudflare proxied, then mark the connection verified."
     }
   ];
   preview.innerHTML = `
@@ -4071,11 +4079,11 @@ function renderGoLiveCenter(pageSlug = "page-a") {
 
       <div class="wizard-progress go-live-progress">
         <span class="${setupStepClass(hasDomain, true)}">1 Domain</span>
-        <span class="${setupStepClass(hasRenderOrigin, hasDomain && !hasRenderOrigin)}">2 Host</span>
-        <span class="${setupStepClass(hasRelaySecret, hasDomain && !hasRelaySecret)}">3 Secret</span>
-        <span class="${setupStepClass(hasWorkerRoute, hasRelaySecret && !hasWorkerRoute)}">4 Worker</span>
-        <span class="${setupStepClass(hasVerified, hasWorkerRoute && !hasVerified)}">5 Verify</span>
-        <span class="${setupStepClass(page.generatedFile?.lastGeneratedAt, readyToDownload)}">6 Download</span>
+        <span class="${setupStepClass(hasRelaySecret, hasDomain && !hasRelaySecret)}">2 Secret</span>
+        <span class="${setupStepClass(hasWorkerRoute, hasRelaySecret && !hasWorkerRoute)}">3 Worker</span>
+        <span class="${setupStepClass(page.generatedFile?.lastGeneratedAt, readyToDownload)}">4 Download</span>
+        <span class="${setupStepClass(hasRenderOrigin, page.generatedFile?.lastGeneratedAt && !hasRenderOrigin)}">5 Host</span>
+        <span class="${setupStepClass(hasVerified, hasRenderOrigin && !hasVerified)}">6 Verify</span>
       </div>
 
       ${goLiveChecklistMarkup(goLiveChecks)}
@@ -4105,18 +4113,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           </div>
         </article>
 
-        <article class="security-panel package-form go-live-step-card ${hasRenderOrigin ? "is-complete" : hasDomain ? "is-active" : ""}">
-          <small>step 2</small>
-          <h3>Add raw host URL</h3>
-          <p>Enter the raw URL from the static host where the downloaded index.html is uploaded. The live domain remains ${displayDomain}.</p>
-          <label><span>Raw host URL</span><input type="url" data-hosting-field="serverIp" value="${serverIp}" placeholder="https://your-static-host.example.com"></label>
-          <div class="admin-actions">
-            <button type="button" data-save-hosting="${routeKey}">Save host URL</button>
-          </div>
-        </article>
-
         <article class="security-panel go-live-step-card ${hasRelaySecret ? "is-complete" : hasDomain ? "is-active" : ""}">
-          <small>step 3</small>
+          <small>step 2</small>
           <h3>Generate relay secret</h3>
           <p>This secret is stored in the Cloudflare Worker only. It lets your backend reject direct runtime traffic.</p>
           <div class="traffic-log">
@@ -4128,8 +4126,8 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           </div>
         </article>
 
-        <article class="security-panel package-form go-live-step-card ${hasWorkerRoute ? "is-complete" : hasRelaySecret ? "is-active" : ""}">
-          <small>step 4</small>
+        <article class="security-panel package-form go-live-step-card ${managedInstalled ? "is-complete" : hasRelaySecret ? "is-active" : ""}">
+          <small>step 3</small>
           <h3>Install Cloudflare relay</h3>
           <p>Paste a limited Cloudflare token once. The app installs the Worker and route for <strong>${workerRoute}</strong>, then stores only deployment status.</p>
           <label><span>Cloudflare account ID</span><input type="text" data-cloudflare-field="accountId" value="${escapeHtml(cloudflare.accountId || "")}" placeholder="Account ID from Cloudflare dashboard"></label>
@@ -4137,7 +4135,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           <label><span>Worker script name</span><input type="text" data-cloudflare-field="scriptName" value="${escapeHtml(cloudflare.scriptName || `deuce-${displayDomain.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`)}"></label>
           <div class="admin-code-sample">
             <code>Managed route: ${escapeHtml(cloudflare.routePattern || workerRoute)}</code>
-            <code>Status: ${managedInstalled ? "Installed by app" : "Waiting for managed install"}</code>
+            <code data-cloudflare-install-status>Status: ${managedInstalled ? "Installed by app" : zoneVerified ? "Zone verified - ready to install" : "Waiting for zone verification"}</code>
             <code>Browser calls: https://${displayDomain}/api/*</code>
           </div>
           <div class="admin-actions">
@@ -4146,8 +4144,40 @@ function renderGoLiveCenter(pageSlug = "page-a") {
           </div>
         </article>
 
-        <article class="security-panel go-live-step-card ${hasVerified ? "is-complete" : hasWorkerRoute ? "is-active" : ""}">
+        <article class="security-panel go-live-step-card ${page.generatedFile?.lastGeneratedAt ? "is-complete" : readyToDownload ? "is-active" : ""}">
+          <small>step 4</small>
+          <h3>Download final index.html</h3>
+          <p>Download after the live domain, relay secret, and managed Worker route are set. The raw host URL is not required yet. Upload only this file as index.html on the static host; the full page package stays controlled by DEUCE runtime.</p>
+          <div class="admin-rule-list">
+            ${isRenderStatic ? `
+              <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
+              <div><strong>2</strong><span>Upload or commit it to the static host root/publish folder.</span></div>
+              <div><strong>3</strong><span>Connect ${domain || "clientdomain.com"} as the custom domain.</span></div>
+              <div><strong>4</strong><span>Visitors must use ${domain || "clientdomain.com"} only. The raw host URL is treated as unauthorized.</span></div>
+            ` : `
+              <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
+              <div><strong>2</strong><span>Go to ${installPath || "public_html"} or the domain document root.</span></div>
+              <div><strong>3</strong><span>Upload the generated index.html. Visitors should open https://${domain || "clientdomain.com"}/.</span></div>
+              <div><strong>4</strong><span>Add DirectoryIndex and /index.html redirect rules if the host exposes the filename.</span></div>
+            `}
+          </div>
+          <div class="admin-actions">
+            <button type="button" data-download-index="${routeKey}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
+          </div>
+        </article>
+
+        <article class="security-panel package-form go-live-step-card ${hasRenderOrigin ? "is-complete" : page.generatedFile?.lastGeneratedAt ? "is-active" : ""}">
           <small>step 5</small>
+          <h3>Add raw host URL</h3>
+          <p>After deploying the downloaded index.html, enter the temporary/default URL supplied by Netlify, DigitalOcean, or your static host. The live domain remains ${displayDomain}.</p>
+          <label><span>Raw host URL</span><input type="url" data-hosting-field="serverIp" value="${serverIp}" placeholder="https://your-static-host.example.com"></label>
+          <div class="admin-actions">
+            <button type="button" data-save-hosting="${routeKey}">Save host URL</button>
+          </div>
+        </article>
+
+        <article class="security-panel go-live-step-card ${hasVerified ? "is-complete" : hasRenderOrigin && page.generatedFile?.lastGeneratedAt && hasWorkerRoute ? "is-active" : ""}">
+          <small>step 6</small>
           <h3>Connect custom domain</h3>
           <p>Point ${displayDomain} to the static host. The raw host URL stays as the origin and should not be shared as the live link.</p>
           <div class="admin-rule-list">
@@ -4164,29 +4194,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             `}
           </div>
           <div class="admin-actions">
-            <button type="button" data-verify-hosting="${routeKey}">Mark connection verified</button>
-          </div>
-        </article>
-
-        <article class="security-panel go-live-step-card ${page.generatedFile?.lastGeneratedAt ? "is-complete" : readyToDownload ? "is-active" : ""}">
-          <small>step 6</small>
-          <h3>Download final index.html</h3>
-          <p>Download after the domain, relay secret, and Worker route are set. Upload only this file as index.html on the static host; the full page package stays controlled by DEUCE runtime.</p>
-          <div class="admin-rule-list">
-            ${isRenderStatic ? `
-              <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
-              <div><strong>2</strong><span>Upload or commit it to the static host root/publish folder.</span></div>
-              <div><strong>3</strong><span>Connect ${domain || "clientdomain.com"} as the custom domain.</span></div>
-              <div><strong>4</strong><span>Visitors must use ${domain || "clientdomain.com"} only. The raw host URL is treated as unauthorized.</span></div>
-            ` : `
-              <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
-              <div><strong>2</strong><span>Go to ${installPath || "public_html"} or the domain document root.</span></div>
-              <div><strong>3</strong><span>Upload the generated index.html. Visitors should open https://${domain || "clientdomain.com"}/.</span></div>
-              <div><strong>4</strong><span>Add DirectoryIndex and /index.html redirect rules if the host exposes the filename.</span></div>
-            `}
-          </div>
-          <div class="admin-actions">
-            <button type="button" data-download-index="${routeKey}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
+            <button type="button" data-verify-hosting="${routeKey}" ${hasDomain && hasRenderOrigin && page.generatedFile?.lastGeneratedAt && hasWorkerRoute ? "" : "disabled"}>Mark connection verified</button>
           </div>
         </article>
       </div>
@@ -5457,7 +5465,9 @@ function saveHostingConfig(page, verify = false) {
   const hasRelay = hosting.connectionType === "cloudflare-worker";
   const isRenderStatic = hosting.hostingType === "render-static-site";
   const needsOrigin = !hasRelay && !isRenderStatic;
-  const hasMinimumConfig = Boolean(hosting.domain && (hasRelay ? hosting.relaySecretConfigured : needsOrigin ? hosting.serverIp : true));
+  const workerInstalled = !hasRelay || Boolean(page.hostingConfig?.cloudflare?.managed && page.hostingConfig?.cloudflare?.routePattern);
+  const generatedReady = Boolean(page.generatedFile?.lastGeneratedAt);
+  const hasMinimumConfig = Boolean(hosting.domain && hosting.serverIp && generatedReady && workerInstalled && (hasRelay ? hosting.relaySecretConfigured : needsOrigin ? hosting.serverIp : true));
 
   page.domain = hosting.domain;
   page.hostingConfig = {
@@ -5465,8 +5475,8 @@ function saveHostingConfig(page, verify = false) {
     ...hosting,
     verified: verify ? hasMinimumConfig : Boolean(page.hostingConfig?.verified && hasMinimumConfig),
     verifiedAt: verify && hasMinimumConfig ? new Date().toISOString() : page.hostingConfig?.verifiedAt || null,
-    relayVerified: verify && hasRelay && hasMinimumConfig ? true : Boolean(page.hostingConfig?.relayVerified && hasMinimumConfig),
-    relayVerifiedAt: verify && hasRelay && hasMinimumConfig ? new Date().toISOString() : page.hostingConfig?.relayVerifiedAt || null,
+    relayVerified: Boolean(page.hostingConfig?.relayVerified && workerInstalled),
+    relayVerifiedAt: page.hostingConfig?.relayVerifiedAt || null,
     workerRoute: hosting.domain ? `${hosting.domain}/api/*` : "",
     liveStatus: verify && hasMinimumConfig ? "Live" : hasMinimumConfig ? "Ready to verify" : "Setup required"
   };
@@ -5483,7 +5493,7 @@ function saveHostingConfig(page, verify = false) {
   saveFlowState(page);
   renderGoLiveCenter(pageRouteKey(page));
   statusText.textContent = verify
-    ? hasMinimumConfig ? "HOSTING CONNECTION VERIFIED" : "DOMAIN AND SERVER IP REQUIRED"
+    ? hasMinimumConfig ? "FINAL DOMAIN CONNECTION VERIFIED" : "INSTALL WORKER, DOWNLOAD INDEX.HTML, DEPLOY IT, AND ADD RAW HOST URL"
     : "HOSTING SETTINGS SAVED";
 }
 
@@ -5520,9 +5530,10 @@ async function verifyCloudflareForPage(page) {
       body: JSON.stringify(payload)
     });
     const updated = normalizeUserPage(result.userPage);
-    ownedPages = ownedPages.map((item) => item.id === updated.id ? updated : item);
-    renderGoLiveCenter(pageRouteKey(updated));
-    statusText.textContent = "CLOUDFLARE ZONE VERIFIED";
+    ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+    const installStatus = preview.querySelector("[data-cloudflare-install-status]");
+    if (installStatus) installStatus.textContent = "Status: Zone verified - click Install Worker route";
+    statusText.textContent = "CLOUDFLARE ZONE VERIFIED / TOKEN KEPT FOR INSTALL";
   } catch (error) {
     statusText.textContent = `CLOUDFLARE VERIFY FAILED: ${error.message}`.toUpperCase();
   }

@@ -14,9 +14,10 @@ export function sanitizeResponseSecrets(value) {
   for (const [key, item] of Object.entries(value)) {
     const flag = secretKeys.get(String(key).toLowerCase());
     if (flag) {
-      clean[flag] = Boolean(item);
+      clean[flag] = Boolean(item) || clean[flag] === true;
       continue;
     }
+    if (/configured$/i.test(key) && clean[key] === true && item === false) continue;
     clean[key] = sanitizeResponseSecrets(item);
   }
   return clean;
