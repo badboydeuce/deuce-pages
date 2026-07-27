@@ -141,6 +141,9 @@ function toResult(row) {
     path: row.path,
     ip: row.ip,
     userAgent: row.user_agent,
+    status: row.status || "new",
+    reviewedAt: row.reviewed_at || null,
+    reviewedBy: row.reviewed_by || "",
     createdAt: row.created_at
   };
 }
@@ -1530,6 +1533,108 @@ export async function deleteResult(userPageId, resultId, userId = null) {
 
   const result = await query("DELETE FROM page_results WHERE id = $1 AND user_page_id = $2", [resultId, userPage.id]);
   return result.rowCount;
+}
+
+const bulkResultActions = new Set(["review", "flag", "resolve", "ban", "whitelist", "delete"]);
+
+function normalizeBulkResultIds(resultIds = []) {
+  if (!Array.isArray(resultIds)) return [];
+  return [...new Set(resultIds.map((id) => String(id || "").trim()).filter(Boolean))];
+}
+
+function workflowStatusForBulkAction(action) {
+  if (action === "review") return "reviewed";
+  if (action === "flag") return "flagged";
+  if (action === "resolve") return "resolved";
+  return "";
+}
+
+export async function applyBulkResultAction(userPageId, resultIds, action, userId = null, actorId = "") {
+  const userPage = await findUserPage(userPageId, userId);
+  if (!userPage) return null;
+  const cleanAction = String(action || "").trim().toLowerCase();
+  const cleanIds = normalizeBulkResultIds(resultIds);
+  if (!bulkResultActions.has(cleanAction)) throw new Error("Unsupported bulk result action");
+  if (!cleanIds.length) throw new Error("Select at least one result");
+  if (cleanIds.length > 500) throw new Error("Bulk actions support up to 500 results at a time");
+
+  if (cleanAction === "ban" || cleanAction === "whitelist") {
+    let ips = [];
+    if (useJsonDb()) {
+      const db = await readJsonDb();
+      const selectedIds = new Set(cleanIds);
+      ips = db.pageResults
+        .filter((result) => result.userPageId === userPage.id && selectedIds.has(result.id))
+        .map((result) => String(result.ip || "").trim())
+        .filter(Boolean);
+    } else {
+      const result = await query(
+        "SELECT DISTINCT ip FROM page_results WHERE user_page_id = $1 AND id = ANY($2::text[]) AND NULLIF(ip, '') IS NOT NULL",
+        [userPage.id, cleanIds]
+      );
+      ips = result.rows.map((row) => String(row.ip || "").trim()).filter(Boolean);
+    }
+    ips = [...new Set(ips)];
+
+    const bannedIps = new Set(userPage.securityConfig?.bannedIps || []);
+    const whitelistIps = new Set(userPage.securityConfig?.whitelistIps || []);
+    for (const ip of ips) {
+      if (cleanAction === "ban") {
+        bannedIps.add(ip);
+        whitelistIps.delete(ip);
+      } else {
+        whitelistIps.add(ip);
+        bannedIps.delete(ip);
+      }
+    }
+    const updatedPage = await updateSecurityConfig(userPage.id, {
+      bannedIps: [...bannedIps].filter(Boolean),
+      whitelistIps: [...whitelistIps].filter(Boolean)
+    }, userId);
+    return { action: cleanAction, affected: ips.length, userPage: updatedPage };
+  }
+
+  if (cleanAction === "delete") {
+    if (useJsonDb()) {
+      const affected = await updateJsonDb((db) => {
+        const selectedIds = new Set(cleanIds);
+        const before = db.pageResults.length;
+        db.pageResults = db.pageResults.filter((result) => result.userPageId !== userPage.id || !selectedIds.has(result.id));
+        return before - db.pageResults.length;
+      });
+      return { action: cleanAction, affected };
+    }
+    const result = await query(
+      "DELETE FROM page_results WHERE user_page_id = $1 AND id = ANY($2::text[])",
+      [userPage.id, cleanIds]
+    );
+    return { action: cleanAction, affected: result.rowCount };
+  }
+
+  const nextStatus = workflowStatusForBulkAction(cleanAction);
+  const reviewedAt = new Date().toISOString();
+  if (useJsonDb()) {
+    const updatedResults = await updateJsonDb((db) => {
+      const selectedIds = new Set(cleanIds);
+      return db.pageResults
+        .filter((result) => result.userPageId === userPage.id && selectedIds.has(result.id))
+        .map((result) => {
+          result.status = nextStatus;
+          result.reviewedAt = reviewedAt;
+          result.reviewedBy = actorId || userId || "";
+          return result;
+        });
+    });
+    return { action: cleanAction, affected: updatedResults.length, results: updatedResults };
+  }
+  const result = await query(
+    `UPDATE page_results
+     SET status = $3, reviewed_at = now(), reviewed_by = $4
+     WHERE user_page_id = $1 AND id = ANY($2::text[])
+     RETURNING *`,
+    [userPage.id, cleanIds, nextStatus, actorId || userId || ""]
+  );
+  return { action: cleanAction, affected: result.rowCount, results: result.rows.map(toResult) };
 }
 
 export async function listTrafficEvents(userPageId, userId = null, limit = 100) {

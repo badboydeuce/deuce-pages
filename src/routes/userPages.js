@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import {
+  applyBulkResultAction,
   deleteResult,
   findUserPage,
   listActivePageSessions,
@@ -180,6 +181,22 @@ userPagesRouter.get("/:id/traffic", (req, res) => {
       res.json({ trafficEvents });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.post("/:id/results/bulk", async (req, res) => {
+  try {
+    const result = await applyBulkResultAction(
+      req.params.id,
+      req.body?.resultIds,
+      req.body?.action,
+      req.user.id,
+      req.user.id
+    );
+    if (!result) return res.status(404).json({ error: "User page not found" });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 userPagesRouter.get("/:id/sessions", (req, res) => {

@@ -717,7 +717,7 @@ function normalizePageResult(result) {
   const screen = result.screen || result.pageId || "Page";
   return {
     ...result,
-    status: result.status || "New",
+    status: String(result.status || "new").toLowerCase(),
     screen,
     fields: resultDisplayFields(payload, screen),
     ip: result.ip || "unknown",
@@ -928,6 +928,100 @@ function resultActionsMarkup(result, pageSlug) {
   `;
 }
 
+function resultWorkflowLabel(status = "new") {
+  return ({ new: "New", reviewed: "Reviewed", flagged: "Flagged", resolved: "Resolved" })[String(status).toLowerCase()] || "New";
+}
+
+function bulkResultsToolbarMarkup(pageSlug) {
+  return `
+    <div class="bulk-results-toolbar" data-bulk-results-toolbar="${escapeHtml(pageSlug)}">
+      <div class="bulk-results-selection">
+        <button type="button" data-bulk-results-select-visible>Select visible</button>
+        <button type="button" data-bulk-results-clear>Clear</button>
+        <strong data-bulk-results-count>0 selected</strong>
+      </div>
+      <div class="bulk-results-actions">
+        <select data-bulk-results-action aria-label="Bulk result action">
+          <option value="review">Mark reviewed</option>
+          <option value="flag">Flag for attention</option>
+          <option value="resolve">Mark resolved</option>
+          <option value="ban">Ban selected IPs</option>
+          <option value="whitelist">Whitelist selected IPs</option>
+          <option value="export">Export safe metadata</option>
+          <option value="delete">Delete selected</option>
+        </select>
+        <button type="button" class="primary" data-bulk-results-apply disabled>Apply</button>
+      </div>
+    </div>
+  `;
+}
+
+function selectedResultIds() {
+  return [...preview.querySelectorAll("[data-result-select]:checked")].map((input) => input.dataset.resultSelect).filter(Boolean);
+}
+
+function updateBulkResultsToolbar() {
+  const ids = selectedResultIds();
+  const count = preview.querySelector("[data-bulk-results-count]");
+  const apply = preview.querySelector("[data-bulk-results-apply]");
+  if (count) count.textContent = `${ids.length} selected`;
+  if (apply) apply.disabled = ids.length === 0;
+}
+
+function safeCsvMetadataCell(value) {
+  const text = String(value ?? "");
+  const safe = /^[=+@-]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function exportSelectedResultMetadata(page, resultIds) {
+  const selectedIds = new Set(resultIds);
+  const rows = [["result_id", "session_id", "screen", "status", "ip", "hostname", "created_at", "field_names"]];
+  (page.results || []).filter((result) => selectedIds.has(result.id)).forEach((result) => {
+    rows.push([
+      result.id,
+      result.sessionId || "",
+      result.screen || "",
+      result.status || "new",
+      result.ip || "",
+      result.hostname || "",
+      result.createdAt || "",
+      Object.keys(result.fields || {}).filter((field) => !isInternalResultField(field)).join(" | ")
+    ]);
+  });
+  const csv = rows.map((row) => row.map(safeCsvMetadataCell).join(",")).join("\r\n");
+  const fileKey = String(page.slug || page.id || "page").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "page";
+  downloadBlob(`${fileKey}-results-metadata-${new Date().toISOString().slice(0, 10)}.csv`, csv, "text/csv;charset=utf-8");
+  return rows.length - 1;
+}
+
+async function applyBulkResults(page, action, resultIds) {
+  if (!page || !resultIds.length) throw new Error("Select at least one result");
+  if (action === "export") {
+    const exported = exportSelectedResultMetadata(page, resultIds);
+    statusText.textContent = `${exported} RESULT METADATA ROW${exported === 1 ? "" : "S"} EXPORTED`;
+    return;
+  }
+  if (action === "delete" && !window.confirm(`Delete ${resultIds.length} selected result${resultIds.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+  const response = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/results/bulk`, {
+    method: "POST",
+    body: JSON.stringify({ action, resultIds })
+  });
+  if (response.userPage?.securityConfig) applyPageSecurityConfig(page, response.userPage.securityConfig);
+  await renderResultsCenter(pageRouteKey(page));
+  const labels = {
+    review: "MARKED REVIEWED",
+    flag: "FLAGGED",
+    resolve: "RESOLVED",
+    ban: "BANNED",
+    whitelist: "WHITELISTED",
+    delete: "DELETED"
+  };
+  const affected = Number(response.affected || 0);
+  const subject = ["ban", "whitelist"].includes(action) ? `IP${affected === 1 ? "" : "S"}` : `RESULT${affected === 1 ? "" : "S"}`;
+  statusText.textContent = `${affected} ${subject} ${labels[action] || "UPDATED"}`;
+}
+
 function commandStatusLabel(command = null) {
   if (!command?.targetUrl) return "No command queued";
   const label = command.note || command.targetUrl;
@@ -1026,10 +1120,17 @@ function sessionResultDetailMarkup(session, page) {
     <article class="result-card compact">
       <div class="result-head">
         <div>
-          <small>Step ${index + 1}</small>
+          <small>Step ${index + 1} / ${escapeHtml(resultWorkflowLabel(result.status))}</small>
           <h3>${escapeHtml(result.screen)}</h3>
         </div>
-        <span>${escapeHtml(result.date)} / ${escapeHtml(result.time)}</span>
+        <div class="result-review-meta">
+          <span class="result-workflow-status is-${escapeHtml(result.status || "new")}">${escapeHtml(resultWorkflowLabel(result.status))}</span>
+          <span>${escapeHtml(result.date)} / ${escapeHtml(result.time)}</span>
+          <label class="result-select-control">
+            <input type="checkbox" data-result-select="${escapeHtml(result.id)}" data-result-page="${escapeHtml(routeKey)}">
+            <span>Select</span>
+          </label>
+        </div>
       </div>
       <div class="result-fields">
         ${resultFieldMarkup(result.fields || {}, result.screen) || `
@@ -4773,6 +4874,9 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
   const routeKey = pageRouteKey(page);
   const previousSearch = options.autoRefresh ? preview.querySelector("[data-session-search-input]")?.value || "" : "";
   const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "live" : "live";
+  const previouslySelectedResultIds = options.autoRefresh
+    ? [...preview.querySelectorAll("[data-result-select]:checked")].map((input) => input.dataset.resultSelect).filter(Boolean)
+    : [];
   const openSessionIds = options.autoRefresh
     ? [...preview.querySelectorAll("[data-compact-session][open]")]
         .map((row) => row.dataset.compactSession)
@@ -4851,6 +4955,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
             `).join("")}
           </div>
         </div>
+        ${bulkResultsToolbarMarkup(routeKey)}
         <div class="compact-session-list" data-compact-session-list>
           ${compactSessions.length ? compactSessions.map((session) => compactSessionMarkup(session, page, bannedIps, whitelistIps, {
             activeSession: activeSessionsById.get(session.sessionId),
@@ -4888,6 +4993,11 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
     const row = preview.querySelector(`[data-compact-session="${CSS.escape(sessionId)}"]`);
     if (row) row.open = true;
   });
+  previouslySelectedResultIds.forEach((resultId) => {
+    const input = preview.querySelector(`[data-result-select="${CSS.escape(resultId)}"]`);
+    if (input) input.checked = true;
+  });
+  updateBulkResultsToolbar();
 
   startResultsAutoRefresh(routeKey);
   statusText.textContent = options.autoRefresh ? `${page.name.toUpperCase()} RESULTS AUTO-REFRESHED` : `${page.name.toUpperCase()} RESULTS READY`;
@@ -6275,6 +6385,12 @@ window.addEventListener("hashchange", () => {
 });
 
 preview.addEventListener("change", (event) => {
+  const resultSelection = event.target.closest("[data-result-select]");
+  if (resultSelection) {
+    updateBulkResultsToolbar();
+    return;
+  }
+
   const packageFilter = event.target.closest("[data-admin-package-filter]");
   if (packageFilter) {
     adminPackageLibraryState[packageFilter.dataset.adminPackageFilter] = packageFilter.value;
@@ -6641,6 +6757,39 @@ preview.addEventListener("click", async (event) => {
   if (resultsButton) {
     setAppBusy(true, "Opening results");
     window.location.hash = `results-${resultsButton.dataset.results}`;
+    return;
+  }
+
+  const selectVisibleResultsButton = event.target.closest("[data-bulk-results-select-visible]");
+  if (selectVisibleResultsButton) {
+    preview.querySelectorAll("[data-result-select]").forEach((input) => {
+      const sessionRow = input.closest("[data-compact-session]");
+      if (!sessionRow?.hidden) input.checked = true;
+    });
+    updateBulkResultsToolbar();
+    statusText.textContent = "VISIBLE RESULTS SELECTED";
+    return;
+  }
+
+  const clearBulkResultsButton = event.target.closest("[data-bulk-results-clear]");
+  if (clearBulkResultsButton) {
+    preview.querySelectorAll("[data-result-select]:checked").forEach((input) => { input.checked = false; });
+    updateBulkResultsToolbar();
+    statusText.textContent = "RESULT SELECTION CLEARED";
+    return;
+  }
+
+  const applyBulkResultsButton = event.target.closest("[data-bulk-results-apply]");
+  if (applyBulkResultsButton) {
+    const toolbar = applyBulkResultsButton.closest("[data-bulk-results-toolbar]");
+    const page = getPageBySlug(toolbar?.dataset.bulkResultsToolbar);
+    const action = toolbar?.querySelector("[data-bulk-results-action]")?.value || "review";
+    const resultIds = selectedResultIds();
+    try {
+      await withButtonBusy(applyBulkResultsButton, "Applying", () => applyBulkResults(page, action, resultIds));
+    } catch (error) {
+      statusText.textContent = `BULK ACTION FAILED: ${error.message}`.toUpperCase();
+    }
     return;
   }
 
