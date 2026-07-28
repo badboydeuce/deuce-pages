@@ -5,6 +5,7 @@ import {
   deleteResult,
   getResultDetail,
   findUserPage,
+  findPackage,
   listActivePageSessions,
   listResults,
   listTrafficEvents,
@@ -12,6 +13,7 @@ import {
   markGenerated,
   renewUserPage,
   setSessionCommand,
+  syncUserPageRuntimeScreens,
   updateIpRule,
   updateSecurityConfig,
   updateUserPageConfig
@@ -19,26 +21,30 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { installCloudflareWorker, verifyCloudflareZone } from "../services/cloudflareDeploy.js";
 import { validateTurnstileConfiguration } from "../services/turnstile.js";
+import { runtimePackageForUserPage, runtimeScreenForFile, runtimeScreensFromPackage, runtimeScreenTargetUrl } from "../services/runtimeScreens.js";
 
 export const userPagesRouter = Router();
 
 userPagesRouter.use(requireAuth);
 
-function validRuntimeRedirectTarget(targetUrl, userPageId) {
+function runtimeFileFromLegacyTarget(targetUrl, userPageId) {
   let parsed;
   try {
     parsed = new URL(targetUrl, "https://deuce.local");
   } catch {
-    return false;
+    return "";
   }
 
-  if (parsed.origin !== "https://deuce.local") return false;
-  if (!["/api/runtime/source", "/api/runtime/runtime/source", "/api/source"].includes(parsed.pathname)) return false;
-  if (parsed.searchParams.get("userPageId") !== userPageId) return false;
+  if (parsed.origin !== "https://deuce.local") return "";
+  if (!["/api/runtime/source", "/api/runtime/runtime/source", "/api/source"].includes(parsed.pathname)) return "";
+  if (parsed.searchParams.get("userPageId") !== userPageId) return "";
+  return String(parsed.searchParams.get("file") || "").replace(/^\/+/, "");
+}
 
-  const file = String(parsed.searchParams.get("file") || "").replace(/^\/+/, "");
-  if (!file || file.includes("..") || file.length > 240) return false;
-  return /\.html?$/i.test(file);
+async function runtimePackageState(userPage) {
+  const currentPackage = await findPackage(userPage.packageId || userPage.slug);
+  const runtimePackage = runtimePackageForUserPage(userPage, currentPackage);
+  return { currentPackage, runtimePackage };
 }
 
 userPagesRouter.get("/", (req, res) => {
@@ -200,36 +206,86 @@ userPagesRouter.post("/:id/results/bulk", async (req, res) => {
   }
 });
 
-userPagesRouter.get("/:id/sessions", (req, res) => {
-  listActivePageSessions(req.params.id, req.user.id)
-    .then((sessions) => {
-      if (!sessions) return res.status(404).json({ error: "User page not found" });
-      res.json({ sessions });
-    })
-    .catch((error) => res.status(400).json({ error: error.message }));
+userPagesRouter.get("/:id/sessions", async (req, res) => {
+  try {
+    const [sessions, userPage] = await Promise.all([
+      listActivePageSessions(req.params.id, req.user.id),
+      findUserPage(req.params.id, req.user.id)
+    ]);
+    if (!sessions || !userPage) return res.status(404).json({ error: "User page not found" });
+    const { currentPackage, runtimePackage } = await runtimePackageState(userPage);
+    const targets = runtimePackage ? runtimeScreensFromPackage(runtimePackage) : [];
+    const snapshot = userPage.configs?.runtimePackageSnapshot || null;
+    res.json({
+      sessions,
+      targets,
+      screenSync: {
+        count: targets.length,
+        source: snapshot ? "subscription-snapshot" : "package",
+        syncedAt: userPage.configs?.runtimeScreensSyncedAt || null,
+        packageVersion: runtimePackage?.version || userPage.packageVersion || "",
+        currentPackageVersion: currentPackage?.version || "",
+        stale: Boolean(
+          snapshot
+          && currentPackage
+          && snapshot.packageUpdatedAt
+          && currentPackage.updatedAt
+          && snapshot.packageUpdatedAt !== currentPackage.updatedAt
+        )
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
-userPagesRouter.post("/:id/sessions/:sessionId/redirect", (req, res) => {
-  const targetUrl = String(req.body?.targetUrl || "").trim();
-  if (!targetUrl) {
-    res.status(400).json({ error: "Redirect URL is required" });
-    return;
+userPagesRouter.post("/:id/screens/sync", async (req, res) => {
+  try {
+    const userPage = await syncUserPageRuntimeScreens(req.params.id, req.user.id);
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    const runtimePackage = userPage.configs?.runtimePackageSnapshot;
+    res.json({
+      userPage,
+      targets: runtimeScreensFromPackage(runtimePackage),
+      syncedAt: userPage.configs?.runtimeScreensSyncedAt || null
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
-  if (!validRuntimeRedirectTarget(targetUrl, req.params.id)) {
-    res.status(400).json({ error: "Redirect target must be a runtime HTML page for this user page" });
-    return;
+});
+
+userPagesRouter.post("/:id/sessions/:sessionId/redirect", async (req, res) => {
+  try {
+    const userPage = await findUserPage(req.params.id, req.user.id);
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    const { runtimePackage } = await runtimePackageState(userPage);
+    if (!runtimePackage) return res.status(409).json({ error: "Runtime package is unavailable" });
+
+    const requestedFile = String(req.body?.targetFile || "").trim()
+      || runtimeFileFromLegacyTarget(req.body?.targetUrl, userPage.id);
+    const targetScreen = runtimeScreenForFile(runtimePackage, requestedFile);
+    if (!targetScreen) {
+      return res.status(400).json({ error: "Redirect target is not a mapped HTML screen in this package" });
+    }
+
+    const targetUrl = runtimeScreenTargetUrl(userPage.id, targetScreen.file);
+    const updated = await setSessionCommand(userPage.id, req.params.sessionId, {
+      action: "redirect",
+      targetUrl,
+      targetFile: targetScreen.file,
+      targetScreenId: targetScreen.id,
+      targetRole: targetScreen.role,
+      note: targetScreen.name,
+      forceReload: Boolean(req.body?.forceReload)
+    }, req.user.id);
+    if (!updated) return res.status(404).json({ error: "User page not found" });
+    res.json({
+      userPage: updated,
+      command: updated.configs?.sessionCommands?.[req.params.sessionId] || null
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
-  setSessionCommand(req.params.id, req.params.sessionId, {
-    action: "redirect",
-    targetUrl,
-    note: req.body?.note || "",
-    forceReload: Boolean(req.body?.forceReload)
-  }, req.user.id)
-    .then((userPage) => {
-      if (!userPage) return res.status(404).json({ error: "User page not found" });
-      res.json({ userPage, command: userPage.configs?.sessionCommands?.[req.params.sessionId] || null });
-    })
-    .catch((error) => res.status(400).json({ error: error.message }));
 });
 
 userPagesRouter.delete("/:id/sessions/:sessionId/command", (req, res) => {

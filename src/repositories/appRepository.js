@@ -1,6 +1,7 @@
 import { createHash, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { query, withTransaction } from "../db/pool.js";
 import { readJsonDb, updateJsonDb, useJsonDb } from "../data/jsonStore.js";
+import { createRuntimePackageSnapshot } from "../services/runtimeScreens.js";
 
 function createId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
@@ -594,7 +595,7 @@ export async function subscribeToPackage(id, data = {}) {
     const pageResult = await client.query(
       `INSERT INTO user_pages
         (id, user_id, package_id, package_version, name, slug, domain, status, subscription, flow, configs, security_config, hosting_config, result_settings, generated_file)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9::jsonb, '{}'::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb)
        RETURNING *`,
       [
         userPage.id,
@@ -606,6 +607,7 @@ export async function subscribeToPackage(id, data = {}) {
         userPage.domain,
         JSON.stringify(userPage.subscription),
         JSON.stringify(userPage.flow),
+        JSON.stringify(userPage.configs),
         JSON.stringify(userPage.securityConfig),
         JSON.stringify(userPage.hostingConfig),
         JSON.stringify(userPage.resultSettings),
@@ -628,6 +630,7 @@ export async function subscribeToPackage(id, data = {}) {
 }
 
 function buildUserPage(userId, pagePackage, period, price, data) {
+  const runtimePackageSnapshot = createRuntimePackageSnapshot(pagePackage);
   return {
     id: createId("user_page"),
     userId,
@@ -645,8 +648,12 @@ function buildUserPage(userId, pagePackage, period, price, data) {
       walletSource: data.adminFreeSubscription ? "admin-free" : "main-wallet",
       adminFreeSubscription: Boolean(data.adminFreeSubscription)
     },
-    flow: pagePackage.screens || [],
-    configs: {},
+    flow: runtimePackageSnapshot.packageManifest.screens,
+    configs: {
+      runtimePackageSnapshot,
+      runtimeScreensSyncedAt: new Date().toISOString(),
+      runtimeScreensPackageVersion: pagePackage.version || ""
+    },
     securityConfig: {
       domains: data.domain ? [data.domain] : [],
       captcha: false,
@@ -789,7 +796,7 @@ function normalizeResultSettings(resultSettings = {}) {
   };
 }
 
-export async function updateUserPageConfig(id, data, userId = null) {
+export async function updateUserPageConfig(id, data, userId = null, options = {}) {
   const current = await findUserPage(id, userId);
   if (!current) return null;
   const incomingSecurity = data.securityConfig || {};
@@ -801,13 +808,19 @@ export async function updateUserPageConfig(id, data, userId = null) {
   if (!String(incomingTurnstile.secretKey || "").trim()) {
     mergedTurnstile.secretKey = current.securityConfig?.turnstile?.secretKey || "";
   }
+  const incomingConfigs = { ...(data.configs || {}) };
+  if (!options.allowRuntimeSnapshot) {
+    for (const key of ["runtimePackageSnapshot", "runtimeScreensSyncedAt", "runtimeScreensPackageVersion"]) {
+      delete incomingConfigs[key];
+    }
+  }
   const next = {
     ...current,
     status: data.status ?? current.status,
     domain: data.domain ?? current.domain,
     subscription: { ...current.subscription, ...(data.subscription || {}) },
     flow: data.flow || current.flow,
-    configs: { ...current.configs, ...(data.configs || {}) },
+    configs: { ...current.configs, ...incomingConfigs },
     securityConfig: normalizeSecurityConfig({
       ...current.securityConfig,
       ...incomingSecurity,
@@ -851,6 +864,24 @@ export async function updateUserPageConfig(id, data, userId = null) {
     ]
   );
   return toUserPage(result.rows[0]);
+}
+
+export async function syncUserPageRuntimeScreens(id, userId = null) {
+  const userPage = await findUserPage(id, userId);
+  if (!userPage) return null;
+  const pagePackage = await findPackage(userPage.packageId || userPage.slug);
+  if (!pagePackage) throw new Error("Package record not found");
+  const runtimePackageSnapshot = createRuntimePackageSnapshot(pagePackage);
+  const screens = runtimePackageSnapshot.packageManifest.screens || [];
+  if (!screens.length) throw new Error("Package has no mapped HTML screens");
+  return updateUserPageConfig(userPage.id, {
+    flow: screens,
+    configs: {
+      runtimePackageSnapshot,
+      runtimeScreensSyncedAt: new Date().toISOString(),
+      runtimeScreensPackageVersion: pagePackage.version || ""
+    }
+  }, userId, { allowRuntimeSnapshot: true });
 }
 
 export function pageSubscriptionState(page) {
@@ -1721,6 +1752,7 @@ export async function listActivePageSessions(userPageId, userId = null) {
       sessionId: event.sessionId,
       ip: event.ip || "unknown",
       screen: event.screen || event.pageId || "page",
+      screenFile: event.metadata?.screenFile || "",
       event: event.event,
       result: event.result,
       reason: event.reason,
@@ -1754,6 +1786,9 @@ export async function setSessionCommand(userPageId, sessionId, command, userId =
       id: createId("cmd"),
       action: command.action || "redirect",
       targetUrl: String(command.targetUrl || "").trim(),
+      targetFile: String(command.targetFile || "").trim(),
+      targetScreenId: String(command.targetScreenId || "").trim(),
+      targetRole: String(command.targetRole || "").trim(),
       note: String(command.note || "").trim(),
       forceReload: Boolean(command.forceReload),
       status: "queued",
