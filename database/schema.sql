@@ -184,3 +184,24 @@ CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_created ON notification_
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_unread ON notification_outbox(user_id, read_at) WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_id ON traffic_events(user_page_id);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_created_at ON traffic_events(created_at DESC);
+
+WITH ranked_heartbeats AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY user_page_id, session_id
+      ORDER BY created_at DESC, id DESC
+    ) AS heartbeat_rank
+  FROM traffic_events
+  WHERE event = 'heartbeat'
+    AND session_id IS NOT NULL
+    AND session_id <> ''
+)
+DELETE FROM traffic_events
+WHERE id IN (SELECT id FROM ranked_heartbeats WHERE heartbeat_rank > 1);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_traffic_events_session_heartbeat
+ON traffic_events(user_page_id, session_id)
+WHERE event = 'heartbeat'
+  AND session_id IS NOT NULL
+  AND session_id <> '';

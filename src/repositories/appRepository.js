@@ -122,9 +122,18 @@ function toDepositRequest(row) {
   };
 }
 
+function publicResult(result) {
+  if (!result) return null;
+  const safeResult = { ...result };
+  delete safeResult.userId;
+  delete safeResult.licenseKey;
+  safeResult.payload = redactResultPayload(result.payload || {});
+  return safeResult;
+}
+
 function toResult(row) {
   if (!row) return null;
-  return {
+  return publicResult({
     id: row.id,
     userPageId: row.user_page_id,
     userId: row.user_id,
@@ -145,7 +154,7 @@ function toResult(row) {
     reviewedAt: row.reviewed_at || null,
     reviewedBy: row.reviewed_by || "",
     createdAt: row.created_at
-  };
+  });
 }
 
 function toTrafficEvent(row) {
@@ -1491,11 +1500,49 @@ export async function listResults(userPageId, userId = null) {
   await purgeExpiredPageResults(userPage);
   if (useJsonDb()) {
     const db = await readJsonDb();
-    return db.pageResults.filter((result) => result.userPageId === userPage.id).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return db.pageResults
+      .filter((result) => result.userPageId === userPage.id)
+      .map(publicResult)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
   const result = await query("SELECT * FROM page_results WHERE user_page_id = $1 ORDER BY created_at DESC", [userPage.id]);
   return result.rows.map(toResult);
+}
+
+export async function getResultDetail(userPageId, resultId, userId = null) {
+  const userPage = await findUserPage(userPageId, userId);
+  if (!userPage) return null;
+  await purgeExpiredPageResults(userPage);
+
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const result = db.pageResults.find((item) => item.id === resultId && item.userPageId === userPage.id);
+    if (!result) return null;
+    const sessionResults = db.pageResults
+      .filter((item) => item.userPageId === userPage.id && (result.sessionId ? item.sessionId === result.sessionId : item.id === result.id))
+      .map(publicResult)
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+    return { result: publicResult(result), sessionResults };
+  }
+
+  const selected = await query(
+    "SELECT * FROM page_results WHERE id = $1 AND user_page_id = $2 LIMIT 1",
+    [resultId, userPage.id]
+  );
+  if (!selected.rows[0]) return null;
+
+  const sessionResults = selected.rows[0].session_id
+    ? await query(
+      "SELECT * FROM page_results WHERE user_page_id = $1 AND session_id = $2 ORDER BY created_at ASC",
+      [userPage.id, selected.rows[0].session_id]
+    )
+    : selected;
+
+  return {
+    result: toResult(selected.rows[0]),
+    sessionResults: sessionResults.rows.map(toResult)
+  };
 }
 
 async function purgeExpiredPageResults(userPage) {
@@ -1625,7 +1672,7 @@ export async function applyBulkResultAction(userPageId, resultIds, action, userI
           return result;
         });
     });
-    return { action: cleanAction, affected: updatedResults.length, results: updatedResults };
+    return { action: cleanAction, affected: updatedResults.length, results: updatedResults.map(publicResult) };
   }
   const result = await query(
     `UPDATE page_results
@@ -1786,11 +1833,50 @@ export async function saveTrafficEvent(data, ip, userAgent) {
     createdAt: new Date().toISOString()
   };
   if (useJsonDb()) {
-    await updateJsonDb((db) => {
+    return updateJsonDb((db) => {
+      if (event.event === "heartbeat" && event.sessionId) {
+        const sameHeartbeat = (item) => (
+          item.event === "heartbeat"
+          && item.userPageId === event.userPageId
+          && item.sessionId === event.sessionId
+        );
+        const existing = db.trafficEvents.find(sameHeartbeat);
+        if (existing) {
+          const existingId = existing.id;
+          Object.assign(existing, event, { id: existingId });
+          db.trafficEvents = db.trafficEvents.filter((item) => item === existing || !sameHeartbeat(item));
+          return existing;
+        }
+      }
       db.trafficEvents.push(event);
       return event;
     });
-    return event;
+  }
+
+  if (event.event === "heartbeat" && event.sessionId) {
+    const result = await query(
+      `INSERT INTO traffic_events
+        (id, user_page_id, page_id, session_id, event, screen, hostname, path, ip, result, reason, user_agent, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
+       ON CONFLICT (user_page_id, session_id)
+       WHERE event = 'heartbeat'
+         AND session_id IS NOT NULL
+         AND session_id <> ''
+       DO UPDATE SET
+         page_id = EXCLUDED.page_id,
+         screen = EXCLUDED.screen,
+         hostname = EXCLUDED.hostname,
+         path = EXCLUDED.path,
+         ip = EXCLUDED.ip,
+         result = EXCLUDED.result,
+         reason = EXCLUDED.reason,
+         user_agent = EXCLUDED.user_agent,
+         metadata = EXCLUDED.metadata,
+         created_at = EXCLUDED.created_at
+       RETURNING *`,
+      [event.id, event.userPageId, event.pageId, event.sessionId, event.event, event.screen, event.hostname, event.path, event.ip, event.result, event.reason, event.userAgent, JSON.stringify(event.metadata), event.createdAt]
+    );
+    return result.rows[0];
   }
 
   const result = await query(
@@ -1805,6 +1891,7 @@ export async function saveTrafficEvent(data, ip, userAgent) {
 
 function redactSubmittedValue(value) {
   if (value === null || value === undefined || value === "") return "[blank]";
+  if (value === "[blank]" || value === "[redacted]") return value;
   if (Array.isArray(value)) return value.length ? "[redacted]" : "[blank]";
   if (typeof value === "object") return redactResultPayload(value);
   return "[redacted]";
@@ -1934,7 +2021,7 @@ export async function savePageResult(data, ip, userAgent) {
       }
       return result;
     });
-    return result;
+    return publicResult(result);
   }
 
   return withTransaction(async (client) => {

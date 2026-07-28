@@ -135,6 +135,7 @@ let resultsAutoRefreshTimer = null;
 let resultsAutoRefreshSlug = "";
 let resultsAutoRefreshBusy = false;
 let resultNotificationAudioContext = null;
+let activeResultViewer = null;
 
 function setAppBusy(isBusy, label = "Working") {
   window.clearTimeout(appBusyTimer);
@@ -926,6 +927,161 @@ function resultActionsMarkup(result, pageSlug) {
       <button type="button" data-delete-result="${escapeHtml(result.id)}" data-result-page="${escapeHtml(pageSlug)}">&#128465; Delete</button>
     </div>
   `;
+}
+
+function resultViewerTime(value) {
+  if (!value) return "Unknown";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
+}
+
+function resultViewerFlowLabel(item) {
+  if (typeof item === "string") return item;
+  return item?.name || item?.label || item?.file || "";
+}
+
+function resultViewerTimelineMarkup(results = [], selectedId = "") {
+  return results.map((result, index) => `
+    <button type="button" class="result-viewer-step ${result.id === selectedId ? "is-active" : ""}" data-result-viewer-step="${escapeHtml(result.id)}" aria-current="${result.id === selectedId ? "step" : "false"}">
+      <span>${index + 1}</span>
+      <div>
+        <strong>${escapeHtml(result.screen || "Page")}</strong>
+        <small>${escapeHtml(resultViewerTime(result.createdAt))}</small>
+      </div>
+      <em class="result-workflow-status is-${escapeHtml(result.status || "new")}">${escapeHtml(resultWorkflowLabel(result.status))}</em>
+    </button>
+  `).join("");
+}
+
+function closeResultViewer(options = {}) {
+  const restoreFocus = options.restoreFocus !== false;
+  const returnFocus = activeResultViewer?.returnFocus;
+  activeResultViewer?.viewer?.remove();
+  document.body.classList.remove("result-viewer-open");
+  activeResultViewer = null;
+  if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
+}
+
+function renderResultViewer() {
+  if (!activeResultViewer?.viewer?.isConnected) return;
+  const { viewer, page, results, selectedId } = activeResultViewer;
+  const result = results.find((item) => item.id === selectedId) || results[0];
+  if (!result) return;
+  activeResultViewer.selectedId = result.id;
+  const stepIndex = Math.max(results.findIndex((item) => item.id === result.id), 0);
+  const fields = resultFieldMarkup(result.fields || {}, result.screen);
+  const flow = (Array.isArray(result.flow) ? result.flow : [])
+    .map(resultViewerFlowLabel)
+    .filter(Boolean);
+  const sourcePath = [result.hostname, result.path].filter(Boolean).join("");
+
+  viewer.innerHTML = `
+    <section class="result-viewer-panel" role="dialog" aria-modal="true" aria-labelledby="resultViewerTitle" tabindex="-1">
+      <header class="result-viewer-head">
+        <div>
+          <small>secure result viewer / step ${stepIndex + 1} of ${results.length}</small>
+          <h2 id="resultViewerTitle">${escapeHtml(result.screen || "Result detail")}</h2>
+          <p>${escapeHtml(page.name || result.pageName || "Page")} / received ${escapeHtml(resultViewerTime(result.createdAt))}</p>
+        </div>
+        <div class="result-viewer-head-actions">
+          <span class="result-workflow-status is-${escapeHtml(result.status || "new")}">${escapeHtml(resultWorkflowLabel(result.status))}</span>
+          <button type="button" data-close-result-viewer aria-label="Close result viewer">&times;</button>
+        </div>
+      </header>
+      <div class="result-viewer-layout">
+        <aside class="result-viewer-timeline">
+          <div class="result-viewer-section-head">
+            <small>session journey</small>
+            <strong>${results.length} result${results.length === 1 ? "" : "s"}</strong>
+          </div>
+          <div class="result-viewer-steps">${resultViewerTimelineMarkup(results, result.id)}</div>
+        </aside>
+        <main class="result-viewer-content">
+          <section class="result-viewer-summary">
+            <article><small>IP address</small><strong>${escapeHtml(result.ip || "Unknown")}</strong></article>
+            <article><small>Page file</small><strong>${escapeHtml(result.pageId || result.screen || "Unknown")}</strong></article>
+            <article><small>Package version</small><strong>${escapeHtml(result.packageVersion || "Unknown")}</strong></article>
+            <article><small>Review status</small><strong>${escapeHtml(resultWorkflowLabel(result.status))}</strong></article>
+          </section>
+          <section class="result-viewer-section">
+            <div class="result-viewer-section-head">
+              <div><small>submitted fields</small><h3>Captured field map</h3></div>
+              <span>${Object.keys(result.fields || {}).length} field${Object.keys(result.fields || {}).length === 1 ? "" : "s"}</span>
+            </div>
+            <p class="result-viewer-redaction">Raw submitted values are never returned to this browser. Only field names and redaction state are shown.</p>
+            <div class="result-viewer-fields">
+              ${fields || `<div><span>Status</span><strong>No form fields saved for this result</strong></div>`}
+            </div>
+          </section>
+          <section class="result-viewer-section">
+            <div class="result-viewer-section-head"><div><small>request context</small><h3>Source and record metadata</h3></div></div>
+            <dl class="result-viewer-metadata">
+              <div><dt>Result ID</dt><dd>${escapeHtml(result.id)}</dd></div>
+              <div><dt>Session ID</dt><dd>${escapeHtml(result.sessionId || "No session")}</dd></div>
+              <div><dt>Source</dt><dd>${escapeHtml(sourcePath || "Unknown")}</dd></div>
+              <div><dt>Received</dt><dd>${escapeHtml(resultViewerTime(result.createdAt))}</dd></div>
+              <div><dt>User agent</dt><dd>${escapeHtml(result.userAgent || "Unknown")}</dd></div>
+              <div><dt>Reviewed</dt><dd>${escapeHtml(result.reviewedAt ? resultViewerTime(result.reviewedAt) : "Not reviewed")}</dd></div>
+            </dl>
+          </section>
+          <section class="result-viewer-section">
+            <div class="result-viewer-section-head"><div><small>configured journey</small><h3>Expected page flow</h3></div></div>
+            <div class="result-viewer-flow">
+              ${flow.length ? flow.map((label, index) => `<span class="${index === stepIndex ? "is-current" : ""}">${index + 1}. ${escapeHtml(label)}</span>`).join("") : "<span>No configured flow metadata</span>"}
+            </div>
+          </section>
+        </main>
+      </div>
+    </section>
+  `;
+}
+
+async function openResultViewer(page, resultId, trigger = null) {
+  closeResultViewer({ restoreFocus: false });
+  const viewer = document.createElement("div");
+  viewer.className = "result-viewer-backdrop";
+  viewer.dataset.resultViewer = "";
+  viewer.innerHTML = `
+    <section class="result-viewer-panel is-loading" role="dialog" aria-modal="true" aria-label="Loading result" tabindex="-1">
+      <div class="result-viewer-loading"><span></span><strong>Loading authenticated result</strong><small>Verifying page ownership and session timeline</small></div>
+    </section>
+  `;
+  document.body.appendChild(viewer);
+  document.body.classList.add("result-viewer-open");
+  activeResultViewer = { viewer, page, results: [], selectedId: resultId, returnFocus: trigger || document.activeElement };
+
+  try {
+    const response = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/results/${encodeURIComponent(resultId)}`);
+    if (!activeResultViewer || activeResultViewer.viewer !== viewer) return;
+    const selected = normalizePageResult(response.result);
+    const results = (response.sessionResults || [response.result])
+      .map(normalizePageResult)
+      .sort((a, b) => resultTimestampValue(a) - resultTimestampValue(b));
+    const selectedIndex = results.findIndex((item) => item.id === selected.id);
+    if (selectedIndex === -1) results.push(selected);
+    else results[selectedIndex] = selected;
+    activeResultViewer.results = results;
+    activeResultViewer.selectedId = selected.id;
+    renderResultViewer();
+    viewer.querySelector(".result-viewer-panel")?.focus();
+    statusText.textContent = `${page.name.toUpperCase()} RESULT VIEWER OPEN`;
+  } catch (error) {
+    if (!activeResultViewer || activeResultViewer.viewer !== viewer) return;
+    viewer.innerHTML = `
+      <section class="result-viewer-panel is-error" role="alertdialog" aria-modal="true" aria-label="Result viewer error" tabindex="-1">
+        <div class="result-viewer-loading"><strong>Result could not be loaded</strong><small>${escapeHtml(error.message)}</small><button type="button" data-close-result-viewer>Close viewer</button></div>
+      </section>
+    `;
+    viewer.querySelector(".result-viewer-panel")?.focus();
+    statusText.textContent = `RESULT VIEWER FAILED: ${error.message}`.toUpperCase();
+  }
+}
+
+function selectResultViewerResult(resultId) {
+  if (!activeResultViewer?.results?.some((result) => result.id === resultId)) return;
+  activeResultViewer.selectedId = resultId;
+  renderResultViewer();
+  activeResultViewer.viewer.querySelector(`[data-result-viewer-step="${CSS.escape(resultId)}"]`)?.focus();
 }
 
 function resultWorkflowLabel(status = "new") {
@@ -6381,6 +6537,7 @@ notificationCenter?.addEventListener("click", async (event) => {
 });
 
 window.addEventListener("hashchange", () => {
+  closeResultViewer({ restoreFocus: false });
   renderRoute();
 });
 
@@ -6971,12 +7128,15 @@ preview.addEventListener("click", async (event) => {
   const resultAction = event.target.closest("[data-result-page]");
   if (resultAction) {
     const resultPage = getPageBySlug(resultAction.dataset.resultPage);
+    if (!resultPage) return;
     const resultId = resultAction.dataset.viewResult || resultAction.dataset.deleteResult || resultAction.dataset.banResultIp || resultAction.dataset.whitelistResultIp;
     const result = (resultPage.results || []).find((item) => item.id === resultId);
     if (!result) return;
 
     if (resultAction.dataset.viewResult) {
-      statusText.textContent = `${resultPage.name.toUpperCase()} RESULT FROM ${result.ip} SELECTED`;
+      await withButtonBusy(resultAction, "Opening", () => openResultViewer(resultPage, result.id, resultAction)).catch((error) => {
+        statusText.textContent = `RESULT VIEWER FAILED: ${error.message}`.toUpperCase();
+      });
       return;
     }
 
@@ -7048,4 +7208,20 @@ preview.addEventListener("dragend", () => {
   preview.querySelectorAll("[data-package-screen-row].dragging").forEach((row) => row.classList.remove("dragging"));
   draggedScreenName = null;
   refreshImportedScreenOrder();
+});
+
+document.addEventListener("click", (event) => {
+  const viewer = event.target.closest?.("[data-result-viewer]");
+  if (!viewer) return;
+  const closeButton = event.target.closest?.("[data-close-result-viewer]");
+  if (closeButton || event.target === viewer) {
+    closeResultViewer();
+    return;
+  }
+  const stepButton = event.target.closest?.("[data-result-viewer-step]");
+  if (stepButton) selectResultViewerResult(stepButton.dataset.resultViewerStep);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activeResultViewer) closeResultViewer();
 });

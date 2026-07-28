@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import {
   applyBulkResultAction,
   deleteResult,
+  getResultDetail,
   findUserPage,
   listActivePageSessions,
   listResults,
@@ -325,9 +326,21 @@ userPagesRouter.get("/:id/results", (req, res) => {
   listResults(req.params.id, req.user.id)
     .then((results) => {
       if (!results) return res.status(404).json({ error: "User page not found" });
+      res.set("Cache-Control", "no-store");
       res.json({ results });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.get("/:id/results/:resultId", async (req, res) => {
+  try {
+    const detail = await getResultDetail(req.params.id, req.params.resultId, req.user.id);
+    if (!detail) return res.status(404).json({ error: "Result not found" });
+    res.set("Cache-Control", "no-store");
+    res.json(detail);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 userPagesRouter.delete("/:id/results/:resultId", (req, res) => {
