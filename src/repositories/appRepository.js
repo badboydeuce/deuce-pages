@@ -673,7 +673,7 @@ function buildUserPage(userId, pagePackage, period, price, data) {
     resultSettings: { webhook: "/api/page-results", retentionDays: 30, notifyOnResult: true },
     generatedFile: {
       version: "build-001",
-      downloadName: `${pagePackage.slug}-index.html`,
+      downloadName: "index.html",
       apiBase: process.env.API_BASE_URL || "http://localhost:10000",
       lastGeneratedAt: null
     }

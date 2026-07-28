@@ -2763,22 +2763,58 @@ function createGeneratedIndex(page) {
 }
 
 function downloadGeneratedIndex(page) {
+  if (!page) throw new Error("Page record not found");
+  const pagePackage = packageForUserPage(page);
+  const importedPackage = ["r2", "github"].includes(String(pagePackage?.sourceType || "").toLowerCase());
+  if (importedPackage && !packageEntryFile(pagePackage)) {
+    throw new Error("Imported package has no entry HTML page");
+  }
+
+  const previousGeneratedFile = page.generatedFile || {};
   page.generatedFile = {
-    ...(page.generatedFile || {}),
+    ...previousGeneratedFile,
+    downloadName: "index.html",
     lastGeneratedAt: new Date().toISOString()
   };
+
+  let html;
+  try {
+    html = createGeneratedIndex(page);
+  } catch (error) {
+    page.generatedFile = previousGeneratedFile;
+    throw error;
+  }
+  if (typeof html !== "string" || !/^\s*<!doctype html>/i.test(html)) {
+    page.generatedFile = previousGeneratedFile;
+    throw new Error("Generated launcher is invalid");
+  }
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  if (!blob.size) {
+    page.generatedFile = previousGeneratedFile;
+    throw new Error("Generated launcher is empty");
+  }
+
+  if (typeof navigator.msSaveOrOpenBlob === "function") {
+    navigator.msSaveOrOpenBlob(blob, "index.html");
+  } else {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "index.html";
+    link.rel = "noopener";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => {
+      link.remove();
+      URL.revokeObjectURL(url);
+    }, 4000);
+  }
+
   saveFlowState(page);
-  const html = createGeneratedIndex(page);
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = page.generatedFile?.downloadName || `${page.slug}-index.html`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-  statusText.textContent = `${page.name.toUpperCase()} INDEX.HTML GENERATED`;
+  statusText.textContent = `${page.name.toUpperCase()} INDEX.HTML DOWNLOADED`;
+  return true;
 }
 
 function renderButtons() {
@@ -4269,7 +4305,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const usesManagedWorker = connectionType === "cloudflare-worker";
   const hasWorkerRoute = !usesManagedWorker || managedInstalled;
   const hasVerified = Boolean(hosting.verified);
-  const readyToDownload = hasDomain && hasRelayTarget && (usesManagedWorker ? hasRelaySecret && managedInstalled : true);
+  const connectionReadyToDownload = hasDomain && hasRelayTarget && (usesManagedWorker ? hasRelaySecret && managedInstalled : true);
   const displayDomain = domain || "clientdomain.com";
   const pagePackage = packageForUserPage(page);
   const runtimeEntryFile = packageEntryFile(pagePackage);
@@ -4277,6 +4313,14 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const runtimeSourceReady = shouldUsePackageRuntime(page, pagePackage)
     ? Boolean(runtimeEntryFile)
     : Boolean((page.flow || []).length || runtimeEntryFile);
+  const readyToDownload = connectionReadyToDownload && runtimeSourceReady;
+  const downloadBlockers = [
+    !hasDomain ? "live domain" : "",
+    !hasRelayTarget ? "API relay target" : "",
+    usesManagedWorker && !hasRelaySecret ? "relay secret" : "",
+    usesManagedWorker && !managedInstalled ? "installed Worker route" : "",
+    !runtimeSourceReady ? "imported entry HTML page" : ""
+  ].filter(Boolean);
   const resultsEndpointReady = Boolean(page.id && hasRelayTarget);
   const goLiveChecks = [
     {
@@ -4429,8 +4473,9 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             `}
           </div>
           <div class="admin-actions">
-            <button type="button" data-download-index="${routeKey}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
+            <button type="button" data-download-index="${routeKey}" title="${escapeHtml(readyToDownload ? "Download the final launcher as index.html" : `Complete: ${downloadBlockers.join(", ")}`)}" ${readyToDownload ? "" : "disabled"}>Download index.html</button>
           </div>
+          <p class="go-live-download-state ${readyToDownload ? "is-ready" : "is-blocked"}">${readyToDownload ? "Ready: the final launcher can now be downloaded." : `Download unavailable. Complete: ${escapeHtml(downloadBlockers.join(", "))}.`}</p>
         </article>
 
         <article class="security-panel package-form go-live-step-card ${hasRenderOrigin ? "is-complete" : page.generatedFile?.lastGeneratedAt ? "is-active" : ""}">
@@ -5695,7 +5740,7 @@ function saveUserConfig(page) {
   page.generatedFile = {
     ...(page.generatedFile || {}),
     apiBase: page.generatedFile?.apiBase || "/api",
-    downloadName: page.generatedFile?.downloadName || `${page.slug}-index.html`,
+    downloadName: "index.html",
     version: page.generatedFile?.version || "build-001"
   };
   page.resultSettings = {
@@ -6959,7 +7004,21 @@ preview.addEventListener("click", async (event) => {
 
   const downloadButton = event.target.closest("[data-download-index]");
   if (downloadButton) {
-    downloadGeneratedIndex(getPageBySlug(downloadButton.dataset.downloadIndex));
+    try {
+      downloadGeneratedIndex(getPageBySlug(downloadButton.dataset.downloadIndex));
+      downloadButton.textContent = "Download again";
+      const card = downloadButton.closest(".go-live-step-card");
+      card?.classList.remove("is-active");
+      card?.classList.add("is-complete");
+      const state = card?.querySelector(".go-live-download-state");
+      if (state) {
+        state.className = "go-live-download-state is-ready";
+        state.textContent = "Downloaded as index.html. Upload this file to the static host root.";
+      }
+    } catch (error) {
+      console.error("Final index download failed", error);
+      statusText.textContent = `INDEX DOWNLOAD FAILED: ${error.message}`.toUpperCase();
+    }
     return;
   }
 
