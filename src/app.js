@@ -14,7 +14,6 @@ import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
 
-import { rootLandingPage } from "./services/rootLanding.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicRoot = path.resolve(__dirname, "..");
@@ -50,16 +49,6 @@ export function createApp() {
     next();
   });
 
-  app.get("/", (req, res) => {
-    res.set({
-      "Cache-Control": "no-store",
-      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-      "Referrer-Policy": "no-referrer",
-      "X-Content-Type-Options": "nosniff"
-    });
-    res.status(200).type("html").send(rootLandingPage());
-  });
-
   app.get("/api/health", (req, res) => {
     res.json({
       ok: true,
@@ -89,14 +78,6 @@ export function createApp() {
   app.use("/preview", previewRouter);
 
   app.use(express.static(publicRoot));
-  app.get("/app", (req, res) => {
-    res.sendFile(path.join(publicRoot, "index.html"));
-  });
-
-  app.get("/app/", (req, res) => {
-    res.redirect(308, "/app");
-  });
-
 
   app.use((req, res) => {
     if (req.path.startsWith("/api/")) {
