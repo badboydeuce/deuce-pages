@@ -1919,6 +1919,19 @@ function shouldUsePackageRuntime(page, pagePackage) {
   );
 }
 
+function publicLauncherHosting(hostingConfig = {}, liveDomain = "") {
+  return {
+    domain: liveDomain,
+    connectionType: hostingConfig.connectionType || "cloudflare-worker"
+  };
+}
+
+function publicLauncherGeneratedFile(generatedFile = {}) {
+  return {
+    version: generatedFile.version || "generated"
+  };
+}
+
 function createPackageRuntimeIndex(page, pagePackage) {
   const serverApiBase = page.generatedFile?.apiBase || "https://your-render-app.onrender.com";
   const hostingConfig = page.hostingConfig || {};
@@ -1942,7 +1955,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
     apiBase: runtimeApiBase,
     generatedAt: new Date().toISOString(),
     domain: liveDomain,
-    hosting: hostingConfig,
+    hosting: publicLauncherHosting(hostingConfig, liveDomain),
     allowedDomains: strictAllowedDomains,
     subscription: page.subscription,
     resultSettings: page.resultSettings,
@@ -1955,7 +1968,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
         displayDomain: page.securityConfig?.turnstile?.displayDomain || ""
       }
     },
-    generatedFile: page.generatedFile,
+    generatedFile: publicLauncherGeneratedFile(page.generatedFile),
     runtime: {
       mode: "launcher",
       entryFile,
@@ -2224,12 +2237,12 @@ function createGeneratedIndex(page) {
     apiBase: runtimeApiBase,
     generatedAt: new Date().toISOString(),
     domain: liveDomain,
-    hosting: hostingConfig,
+    hosting: publicLauncherHosting(hostingConfig, liveDomain),
     allowedDomains: strictAllowedDomains,
     subscription: page.subscription,
     resultSettings: page.resultSettings,
     security: publicSecurity,
-    generatedFile: page.generatedFile,
+    generatedFile: publicLauncherGeneratedFile(page.generatedFile),
     runtime: {
       configEndpoint: `${runtimeApiBase}/config?userPageId=${encodeURIComponent(page.id)}`,
       resultEndpoint: `${runtimeApiBase}/results`,
