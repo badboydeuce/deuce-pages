@@ -4,15 +4,12 @@ import { pageSubscriptionState, resolveUserPageSubscription, saveTrafficEvent } 
 import { turnstileSecretFor, verifyTurnstileToken } from "../services/turnstile.js";
 import { securityDecision } from "../services/securityRules.js";
 import { createChallengeProof } from "../services/challengeProof.js";
+import { clientIp } from "../services/clientIp.js";
 
 export const securityRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
 
 const securityPayloadLimit = 16 * 1024;
-
-function requestIp(req) {
-  return req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
-}
 
 function normalizeHost(value = "") {
   return String(value).trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "");
@@ -81,7 +78,7 @@ securityRouter.post("/check", async (req, res) => {
     const context = await securityContext(req, res);
     if (!context) return;
     const { userPage, hostname } = context;
-    const ip = requestIp(req);
+    const ip = clientIp(req);
 
     const decision = await securityDecision(userPage, ip, req.headers["user-agent"], req);
 
@@ -125,7 +122,8 @@ securityRouter.post("/turnstile/verify", async (req, res) => {
     const { userPage, hostname } = context;
 
     const security = userPage.securityConfig || {};
-    const decision = await securityDecision(userPage, requestIp(req), req.headers["user-agent"], req);
+    const ip = clientIp(req);
+    const decision = await securityDecision(userPage, ip, req.headers["user-agent"], req);
     if (!decision.allowed) {
       res.status(403).json({ verified: false, reason: accessDeniedMessage });
       return;
@@ -138,7 +136,7 @@ securityRouter.post("/turnstile/verify", async (req, res) => {
     const result = await verifyTurnstileToken({
       token: req.body.token,
       secret: turnstileSecretFor(security),
-      remoteIp: requestIp(req)
+      remoteIp: ip
     });
 
     if (!result.success) {
@@ -154,11 +152,11 @@ securityRouter.post("/turnstile/verify", async (req, res) => {
       hostname,
       result: "allowed",
       reason: "Turnstile passed"
-    }, requestIp(req), req.headers["user-agent"]);
+    }, ip, req.headers["user-agent"]);
 
     res.json({
       verified: true,
-      challengeProof: createChallengeProof({ userPageId: userPage.id, sessionId: req.body.sessionId, ip: requestIp(req) })
+      challengeProof: createChallengeProof({ userPageId: userPage.id, sessionId: req.body.sessionId, ip })
     });
   } catch (error) {
     res.status(400).json({ verified: false, reason: accessDeniedMessage });

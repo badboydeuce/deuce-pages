@@ -24,6 +24,7 @@ import {
 import { securityDecision } from "../services/securityRules.js";
 import { createChallengeProof, verifyChallengeProof } from "../services/challengeProof.js";
 import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/runtimeScreens.js";
+import { clientIp } from "../services/clientIp.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -44,13 +45,6 @@ runtimeRouter.use((req, res, next) => {
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   next();
 });
-
-function requestIp(req) {
-  return req.headers["cf-connecting-ip"]
-    || req.headers["x-forwarded-for"]?.split(",")[0]?.trim()
-    || req.socket.remoteAddress
-    || "unknown";
-}
 
 function normalizeHost(value = "") {
   return String(value)
@@ -215,7 +209,7 @@ async function runtimeContext(req, res, options = {}) {
     return pageExpired(res, 402, options.expiredResponse === "html" ? { html: true } : {});
   }
 
-  return { page, clientHost, ip: requestIp(req) };
+  return { page, clientHost, ip: clientIp(req) };
 }
 
 async function enforceRuntimeSecurity(context, req, res) {

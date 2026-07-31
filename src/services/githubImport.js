@@ -1,15 +1,46 @@
 export function normalizeRepoUrl(repoUrl) {
   const trimmed = String(repoUrl || "").trim();
-  const match = trimmed.match(/github\.com[/:]([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:[/?#].*)?$/i);
+  const sshMatch = trimmed.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
+  let owner = "";
+  let repo = "";
 
-  if (!match) {
+  if (sshMatch) {
+    owner = sshMatch[1];
+    repo = sshMatch[2];
+  } else {
+    let parsed;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new Error("Enter a valid GitHub repository URL like https://github.com/owner/repo");
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+    const parts = parsed.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+    if (
+      parsed.protocol !== "https:"
+      || !["github.com", "www.github.com"].includes(hostname)
+      || parsed.username
+      || parsed.password
+      || parsed.port
+      || parts.length !== 2
+    ) {
+      throw new Error("Enter a valid GitHub repository URL like https://github.com/owner/repo");
+    }
+    [owner, repo] = parts;
+  }
+
+  repo = repo.replace(/\.git$/i, "");
+  if (
+    !/^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i.test(owner)
+    || !/^[a-z\d._-]{1,100}$/i.test(repo)
+    || repo === "."
+    || repo === ".."
+  ) {
     throw new Error("Enter a valid GitHub repository URL like https://github.com/owner/repo");
   }
 
-  return {
-    owner: match[1],
-    repo: match[2].replace(/\.git$/i, "")
-  };
+  return { owner, repo };
 }
 
 export function classifyFile(path) {

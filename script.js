@@ -6045,11 +6045,9 @@ function githubFileUrl(scan, filePath, mode = "blob") {
 }
 
 function githubPreviewUrl(scan, filePath) {
-  const params = new URLSearchParams({
-    repoUrl: scan.repoUrl,
-    branch: scan.branch,
-    file: filePath
-  });
+  const ticket = scan.previewTickets?.[filePath];
+  if (!ticket) return "";
+  const params = new URLSearchParams({ ticket });
   return `${apiBase()}/api/admin/import/github/preview?${params.toString()}`;
 }
 
@@ -6413,7 +6411,7 @@ function renderGithubImportResult(scan, pagePackage) {
           <strong data-github-preview-title>Previewing ${escapeHtml(htmlScreens[0].name)}</strong>
           <a href="${escapeHtml(githubFileUrl(scan, htmlScreens[0].file, "raw"))}" target="_blank" rel="noopener" data-github-preview-open>Open raw</a>
         </div>
-        <iframe title="GitHub page preview" src="${escapeHtml(firstPreviewUrl)}" data-github-preview-frame sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
+        <iframe title="GitHub page preview" src="${escapeHtml(firstPreviewUrl)}" data-github-preview-frame sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
       </div>
     ` : ""}
     <code>Review these files before clicking Import & Publish.</code>

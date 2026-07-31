@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Router } from "express";
 import { createPackage, findPackage, publishPackage, updatePackage } from "../repositories/appRepository.js";
 import { requireAdmin } from "../middleware/auth.js";
@@ -6,6 +7,11 @@ import { withPreviewToken } from "../services/packagePreview.js";
 import { injectPreviewTurnstile } from "../services/turnstile.js";
 import { finalizeLocalImport, startLooseImport, startZipImport } from "../services/localImport.js";
 import { objectStorageConfigured } from "../services/objectStorage.js";
+import {
+  createGitHubPreviewTicket,
+  normalizeGitHubFilePath,
+  verifyGitHubPreviewTicket
+} from "../services/githubPreviewAccess.js";
 
 export const importsRouter = Router();
 
@@ -81,46 +87,63 @@ function contentTypeFor(filePath) {
 }
 
 function resolveRelativePath(fromFile, relativePath) {
-  if (!relativePath || /^(?:[a-z]+:)?\/\//i.test(relativePath) || /^(?:data|mailto|tel):/i.test(relativePath) || relativePath.startsWith("#")) {
+  const value = String(relativePath || "").trim();
+  if (
+    !value
+    || /^(?:[a-z]+:)?\/\//i.test(value)
+    || /^(?:data|mailto|tel):/i.test(value)
+    || value.startsWith("#")
+    || value.startsWith("/")
+  ) {
     return null;
   }
-  const clean = relativePath.split("#")[0].split("?")[0];
-  const fromParts = String(fromFile || "").split("/");
-  fromParts.pop();
-
-  for (const part of clean.split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") {
-      fromParts.pop();
-    } else {
-      fromParts.push(part);
-    }
+  const clean = value.split("#")[0].split("?")[0];
+  try {
+    const sourceFile = normalizeGitHubFilePath(fromFile);
+    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(sourceFile), clean));
+    if (resolved.startsWith("../") || path.posix.isAbsolute(resolved)) return null;
+    return normalizeGitHubFilePath(resolved);
+  } catch {
+    return null;
   }
-
-  return fromParts.join("/");
 }
 
-function assetProxyUrl(req, { repoUrl, branch, file }) {
-  const params = new URLSearchParams({ repoUrl, branch, file });
+function assetProxyUrl(req, access, file) {
+  const ticket = createGitHubPreviewTicket({
+    repoUrl: access.repoUrl,
+    branch: access.branch,
+    file,
+    kind: "asset",
+    userId: access.userId,
+    expiresAt: access.expiresAt
+  });
+  const params = new URLSearchParams({ ticket });
   return `${req.baseUrl}/github/asset?${params.toString()}`;
 }
 
-function rewriteHtmlAssets(req, html, { repoUrl, branch, file }) {
+function rewriteHtmlAssets(req, html, access) {
   return html.replace(/\b(src|href)=["']([^"']+)["']/gi, (match, attr, value) => {
-    const resolved = resolveRelativePath(file, value);
+    const resolved = resolveRelativePath(access.file, value);
     if (!resolved) return match;
-    return `${attr}="${assetProxyUrl(req, { repoUrl, branch, file: resolved })}"`;
+    try {
+      return `${attr}="${assetProxyUrl(req, access, resolved)}"`;
+    } catch {
+      return match;
+    }
   });
 }
 
 async function fetchGitHubFile({ repoUrl, branch, file }) {
-  const headers = { "User-Agent": "deuce-pages-importer" };
+  const headers = {
+    "User-Agent": "deuce-pages-importer",
+    "X-GitHub-Api-Version": "2022-11-28"
+  };
   if (process.env.GITHUB_TOKEN) {
     headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   }
 
   try {
-    const response = await fetch(githubRawUrl({ repoUrl, branch, file }), { headers });
+    const response = await fetch(githubRawUrl({ repoUrl, branch, file }), { headers, signal: AbortSignal.timeout(10_000), redirect: "error" });
     if (response.ok) return response;
     if (![403, 404, 429].includes(response.status)) {
       throw new Error(`GitHub raw fetch failed: ${response.status} ${response.statusText}`);
@@ -135,8 +158,10 @@ async function fetchGitHubFile({ repoUrl, branch, file }) {
   const fallbackResponse = await fetch(contentsUrl, {
     headers: {
       ...headers,
-      Accept: "application/vnd.github.raw"
-    }
+      Accept: "application/vnd.github.raw+json"
+    },
+    signal: AbortSignal.timeout(10_000),
+    redirect: "error"
   });
   if (!fallbackResponse.ok) {
     throw new Error(`GitHub source fetch failed: ${fallbackResponse.status} ${fallbackResponse.statusText}. Check the repo visibility, branch, file path, and GITHUB_TOKEN.`);
@@ -144,45 +169,141 @@ async function fetchGitHubFile({ repoUrl, branch, file }) {
   return fallbackResponse;
 }
 
+
+const githubPreviewPageMaxBytes = 2 * 1024 * 1024;
+const githubPreviewAssetMaxBytes = 10 * 1024 * 1024;
+
+function previewLimitError(message) {
+  const error = new Error(message);
+  error.status = 413;
+  return error;
+}
+
+async function readLimitedResponse(response, maxBytes) {
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw previewLimitError("GitHub preview file is too large");
+  }
+  if (!response.body) return Buffer.alloc(0);
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw previewLimitError("GitHub preview file is too large");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function setGitHubPreviewHeaders(res) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+  res.setHeader("Content-Security-Policy", [
+    "default-src 'none'",
+    "base-uri 'none'",
+    "connect-src https://challenges.cloudflare.com",
+    "font-src 'self' data:",
+    "form-action 'none'",
+    "frame-ancestors 'self'",
+    "frame-src https://challenges.cloudflare.com",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "object-src 'none'",
+    "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
+    "style-src 'self' 'unsafe-inline'",
+    "worker-src 'none'",
+    "sandbox allow-scripts"
+  ].join("; "));
+}
+
+function setGitHubAssetHeaders(res) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+}
+
+function withGitHubPreviewTickets(scan, userId) {
+  const previewTickets = {};
+  for (const screen of scan.screens || []) {
+    if (classifyFile(screen.file) !== "html") continue;
+    previewTickets[screen.file] = createGitHubPreviewTicket({
+      repoUrl: scan.repoUrl,
+      branch: scan.branch,
+      file: screen.file,
+      kind: "page",
+      userId
+    });
+  }
+  return { ...scan, previewTickets };
+}
+
+function previewAccess(req, kind) {
+  return verifyGitHubPreviewTicket(String(req.query.ticket || ""), kind);
+}
+
+function rejectPreviewAuthorization(res) {
+  res.status(401).send("GitHub preview authorization required");
+}
 importsRouter.post("/github/scan", requireAdmin, async (req, res) => {
   try {
     const scan = await scanGitHubRepository(req.body);
-    res.json({ scan });
+    res.json({ scan: withGitHubPreviewTickets(scan, req.user.id) });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
 });
 
 importsRouter.get("/github/preview", async (req, res) => {
+  let access;
   try {
-    const repoUrl = String(req.query.repoUrl || "");
-    const branch = String(req.query.branch || "main");
-    const file = String(req.query.file || "");
-    if (classifyFile(file) !== "html") {
-      res.status(400).send("Preview file must be HTML");
-      return;
-    }
+    access = previewAccess(req, "page");
+  } catch {
+    rejectPreviewAuthorization(res);
+    return;
+  }
 
-    const response = await fetchGitHubFile({ repoUrl, branch, file });
-    const html = await response.text();
+  try {
+    const response = await fetchGitHubFile(access);
+    const html = (await readLimitedResponse(response, githubPreviewPageMaxBytes)).toString("utf8");
+    setGitHubPreviewHeaders(res);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(rewriteHtmlAssets(req, injectPreviewTurnstile(html), { repoUrl, branch, file }));
+    res.send(rewriteHtmlAssets(req, injectPreviewTurnstile(html), access));
   } catch (error) {
-    res.status(400).send(`<pre>${String(error.message || error)}</pre>`);
+    console.warn("GitHub preview failed:", error.message);
+    res.status(error.status === 413 ? 413 : 400).send("GitHub preview unavailable");
   }
 });
 
 importsRouter.get("/github/asset", async (req, res) => {
+  let access;
   try {
-    const repoUrl = String(req.query.repoUrl || "");
-    const branch = String(req.query.branch || "main");
-    const file = String(req.query.file || "");
-    const response = await fetchGitHubFile({ repoUrl, branch, file });
-    const buffer = Buffer.from(await response.arrayBuffer());
-    res.setHeader("Content-Type", contentTypeFor(file));
+    access = previewAccess(req, "asset");
+  } catch {
+    rejectPreviewAuthorization(res);
+    return;
+  }
+
+  try {
+    const response = await fetchGitHubFile(access);
+    const buffer = await readLimitedResponse(response, githubPreviewAssetMaxBytes);
+    setGitHubAssetHeaders(res);
+    res.setHeader("Content-Type", contentTypeFor(access.file));
     res.send(buffer);
   } catch (error) {
-    res.status(404).send(String(error.message || error));
+    console.warn("GitHub preview asset failed:", error.message);
+    res.status(error.status === 413 ? 413 : 404).send("GitHub preview asset unavailable");
   }
 });
 
@@ -230,8 +351,9 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
       ? await updatePackage(existing.id, packageData)
       : await createPackage(packageData);
     const finalPackage = req.body.publish ? await publishPackage(pagePackage.id) : pagePackage;
+    const responseScan = withGitHubPreviewTickets(scan, req.user.id);
 
-    res.status(201).json({ package: withPreviewToken(finalPackage), scan });
+    res.status(201).json({ package: withPreviewToken(finalPackage), scan: responseScan });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

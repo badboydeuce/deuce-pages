@@ -8,6 +8,7 @@ import {
 } from "../repositories/appRepository.js";
 import { securityDecision } from "../services/securityRules.js";
 import { verifyChallengeProof } from "../services/challengeProof.js";
+import { clientIp } from "../services/clientIp.js";
 
 export const eventsRouter = Router();
 const pageExpiredMessage = "Page Expired Renew to continue using";
@@ -16,10 +17,6 @@ const legacyPayloadLimits = {
   traffic: 24 * 1024,
   result: 96 * 1024
 };
-
-function requestIp(req) {
-  return req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
-}
 
 function normalizeHost(value = "") {
   return String(value).trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "");
@@ -86,7 +83,8 @@ eventsRouter.post("/page-traffic", async (req, res) => {
     if (payloadTooLarge(req, res, legacyPayloadLimits.traffic)) return;
     const context = await legacyRuntimeContext(req, res);
     if (!context) return;
-    const decision = await securityDecision(context.page, requestIp(req), req.headers["user-agent"], req);
+    const ip = clientIp(req);
+    const decision = await securityDecision(context.page, ip, req.headers["user-agent"], req);
     if (!decision.allowed) {
       res.status(403).json({ error: "ACCESS DENIED" });
       return;
@@ -96,7 +94,7 @@ eventsRouter.post("/page-traffic", async (req, res) => {
       userPageId: context.page.id,
       pageId: context.page.slug,
       hostname: context.host || req.body?.hostname
-    }, requestIp(req), req.headers["user-agent"]);
+    }, ip, req.headers["user-agent"]);
     res.status(201).json({ event });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -108,7 +106,7 @@ eventsRouter.post("/page-results", async (req, res) => {
     if (payloadTooLarge(req, res, legacyPayloadLimits.result)) return;
     const context = await legacyRuntimeContext(req, res);
     if (!context) return;
-    const ip = requestIp(req);
+    const ip = clientIp(req);
     const decision = await securityDecision(context.page, ip, req.headers["user-agent"], req);
     if (!decision.allowed || (decision.challengeRequired && !verifyChallengeProof(req.body?.challengeProof, {
       userPageId: context.page.id,

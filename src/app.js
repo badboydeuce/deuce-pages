@@ -14,6 +14,7 @@ import { previewRouter } from "./routes/preview.js";
 import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
+import { configureClientIpTrust } from "./services/clientIp.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +43,7 @@ function isSameOrigin(req, origin) {
 
 function isExecutablePackageRoute(req) {
   return req.path.startsWith("/preview/")
+    || /^\/api\/admin\/import\/github\/(?:preview|asset)$/.test(req.path)
     || /^\/api\/(?:runtime\/(?:runtime\/)?|)source(?:\/|$)/.test(req.path);
 }
 
@@ -133,7 +135,7 @@ export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
-  if (isProduction()) app.set("trust proxy", 1);
+  configureClientIpTrust(app);
   app.use(securityHeaders);
   app.use(corsMiddleware);
   app.use(express.json({ limit: "1mb" }));
