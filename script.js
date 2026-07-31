@@ -591,6 +591,36 @@ function subscriptionState(page) {
   };
 }
 
+const operationalPageCapabilities = new Set([
+  "goLive",
+  "editConfig",
+  "editSecurity",
+  "generateIndex",
+  "verifyHosting",
+  "installWorker",
+  "syncScreens",
+  "controlSessions"
+]);
+
+function pageCapabilityAllowed(page, capability) {
+  const serverValue = page?.capabilities?.[capability];
+  if (typeof serverValue === "boolean") return serverValue;
+  if (operationalPageCapabilities.has(capability)) return !subscriptionState(page).expired;
+  return true;
+}
+
+function disabledPageCapabilityAttributes(page, capability) {
+  return pageCapabilityAllowed(page, capability) ? "" : ' disabled aria-disabled="true"';
+}
+
+function guardPageCapability(pageSlug, capability) {
+  const page = getPageBySlug(pageSlug);
+  if (!page || pageCapabilityAllowed(page, capability)) return true;
+  window.location.hash = "#my-pages";
+  statusText.textContent = page.name.toUpperCase() + " SUBSCRIPTION EXPIRED";
+  return false;
+}
+
 function findPackageThumbnail(pagePackage) {
   if (pagePackage.packageManifest?.thumbnailPath) return pagePackage.packageManifest.thumbnailPath;
   const files = [
@@ -1235,6 +1265,8 @@ function sessionCurrentFlowFile(session = null, latestResult = null, command = n
 function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = null, currentLabel = "", currentFile = "") {
   const currentKey = normalizeFlowLabel(currentLabel);
   const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
+  const page = getPageBySlug(pageSlug);
+  const controlsDisabled = disabledPageCapabilityAttributes(page, "controlSessions");
   return `
     <div class="session-command result-live-command">
       <strong class="flow-command-title">One-click flow</strong>
@@ -1244,13 +1276,13 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
             ? normalizedRuntimeScreenFile(target.file).toLowerCase() === currentFileKey
             : Boolean(currentKey && normalizeFlowLabel(target.label) === currentKey);
           return `
-          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}" ${isCurrent && !target.forceReload ? "disabled" : ""}>
+          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
             ${escapeHtml(target.label)}
           </button>
         `;
         }).join("") : "<span>No mapped pages found</span>"}
       </div>
-      <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}">Clear</button>
+      <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${controlsDisabled}>Clear</button>
       <small class="${command?.status === "delivered" ? "is-delivered" : command?.targetUrl ? "is-queued" : ""}">${escapeHtml(commandStatusLabel(command))}</small>
     </div>
   `;
@@ -4196,6 +4228,9 @@ function ownedPageCard(page, index) {
   const resultCount = page.results?.length || 0;
   const generatedLabel = page.generatedFile?.lastGeneratedAt ? "Generated" : page.generatedFile?.version || "Not generated";
   const renewButtonLabel = renewal.paymentFailed ? "Fund and renew" : renewal.expired ? "Restore page" : "Renew now";
+  const goLiveDisabled = disabledPageCapabilityAttributes(page, "goLive");
+  const configDisabled = disabledPageCapabilityAttributes(page, "editConfig");
+  const securityDisabled = disabledPageCapabilityAttributes(page, "editSecurity");
 
   return `
     <article class="owned-page-card my-page-card">
@@ -4230,9 +4265,9 @@ function ownedPageCard(page, index) {
         <div class="my-page-tool-grid" aria-label="${escapeHtml(page.name)} management tools">
           <section>
             <h4>Page controls</h4>
-            <button type="button" data-go-live="${escapeHtml(routeKey)}">&#128640; Go Live</button>
-            <button type="button" data-config-page="${escapeHtml(routeKey)}">&#9881; Config</button>
-            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="security">&#128737; Security</button>
+            <button type="button" data-go-live="${escapeHtml(routeKey)}"${goLiveDisabled}>&#128640; Go Live</button>
+            <button type="button" data-config-page="${escapeHtml(routeKey)}"${configDisabled}>&#9881; Config</button>
+            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="security"${securityDisabled}>&#128737; Security</button>
             <button type="button" data-results="${escapeHtml(routeKey)}">&#128193; Results</button>
             <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="traffic">&#128200; Traffic</button>
             <button type="button" data-page-log="${escapeHtml(routeKey)}">&#128220; Log</button>
@@ -5536,19 +5571,24 @@ function renderRoute() {
 
   if (hash.startsWith("#config-")) {
     setActiveNav("#my-pages");
-    renderUserConfigCenter(hash.replace("#config-", ""));
+    const pageSlug = hash.replace("#config-", "");
+    if (!guardPageCapability(pageSlug, "editConfig")) return;
+    renderUserConfigCenter(pageSlug);
     return;
   }
 
   if (hash.startsWith("#go-live-")) {
     setActiveNav("#my-pages");
-    renderGoLiveCenter(hash.replace("#go-live-", ""));
+    const pageSlug = hash.replace("#go-live-", "");
+    if (!guardPageCapability(pageSlug, "goLive")) return;
+    renderGoLiveCenter(pageSlug);
     return;
   }
 
   if (hash.startsWith("#security-")) {
     setActiveNav("#my-pages");
     const [pageSlug, tab = "security"] = hash.replace("#security-", "").split(":");
+    if (tab === "security" && !guardPageCapability(pageSlug, "editSecurity")) return;
     renderSecurityCenter(pageSlug, tab);
     return;
   }

@@ -914,6 +914,29 @@ export function pageSubscriptionState(page) {
   return { status: "active", label: subscription.autoRenew ? "Auto renew" : "Active", daysLeft, blocked: false };
 }
 
+export function userPageCapabilities(page) {
+  const subscriptionState = pageSubscriptionState(page);
+  const operational = !subscriptionState.blocked;
+
+  return {
+    viewResults: true,
+    manageResults: true,
+    viewTraffic: true,
+    viewLogs: true,
+    fundWallet: true,
+    renew: !page?.subscription?.adminFreeSubscription,
+    rotateRelaySecret: true,
+    goLive: operational,
+    editConfig: operational,
+    editSecurity: operational,
+    generateIndex: operational,
+    verifyHosting: operational,
+    installWorker: operational,
+    syncScreens: operational,
+    controlSessions: operational
+  };
+}
+
 export async function resolveUserPageSubscription(id, userId = null) {
   const current = await findUserPage(id, userId);
   if (!current) return null;

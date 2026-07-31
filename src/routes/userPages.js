@@ -11,12 +11,14 @@ import {
   listTrafficEvents,
   listUserPages,
   markGenerated,
+  pageSubscriptionState,
   renewUserPage,
   setSessionCommand,
   syncUserPageRuntimeScreens,
   updateIpRule,
   updateSecurityConfig,
-  updateUserPageConfig
+  updateUserPageConfig,
+  userPageCapabilities
 } from "../repositories/appRepository.js";
 import { requireAuth } from "../middleware/auth.js";
 import { installCloudflareWorker, verifyCloudflareZone } from "../services/cloudflareDeploy.js";
@@ -26,6 +28,45 @@ import { runtimePackageForUserPage, runtimeScreenForFile, runtimeScreensFromPack
 export const userPagesRouter = Router();
 
 userPagesRouter.use(requireAuth);
+
+function withPageCapabilities(userPage) {
+  if (!userPage) return userPage;
+  return {
+    ...userPage,
+    subscriptionState: pageSubscriptionState(userPage),
+    capabilities: userPageCapabilities(userPage)
+  };
+}
+
+function requirePageCapability(capability) {
+  return async (req, res, next) => {
+    try {
+      const userPage = await findUserPage(req.params.id, req.user.id);
+      if (!userPage) {
+        res.status(404).json({ error: "User page not found" });
+        return;
+      }
+
+      const subscriptionState = pageSubscriptionState(userPage);
+      const capabilities = userPageCapabilities(userPage);
+      if (!capabilities[capability]) {
+        res.status(402).json({
+          error: "Subscription expired",
+          code: subscriptionState.status === "payment_failed" ? "PAYMENT_FAILED" : "SUBSCRIPTION_EXPIRED",
+          action: "renew",
+          subscriptionState,
+          capabilities
+        });
+        return;
+      }
+
+      req.userPage = userPage;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
 
 function runtimeFileFromLegacyTarget(targetUrl, userPageId) {
   let parsed;
@@ -49,7 +90,7 @@ async function runtimePackageState(userPage) {
 
 userPagesRouter.get("/", (req, res) => {
   listUserPages(req.user.id)
-    .then((userPages) => res.json({ userPages }))
+    .then((userPages) => res.json({ userPages: userPages.map(withPageCapabilities) }))
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
@@ -57,16 +98,16 @@ userPagesRouter.get("/:id", (req, res) => {
   findUserPage(req.params.id, req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
-      res.json({ userPage });
+      res.json({ userPage: withPageCapabilities(userPage) });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-userPagesRouter.patch("/:id/config", (req, res) => {
+userPagesRouter.patch("/:id/config", requirePageCapability("editConfig"), (req, res) => {
   updateUserPageConfig(req.params.id, req.body, req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
-      res.json({ userPage });
+      res.json({ userPage: withPageCapabilities(userPage) });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });
@@ -95,12 +136,15 @@ userPagesRouter.post("/:id/renew", (req, res) => {
   renewUserPage(req.params.id, req.user.id)
     .then((result) => {
       if (result?.error) return res.status(result.status || 400).json(result);
-      res.json(result);
+      res.json({
+        ...result,
+        userPage: withPageCapabilities(result.userPage)
+      });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-userPagesRouter.patch("/:id/security", (req, res) => {
+userPagesRouter.patch("/:id/security", requirePageCapability("editSecurity"), (req, res) => {
   updateSecurityConfig(req.params.id, req.body, req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -109,7 +153,7 @@ userPagesRouter.patch("/:id/security", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-userPagesRouter.post("/:id/turnstile/validate", async (req, res) => {
+userPagesRouter.post("/:id/turnstile/validate", requirePageCapability("editSecurity"), async (req, res) => {
   try {
     const userPage = await findUserPage(req.params.id, req.user.id);
     if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -130,7 +174,7 @@ userPagesRouter.post("/:id/turnstile/validate", async (req, res) => {
   }
 });
 
-userPagesRouter.post("/:id/ban-ip", (req, res) => {
+userPagesRouter.post("/:id/ban-ip", requirePageCapability("editSecurity"), (req, res) => {
   updateIpRule(req.params.id, req.body.ip, "ban", req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -139,7 +183,7 @@ userPagesRouter.post("/:id/ban-ip", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-userPagesRouter.post("/:id/whitelist-ip", (req, res) => {
+userPagesRouter.post("/:id/whitelist-ip", requirePageCapability("editSecurity"), (req, res) => {
   updateIpRule(req.params.id, req.body.ip, "whitelist", req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -148,7 +192,7 @@ userPagesRouter.post("/:id/whitelist-ip", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-userPagesRouter.delete("/:id/ip-rule", (req, res) => {
+userPagesRouter.delete("/:id/ip-rule", requirePageCapability("editSecurity"), (req, res) => {
   updateIpRule(req.params.id, req.body.ip, "remove", req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -157,7 +201,7 @@ userPagesRouter.delete("/:id/ip-rule", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-userPagesRouter.post("/:id/generate-index", (req, res) => {
+userPagesRouter.post("/:id/generate-index", requirePageCapability("generateIndex"), (req, res) => {
   markGenerated(req.params.id, req.body.version, req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -239,7 +283,7 @@ userPagesRouter.get("/:id/sessions", async (req, res) => {
   }
 });
 
-userPagesRouter.post("/:id/screens/sync", async (req, res) => {
+userPagesRouter.post("/:id/screens/sync", requirePageCapability("syncScreens"), async (req, res) => {
   try {
     const userPage = await syncUserPageRuntimeScreens(req.params.id, req.user.id);
     if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -254,7 +298,7 @@ userPagesRouter.post("/:id/screens/sync", async (req, res) => {
   }
 });
 
-userPagesRouter.post("/:id/sessions/:sessionId/redirect", async (req, res) => {
+userPagesRouter.post("/:id/sessions/:sessionId/redirect", requirePageCapability("controlSessions"), async (req, res) => {
   try {
     const userPage = await findUserPage(req.params.id, req.user.id);
     if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -288,7 +332,7 @@ userPagesRouter.post("/:id/sessions/:sessionId/redirect", async (req, res) => {
   }
 });
 
-userPagesRouter.delete("/:id/sessions/:sessionId/command", (req, res) => {
+userPagesRouter.delete("/:id/sessions/:sessionId/command", requirePageCapability("controlSessions"), (req, res) => {
   setSessionCommand(req.params.id, req.params.sessionId, { action: "clear" }, req.user.id)
     .then((userPage) => {
       if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -297,7 +341,7 @@ userPagesRouter.delete("/:id/sessions/:sessionId/command", (req, res) => {
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
-userPagesRouter.post("/:id/cloudflare/verify", async (req, res) => {
+userPagesRouter.post("/:id/cloudflare/verify", requirePageCapability("verifyHosting"), async (req, res) => {
   try {
     const userPage = await findUserPage(req.params.id, req.user.id);
     if (!userPage) return res.status(404).json({ error: "User page not found" });
@@ -326,7 +370,7 @@ userPagesRouter.post("/:id/cloudflare/verify", async (req, res) => {
   }
 });
 
-userPagesRouter.post("/:id/cloudflare/install", async (req, res) => {
+userPagesRouter.post("/:id/cloudflare/install", requirePageCapability("installWorker"), async (req, res) => {
   try {
     const userPage = await findUserPage(req.params.id, req.user.id);
     if (!userPage) return res.status(404).json({ error: "User page not found" });

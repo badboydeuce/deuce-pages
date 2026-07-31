@@ -2178,6 +2178,15 @@ code,
   font: 900 0.58rem var(--mono);
   text-transform: uppercase;
 }
+.session-command button:disabled,
+.session-route-buttons button.is-current:disabled {
+  color: var(--soft);
+  border-color: rgba(128, 128, 128, 0.18);
+  background: rgba(128, 128, 128, 0.1);
+  opacity: 0.38;
+  filter: grayscale(1) saturate(0);
+  cursor: not-allowed;
+}
 
 .empty-session {
   grid-template-columns: 1fr;
@@ -5180,6 +5189,19 @@ code,
   color: #ffffff;
   border-color: var(--accent);
   background: var(--accent);
+}
+
+.my-page-tool-grid button:disabled,
+.my-page-tool-grid section:first-child button:first-of-type:disabled,
+:root[data-theme="light"] .my-page-tool-grid button:disabled,
+:root[data-theme="light"] .my-page-tool-grid section:first-child button:first-of-type:disabled {
+  color: var(--soft);
+  border-color: rgba(128, 128, 128, 0.18);
+  background: rgba(128, 128, 128, 0.1);
+  opacity: 0.38;
+  filter: grayscale(1) saturate(0);
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .builder-grid {
