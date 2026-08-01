@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { authRouter } from "./routes/auth.js";
 import { adminUsersRouter } from "./routes/adminUsers.js";
+import { adminInvitesRouter } from "./routes/adminInvites.js";
 import { packagesRouter } from "./routes/packages.js";
 import { userPagesRouter } from "./routes/userPages.js";
 import { walletRouter } from "./routes/wallet.js";
@@ -15,10 +16,15 @@ import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
 import { configureClientIpTrust } from "./services/clientIp.js";
+import { requireAuth } from "./middleware/auth.js";
+import { getUserBySessionToken } from "./repositories/appRepository.js";
+import { readSessionToken } from "./services/sessionCookie.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicRoot = path.resolve(__dirname, "..");
+const blogRoot = path.join(publicRoot, "blog");
+const noIndexValue = "noindex, nofollow, noarchive, nosnippet";
 
 function isProduction() {
   return process.env.NODE_ENV === "production";
@@ -113,7 +119,14 @@ function corsMiddleware(req, res, next) {
   const originAllowed = !requestOrigin || wildcardAllowed || origins.includes(requestOrigin) || isSameOrigin(req, requestOrigin);
   const allowOrigin = requestOrigin && originAllowed ? (wildcardAllowed ? "*" : requestOrigin) : "";
 
+  if (requestOrigin && !originAllowed) {
+    res.status(403).json({ error: "Origin is not allowed" });
+    return;
+  }
   if (allowOrigin) res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+  if (allowOrigin && allowOrigin !== "*") {
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Deuce-License, X-Deuce-Relay-Secret, X-Deuce-Client-Host");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
@@ -131,11 +144,34 @@ function corsMiddleware(req, res, next) {
   next();
 }
 
+async function requirePortalSession(req, res, next) {
+  try {
+    const user = await getUserBySessionToken(readSessionToken(req));
+    if (!user) {
+      res.redirect(303, "/login");
+      return;
+    }
+    req.user = user;
+    res.setHeader("Cache-Control", "no-store, private");
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function sendNoStoreFile(res, file) {
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(publicRoot, file));
+}
 export function createApp() {
   const app = express();
 
   app.disable("x-powered-by");
   configureClientIpTrust(app);
+  app.use((req, res, next) => {
+    res.setHeader("X-Robots-Tag", noIndexValue);
+    next();
+  });
   app.use(securityHeaders);
   app.use(corsMiddleware);
   app.use(express.json({ limit: "1mb" }));
@@ -168,6 +204,7 @@ export function createApp() {
   app.use("/api/admin/packages", packagesRouter);
   app.use("/api/admin/import", importsRouter);
   app.use("/api/admin/users", adminUsersRouter);
+  app.use("/api/admin/invites", adminInvitesRouter);
   app.use("/api/user-pages", userPagesRouter);
   app.use("/api/notifications", notificationsRouter);
   app.use("/api/wallet", walletRouter);
@@ -176,9 +213,39 @@ export function createApp() {
   app.use("/api/runtime", runtimeRouter);
   app.use("/api", runtimeRouter);
   app.use("/api", eventsRouter);
-  app.use("/preview", previewRouter);
+  app.use("/preview", requireAuth, previewRouter);
 
-  app.use(express.static(publicRoot));
+  app.get("/", (req, res) => res.redirect(302, "/blog/"));
+  app.get("/robots.txt", (req, res) => {
+    res.type("text/plain").send([
+      "User-agent: *",
+      "Disallow: /api/",
+      "Disallow: /invite",
+      "Disallow: /login",
+      "Disallow: /portal",
+      "Disallow: /preview/",
+      "Allow: /blog/",
+      ""
+    ].join("\n"));
+  });
+
+  app.get("/favicon.svg", (req, res) => res.sendFile(path.join(publicRoot, "favicon.svg")));
+  app.get("/access.css", (req, res) => res.sendFile(path.join(publicRoot, "access.css")));
+  app.get("/access.js", (req, res) => sendNoStoreFile(res, "access.js"));
+  app.get("/deuce-runtime-client.js", (req, res) => res.sendFile(path.join(publicRoot, "deuce-runtime-client.js")));
+
+  app.get(["/login", "/login/", "/invite", "/invite/"], (req, res) => sendNoStoreFile(res, "access.html"));
+  app.use("/blog", express.static(blogRoot, {
+    dotfiles: "deny",
+    index: "index.html",
+    redirect: false
+  }));
+
+  app.get("/portal/assets/styles.css", requirePortalSession, (req, res) => sendNoStoreFile(res, "styles.css"));
+  app.get("/portal/assets/script.js", requirePortalSession, (req, res) => sendNoStoreFile(res, "script.js"));
+  app.get(["/portal", "/portal/", "/portal/*"], requirePortalSession, (req, res) => {
+    sendNoStoreFile(res, "index.html");
+  });
 
   app.use((req, res) => {
     if (req.path.startsWith("/api/")) {
@@ -186,7 +253,7 @@ export function createApp() {
       return;
     }
 
-    res.sendFile(path.join(publicRoot, "index.html"));
+    res.status(404).type("text/plain").send("Not found");
   });
 
   app.use((error, req, res, next) => {

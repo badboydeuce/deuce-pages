@@ -21,6 +21,18 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS registration_invitations (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  used_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS page_packages (
   id TEXT PRIMARY KEY,
   slug TEXT UNIQUE NOT NULL,
@@ -173,6 +185,11 @@ CREATE TABLE IF NOT EXISTS traffic_events (
 CREATE INDEX IF NOT EXISTS idx_page_packages_status ON page_packages(status);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_registration_invitations_email ON registration_invitations(lower(email));
+CREATE INDEX IF NOT EXISTS idx_registration_invitations_token_hash ON registration_invitations(token_hash);
+CREATE INDEX IF NOT EXISTS idx_registration_invitations_created_at ON registration_invitations(created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_registration_invitations_one_pending_email
+ON registration_invitations(lower(email)) WHERE used_at IS NULL AND revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_user_pages_user_id ON user_pages(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_pages_package_id ON user_pages(package_id);
 CREATE INDEX IF NOT EXISTS idx_page_results_user_page_id ON page_results(user_page_id);

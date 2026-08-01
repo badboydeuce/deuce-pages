@@ -21,8 +21,8 @@ function isAdminMount(req) {
 }
 
 function adminOnlyOnAdminMount(req, res, next) {
-  if (!isAdminMount(req)) return next();
-  return requireAdmin(req, res, next);
+  if (isAdminMount(req)) return requireAdmin(req, res, next);
+  return requireAuth(req, res, next);
 }
 
 packagesRouter.get("/", adminOnlyOnAdminMount, (req, res) => {

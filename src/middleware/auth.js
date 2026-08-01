@@ -1,13 +1,9 @@
 import { getUserBySessionToken } from "../repositories/appRepository.js";
-
-function readBearerToken(req) {
-  const header = req.headers.authorization || "";
-  return header.startsWith("Bearer ") ? header.slice(7) : "";
-}
+import { readSessionToken } from "../services/sessionCookie.js";
 
 export async function requireAuth(req, res, next) {
   try {
-    const user = await getUserBySessionToken(readBearerToken(req));
+    const user = await getUserBySessionToken(readSessionToken(req));
     if (!user) {
       res.status(401).json({ error: "Authentication required" });
       return;

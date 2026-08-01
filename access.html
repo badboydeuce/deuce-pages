@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+    <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+    <title>Secure Access | Deuce Pages</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/access.css">
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="access-header">
+      <a class="brand" href="/blog/" aria-label="Deuce Pages guide home">
+        <span>D2</span>
+        <strong>DEUCE PAGES</strong>
+      </a>
+      <a class="guide-link" href="/blog/">Read the guide</a>
+    </header>
+
+    <main class="access-layout">
+      <section class="access-intro">
+        <p class="eyebrow">PRIVATE OPERATOR WORKSPACE</p>
+        <h1>Authorized access only.</h1>
+        <p class="intro-copy">The dashboard is protected by an invite-only account and a secure server session. Public registration is disabled.</p>
+        <div class="access-signals" aria-label="Access controls">
+          <article><span>01</span><div><strong>Invitation</strong><small>One-time registration link</small></div></article>
+          <article><span>02</span><div><strong>Session</strong><small>HttpOnly secure cookie</small></div></article>
+          <article><span>03</span><div><strong>Portal</strong><small>Server-verified on every load</small></div></article>
+        </div>
+      </section>
+
+      <section class="access-panel" aria-live="polite">
+        <div class="panel-status"><i></i><span id="panelStatus">VERIFYING ACCESS</span></div>
+
+        <form id="loginForm" class="access-form" hidden>
+          <div class="form-heading">
+            <p>MEMBER LOGIN</p>
+            <h2>Open your workspace</h2>
+            <span>Use the account created from your administrator invitation.</span>
+          </div>
+          <label>Email address<input id="loginEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+          <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Your password"></label>
+          <button type="submit">Sign in securely <span aria-hidden="true">&#8594;</span></button>
+        </form>
+
+        <form id="inviteForm" class="access-form" hidden>
+          <div class="form-heading">
+            <p>VERIFIED INVITATION</p>
+            <h2>Create your account</h2>
+            <span id="inviteSummary">Checking your one-time link.</span>
+          </div>
+          <label>Full name<input id="inviteName" type="text" autocomplete="name" required placeholder="Your name"></label>
+          <label>Invited email<input id="inviteEmail" type="email" autocomplete="email" disabled></label>
+          <label>Password<input id="invitePassword" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label>
+          <label>Confirm password<input id="inviteConfirm" type="password" autocomplete="new-password" minlength="8" required placeholder="Repeat password"></label>
+          <button type="submit">Create invited account <span aria-hidden="true">&#8594;</span></button>
+        </form>
+
+        <section id="accessMessage" class="access-message" hidden>
+          <p id="messageLabel">ACCESS NOTICE</p>
+          <h2 id="messageTitle">Invitation required</h2>
+          <span id="messageCopy">Use the private link sent by your administrator.</span>
+          <a href="/login">Return to login</a>
+        </section>
+
+        <p id="formError" class="form-error" role="alert" hidden></p>
+      </section>
+    </main>
+
+    <footer><span>NO PUBLIC REGISTRATION</span><span>SEARCH INDEXING DISABLED</span><span>SESSION ENCRYPTED IN TRANSIT</span></footer>
+    <script src="/access.js"></script>
+  </body>
+</html>

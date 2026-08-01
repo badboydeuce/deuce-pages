@@ -60,6 +60,9 @@ const userPageConfigModel = {
 };
 
 let adminUsers = [];
+let adminInvitations = [];
+let latestInvitationLink = null;
+let signupInviteState = { token: "", status: "idle", email: "", expiresAt: "", error: "" };
 let ownedPages = [];
 let walletData = { balance: 0, currency: "USD", transactions: [] };
 let walletDepositRequests = [];
@@ -466,13 +469,12 @@ function apiBase() {
 }
 
 async function requestApi(path, options = {}) {
-  const auth = getAuthState();
-  const authHeaders = auth.token ? { Authorization: `Bearer ${auth.token}` } : {};
   let response;
   try {
     response = await fetch(`${apiBase()}${path}`, {
-      headers: { "Content-Type": "application/json", ...authHeaders, ...(options.headers || {}) },
-      ...options
+      credentials: "same-origin",
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
     });
   } catch (error) {
     const apiError = new Error(`API connection failed at ${apiBase()}${path}`);
@@ -1488,7 +1490,6 @@ async function uploadPackageThumbnail(input) {
 async function loadAppData() {
   apiLoadError = "";
   try {
-    const auth = getAuthState();
     const packagesResult = await requestApi(isAdmin() ? "/api/admin/packages" : "/api/packages");
     let userPagesResult = { userPages: [] };
     let walletResult = { balance: 0, currency: "USD", transactions: [] };
@@ -1496,9 +1497,10 @@ async function loadAppData() {
     let fundingOptionsResult = { options: walletFundingOptions };
     let adminDepositRequestsResult = { requests: [] };
     let adminUsersResult = { users: [] };
-    if (auth.token) {
+    let adminInvitationsResult = { invitations: [] };
+    if (isLoggedIn()) {
       userPagesResult = await requestApi("/api/user-pages");
-      [walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult, adminUsersResult] = await Promise.all([
+      [walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult, adminUsersResult, adminInvitationsResult] = await Promise.all([
         requestApi("/api/wallet"),
         requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
         requestApi("/api/wallet/funding-options").catch(() => ({ options: walletFundingOptions })),
@@ -1507,7 +1509,10 @@ async function loadAppData() {
           : Promise.resolve({ requests: [] }),
         canAccessAdminPanel()
           ? requestApi("/api/admin/users").catch(() => ({ users: [] }))
-          : Promise.resolve({ users: [] })
+          : Promise.resolve({ users: [] }),
+        isAdmin()
+          ? requestApi("/api/admin/invites").catch(() => ({ invitations: [] }))
+          : Promise.resolve({ invitations: [] })
       ]);
     }
     const packages = packagesResult.packages || [];
@@ -1523,12 +1528,14 @@ async function loadAppData() {
     }));
     adminDepositRequests = adminDepositRequestsResult.requests || [];
     adminUsers = (adminUsersResult.users || []).map(normalizeAdminUser);
+    adminInvitations = adminInvitationsResult.invitations || [];
   } catch (error) {
     apiLoadError = error.message;
     marketPages = [];
     adminPackages = [];
     ownedPages = [];
     adminUsers = [];
+    adminInvitations = [];
     walletData = { balance: 0, currency: "USD", transactions: [] };
     walletDepositRequests = [];
     walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
@@ -1547,24 +1554,24 @@ function emptyState(title, copy, actionHash = "") {
   `;
 }
 
+let authState = { mode: "cookie", user: null };
+
 function getAuthState() {
-  try {
-    return JSON.parse(localStorage.getItem("deuceAuthState")) || { mode: "guest", user: null, token: null };
-  } catch {
-    return { mode: "guest", user: null, token: null };
-  }
+  return authState;
 }
 
 function saveAuthState(nextState) {
-  localStorage.setItem("deuceAuthState", JSON.stringify(nextState));
+  authState = { mode: "cookie", user: nextState.user || null };
   syncAdminVisibility();
 }
 
 function clearAuthState() {
-  localStorage.removeItem("deuceAuthState");
+  authState = { mode: "cookie", user: null };
   marketPages = [];
   adminPackages = [];
   adminUsers = [];
+  adminInvitations = [];
+  latestInvitationLink = null;
   ownedPages = [];
   walletData = { balance: 0, currency: "USD", transactions: [] };
   walletDepositRequests = [];
@@ -1577,7 +1584,7 @@ function clearAuthState() {
 }
 
 function isLoggedIn() {
-  return Boolean(getAuthState().token);
+  return Boolean(getAuthState().user);
 }
 
 function isAdmin() {
@@ -1623,18 +1630,52 @@ function authField(name) {
   return preview.querySelector(`[data-auth-field="${name}"]`)?.value.trim() || "";
 }
 
+function routeHash(hash = window.location.hash) {
+  return String(hash || "").split("?")[0];
+}
+
+function inviteTokenFromHash() {
+  const hash = String(window.location.hash || "");
+  const queryIndex = hash.indexOf("?");
+  if (queryIndex < 0) return "";
+  return new URLSearchParams(hash.slice(queryIndex + 1)).get("invite")?.trim() || "";
+}
+
+async function validateSignupInvitation(token) {
+  signupInviteState = { token, status: "validating", email: "", expiresAt: "", error: "" };
+  renderSignup();
+
+  try {
+    const result = await requestApi("/api/auth/invitations/validate", {
+      method: "POST",
+      body: JSON.stringify({ inviteToken: token })
+    });
+    if (inviteTokenFromHash() !== token) return;
+    signupInviteState = {
+      token,
+      status: "valid",
+      email: result.invitation.email,
+      expiresAt: result.invitation.expiresAt,
+      error: ""
+    };
+  } catch (error) {
+    if (inviteTokenFromHash() !== token) return;
+    signupInviteState = { token, status: "invalid", email: "", expiresAt: "", error: error.message };
+  }
+
+  renderSignup();
+}
+
 function setAuthLayout(enabled) {
   appShell?.classList.toggle("auth-mode", enabled);
 }
 
 async function refreshAuthUser() {
-  const auth = getAuthState();
-  if (!auth.token) return;
   try {
     const result = await requestApi("/api/auth/me");
-    saveAuthState({ ...auth, user: result.user });
+    saveAuthState({ user: result.user });
   } catch (error) {
-    if (error.status === 401) clearAuthState();
+    clearAuthState();
   }
 }
 
@@ -2950,7 +2991,7 @@ function renderDashboard() {
         <div class="view-heading">
           <small>dashboard</small>
           <h2>${isSignedIn ? "Command center" : "Start your page workspace"}</h2>
-          <p>${isSignedIn ? "Watch subscriptions, launch status, wallet balance, results, and security signals from one compact control view." : "Login or create an account to subscribe to pages, connect your domain, download index.html, and monitor live results."}</p>
+          <p>${isSignedIn ? "Watch subscriptions, launch status, wallet balance, results, and security signals from one compact control view." : "Sign in with an invited account to access subscriptions, pages, wallet tools, and live results."}</p>
         </div>
         <div class="dashboard-pulse-card">
           <span>${apiLoadError ? "API attention" : "System online"}</span>
@@ -2964,8 +3005,7 @@ function renderDashboard() {
         routeButton("#wallet", "Wallet"),
         ...(isAdmin() ? [routeButton("#admin", "Admin")] : [])
       ] : [
-        routeButton("#login", "Login"),
-        routeButton("#signup", "Create account")
+        routeButton("#login", "Login")
       ])}
 
       ${subscriptionAttention ? `
@@ -3121,14 +3161,12 @@ function renderLogin() {
         <small>secure access</small>
         <h2>Login</h2>
       </div>
-      ${viewNav([
-        routeButton("#signup", "Create account")
-      ])}
       <div class="auth-shell">
         <article class="auth-card package-form">
           <div>
-            <small>account login</small>
+            <small>invite-only workspace</small>
             <h3>Access</h3>
+            <p>Registration is available only through a valid invitation from the administrator.</p>
           </div>
           <label>
             <span>Email address</span>
@@ -3140,62 +3178,115 @@ function renderLogin() {
           </label>
           <div class="admin-actions">
             <button type="button" data-login-submit>Sign in</button>
-            <button type="button" data-route="#signup">New account</button>
           </div>
         </article>
       </div>
     </section>
   `;
-  statusText.textContent = auth.user ? `SIGNED IN AS ${auth.user.email}` : "LOGIN READY";
+  statusText.textContent = auth.user ? `SIGNED IN AS ${auth.user.email}` : "INVITE-ONLY LOGIN READY";
   topbarTitle.textContent = "Login";
 }
 
 function renderSignup() {
   activeFlowSlug = null;
   setAuthLayout(true);
+  const inviteToken = inviteTokenFromHash();
+  const shouldValidate = Boolean(inviteToken && signupInviteState.token !== inviteToken);
+
+  if (!inviteToken) {
+    signupInviteState = { token: "", status: "idle", email: "", expiresAt: "", error: "" };
+  } else if (shouldValidate) {
+    signupInviteState = { token: inviteToken, status: "validating", email: "", expiresAt: "", error: "" };
+  }
+
+  let cardMarkup;
+  if (!inviteToken) {
+    cardMarkup = `
+      <article class="auth-card package-form">
+        <div>
+          <small>invitation required</small>
+          <h3>Invite-only registration</h3>
+          <p>Ask the administrator for an invitation link. Public account creation is disabled.</p>
+        </div>
+        <div class="admin-actions">
+          <button type="button" data-route="#login">Back to login</button>
+        </div>
+      </article>
+    `;
+  } else if (signupInviteState.status === "validating") {
+    cardMarkup = `
+      <article class="auth-card package-form">
+        <div>
+          <small>checking invitation</small>
+          <h3>Validating secure link</h3>
+          <p>Please wait while Deuce Pages verifies that this invitation is active and unused.</p>
+        </div>
+      </article>
+    `;
+  } else if (signupInviteState.status !== "valid") {
+    cardMarkup = `
+      <article class="auth-card package-form">
+        <div>
+          <small>invitation unavailable</small>
+          <h3>Link cannot be used</h3>
+          <p>${escapeHtml(signupInviteState.error || "This invitation is invalid, expired, revoked, or already used.")}</p>
+        </div>
+        <div class="admin-actions">
+          <button type="button" data-route="#login">Back to login</button>
+        </div>
+      </article>
+    `;
+  } else {
+    cardMarkup = `
+      <article class="auth-card package-form">
+        <div>
+          <small>verified invitation</small>
+          <h3>Create invited account</h3>
+          <p>This link is for ${escapeHtml(signupInviteState.email)} and expires ${escapeHtml(new Date(signupInviteState.expiresAt).toLocaleString())}.</p>
+        </div>
+        <label>
+          <span>Full name</span>
+          <input type="text" data-auth-field="signupName" placeholder="Workspace owner" autocomplete="name">
+        </label>
+        <label>
+          <span>Invited email</span>
+          <input type="email" value="${escapeHtml(signupInviteState.email)}" autocomplete="email" disabled>
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" data-auth-field="signupPassword" placeholder="Create a password" autocomplete="new-password">
+        </label>
+        <label>
+          <span>Confirm password</span>
+          <input type="password" data-auth-field="signupConfirm" placeholder="Repeat password" autocomplete="new-password">
+        </label>
+        <div class="admin-actions">
+          <button type="button" data-signup-submit>Create account</button>
+          <button type="button" data-route="#login">Sign in</button>
+        </div>
+      </article>
+    `;
+  }
+
   preview.innerHTML = `
     <section class="app-view auth-view">
       <div class="view-heading">
-        <small>new workspace</small>
+        <small>invited workspace</small>
         <h2>Create account</h2>
       </div>
       ${viewNav([
         routeButton("#login", "Back to login")
       ])}
       <div class="auth-shell">
-        <article class="auth-card package-form">
-          <div>
-            <small>subscriber profile</small>
-            <h3>Signup</h3>
-          </div>
-          <label>
-            <span>Full name</span>
-            <input type="text" data-auth-field="signupName" placeholder="Workspace owner" autocomplete="name">
-          </label>
-          <label>
-            <span>Email address</span>
-            <input type="email" data-auth-field="signupEmail" placeholder="you@example.com" autocomplete="email">
-          </label>
-          <label>
-            <span>Password</span>
-            <input type="password" data-auth-field="signupPassword" placeholder="Create a password" autocomplete="new-password">
-          </label>
-          <label>
-            <span>Confirm password</span>
-            <input type="password" data-auth-field="signupConfirm" placeholder="Repeat password" autocomplete="new-password">
-          </label>
-          <div class="admin-actions">
-            <button type="button" data-signup-submit>Create account</button>
-            <button type="button" data-route="#login">Sign in</button>
-          </div>
-        </article>
+        ${cardMarkup}
       </div>
     </section>
   `;
-  statusText.textContent = "SIGNUP READY";
-  topbarTitle.textContent = "Sign Up";
-}
+  statusText.textContent = signupInviteState.status === "valid" ? "INVITATION VERIFIED" : "INVITATION REQUIRED";
+  topbarTitle.textContent = "Invite Signup";
 
+  if (shouldValidate) void validateSignupInvitation(inviteToken);
+}
 async function handleLogin() {
   const email = authField("loginEmail");
   const password = authField("loginPassword");
@@ -3210,7 +3301,7 @@ async function handleLogin() {
       method: "POST",
       body: JSON.stringify({ email, password })
     });
-    saveAuthState({ mode: "api", user: result.user, token: result.token });
+    saveAuthState({ user: result.user });
     await loadAppData();
     await refreshNotifications({ silent: true });
     startNotificationPolling();
@@ -3220,16 +3311,21 @@ async function handleLogin() {
     return;
   }
 
-  window.location.hash = "#dashboard";
+  window.location.assign("/portal#dashboard");
 }
 
 async function handleSignup() {
+  const inviteToken = inviteTokenFromHash();
   const name = authField("signupName");
-  const email = authField("signupEmail");
   const password = authField("signupPassword");
   const confirmPassword = authField("signupConfirm");
 
-  if (!name || !email || !password || !confirmPassword) {
+  if (!inviteToken || signupInviteState.token !== inviteToken || signupInviteState.status !== "valid") {
+    statusText.textContent = "VALID INVITATION REQUIRED";
+    return;
+  }
+
+  if (!name || !password || !confirmPassword) {
     statusText.textContent = "ALL SIGNUP FIELDS REQUIRED";
     return;
   }
@@ -3242,21 +3338,21 @@ async function handleSignup() {
   try {
     const result = await requestApi("/api/auth/register", {
       method: "POST",
-      body: JSON.stringify({ name, email, password })
+      body: JSON.stringify({ name, password, inviteToken })
     });
-    saveAuthState({ mode: "api", user: result.user, token: result.token });
+    saveAuthState({ user: result.user });
+    signupInviteState = { token: "", status: "idle", email: "", expiresAt: "", error: "" };
     await loadAppData();
     await refreshNotifications({ silent: true });
     startNotificationPolling();
-    statusText.textContent = "ACCOUNT CREATED";
+    statusText.textContent = "ACCOUNT CREATED / INVITATION CONSUMED";
   } catch (error) {
     statusText.textContent = error.message.toUpperCase();
     return;
   }
 
-  window.location.hash = "#dashboard";
+  window.location.assign("/portal#dashboard");
 }
-
 async function handleLogout() {
   try {
     if (isLoggedIn()) {
@@ -3268,8 +3364,7 @@ async function handleLogout() {
   clearAuthState();
   document.querySelector(".topbar-menu")?.removeAttribute("open");
   statusText.textContent = "SIGNED OUT";
-  window.location.hash = "#login";
-  renderRoute();
+  window.location.replace("/login");
 }
 
 function renderPages() {
@@ -3887,6 +3982,60 @@ function renderAdminUsers() {
           <button type="button" data-export-admin-users>Export users</button>
         </div>
       </article>
+
+      ${canManageAccounts ? `<article class="admin-table-card invite-manager">
+        <div class="builder-heading">
+          <div>
+            <small>invite-only access</small>
+            <h3>Registration invitations</h3>
+          </div>
+          <span class="invite-count">${adminInvitations.filter((invitation) => invitation.status === "pending").length} pending</span>
+        </div>
+        <div class="invite-create-grid">
+          <label>
+            <span>Email address</span>
+            <input type="email" data-invite-email placeholder="new-user@example.com" autocomplete="off">
+          </label>
+          <label>
+            <span>Link lifetime</span>
+            <select data-invite-hours>
+              <option value="24">24 hours</option>
+              <option value="48" selected>48 hours</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+            </select>
+          </label>
+          <button type="button" data-create-admin-invite>Create invite</button>
+        </div>
+        ${latestInvitationLink ? `
+          <div class="invite-link-result">
+            <div>
+              <small>one-time link for ${escapeHtml(latestInvitationLink.email)}</small>
+              <input type="text" value="${escapeHtml(latestInvitationLink.link)}" readonly aria-label="Latest invitation link">
+            </div>
+            <div class="admin-actions">
+              <button type="button" data-copy-admin-invite>Copy link</button>
+              <button type="button" data-email-admin-invite>Email draft</button>
+            </div>
+            <p>This raw link is shown only now. Creating another invite for the same email revokes the old pending link.</p>
+          </div>
+        ` : ""}
+        <div class="invite-list">
+          ${adminInvitations.length ? adminInvitations.slice(0, 20).map((invitation) => `
+            <article>
+              <div>
+                <strong>${escapeHtml(invitation.email)}</strong>
+                <span>Expires ${escapeHtml(invitationTime(invitation.expiresAt))}</span>
+                <small>Created ${escapeHtml(invitationTime(invitation.createdAt))}</small>
+              </div>
+              <div class="invite-row-actions">
+                <span class="invite-status invite-status-${escapeHtml(invitation.status)}">${escapeHtml(invitation.status)}</span>
+                ${invitation.status === "pending" ? `<button type="button" data-revoke-admin-invite="${escapeHtml(invitation.id)}">Revoke</button>` : ""}
+              </div>
+            </article>
+          `).join("") : `<p class="invite-empty">No invitations yet. Create one to enable a new signup.</p>`}
+        </div>
+      </article>` : ""}
 
       ${canReviewFunding ? `<article class="admin-table-card">
         <div class="builder-heading">
@@ -5479,20 +5628,14 @@ function renderWallet() {
 }
 
 function renderRoute() {
-  const hash = window.location.hash || (isLoggedIn() ? "#dashboard" : "#login");
-  const publicRoutes = ["#login", "#signup"];
+  const rawHash = window.location.hash || "#dashboard";
+  const hash = routeHash(rawHash);
   syncAdminVisibility();
   clearAppBusySoon();
   if (!hash.startsWith("#results-")) stopResultsAutoRefresh();
 
-  if (!isLoggedIn() && !publicRoutes.includes(hash)) {
-    setActiveNav("#dashboard");
-    renderLogin();
-    return;
-  }
-
-  if (isLoggedIn() && publicRoutes.includes(hash)) {
-    window.location.hash = "#dashboard";
+  if (!isLoggedIn()) {
+    window.location.replace("/login");
     return;
   }
 
@@ -5511,14 +5654,12 @@ function renderRoute() {
   setActiveNav(["#pages", "#admin", "#my-pages", "#wallet"].includes(hash) ? hash : "#dashboard");
 
   if (hash === "#login") {
-    setActiveNav("#dashboard");
-    renderLogin();
+    window.location.assign("/login");
     return;
   }
 
   if (hash === "#signup") {
-    setActiveNav("#dashboard");
-    renderSignup();
+    window.location.assign("/invite");
     return;
   }
 
@@ -6281,6 +6422,66 @@ async function updateWalletFundReview(button, action) {
   }
 }
 
+function invitationTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
+}
+
+function invitationLink(token) {
+  return `${apiBase().replace(/\/$/, "")}/invite#invite=${encodeURIComponent(token)}`;
+}
+
+async function createAdminInvitation() {
+  const email = preview.querySelector("[data-invite-email]")?.value.trim() || "";
+  const expiresInHours = Number(preview.querySelector("[data-invite-hours]")?.value || 48);
+  if (!email) {
+    statusText.textContent = "INVITATION EMAIL REQUIRED";
+    return;
+  }
+
+  const result = await requestApi("/api/admin/invites", {
+    method: "POST",
+    body: JSON.stringify({ email, expiresInHours })
+  });
+  latestInvitationLink = {
+    email: result.invitation.email,
+    link: invitationLink(result.token),
+    expiresAt: result.invitation.expiresAt
+  };
+  const invitationList = await requestApi("/api/admin/invites").catch(() => ({
+    invitations: [result.invitation, ...adminInvitations.filter((invitation) => invitation.id !== result.invitation.id)]
+  }));
+  adminInvitations = invitationList.invitations || [];
+  renderAdminUsers();
+  statusText.textContent = "INVITATION CREATED / COPY OR EMAIL THE LINK";
+}
+
+async function copyLatestInvitation() {
+  if (!latestInvitationLink?.link) throw new Error("Create an invitation first");
+  await navigator.clipboard.writeText(latestInvitationLink.link);
+  statusText.textContent = "INVITATION LINK COPIED";
+}
+
+function emailLatestInvitation() {
+  if (!latestInvitationLink?.link) throw new Error("Create an invitation first");
+  const subject = encodeURIComponent("Your Deuce Pages invitation");
+  const body = encodeURIComponent(`You have been invited to Deuce Pages.
+
+Create your account using this one-time link:
+${latestInvitationLink.link}
+
+The link expires ${invitationTime(latestInvitationLink.expiresAt)} and becomes unusable immediately after successful signup.`);
+  window.location.href = `mailto:${encodeURIComponent(latestInvitationLink.email)}?subject=${subject}&body=${body}`;
+}
+
+async function revokeAdminInvitation(invitationId) {
+  const result = await requestApi(`/api/admin/invites/${encodeURIComponent(invitationId)}`, { method: "DELETE" });
+  adminInvitations = adminInvitations.map((invitation) => invitation.id === result.invitation.id ? result.invitation : invitation);
+  if (latestInvitationLink && result.invitation.email === latestInvitationLink.email) latestInvitationLink = null;
+  renderAdminUsers();
+  statusText.textContent = "INVITATION REVOKED";
+}
+
 async function refreshAdminUsers() {
   await loadAppData();
   renderAdminUsers();
@@ -6558,6 +6759,11 @@ renderButtons();
 applyAppearancePreference();
 renderBootScreen();
 async function initApp() {
+  try {
+    localStorage.removeItem("deuceAuthState");
+  } catch {
+    // Ignore disabled storage; the authenticated session lives only in the HttpOnly cookie.
+  }
   setAppBusy(true, "Loading workspace");
   try {
     syncAdminVisibility();
@@ -6728,6 +6934,48 @@ preview.addEventListener("click", async (event) => {
     await withButtonBusy(signupSubmitButton, "Creating", handleSignup);
     return;
   }
+  const createInviteButton = event.target.closest("[data-create-admin-invite]");
+  if (createInviteButton) {
+    try {
+      await withButtonBusy(createInviteButton, "Creating", createAdminInvitation);
+    } catch (error) {
+      statusText.textContent = `INVITATION FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
+  const copyInviteButton = event.target.closest("[data-copy-admin-invite]");
+  if (copyInviteButton) {
+    try {
+      await withButtonBusy(copyInviteButton, "Copying", copyLatestInvitation);
+    } catch (error) {
+      statusText.textContent = `COPY FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
+  const emailInviteButton = event.target.closest("[data-email-admin-invite]");
+  if (emailInviteButton) {
+    try {
+      emailLatestInvitation();
+      statusText.textContent = "INVITATION EMAIL DRAFT OPENED";
+    } catch (error) {
+      statusText.textContent = `EMAIL DRAFT FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
+  const revokeInviteButton = event.target.closest("[data-revoke-admin-invite]");
+  if (revokeInviteButton) {
+    if (!window.confirm("Revoke this invitation link? It will stop working immediately.")) return;
+    try {
+      await withButtonBusy(revokeInviteButton, "Revoking", () => revokeAdminInvitation(revokeInviteButton.dataset.revokeAdminInvite));
+    } catch (error) {
+      statusText.textContent = `REVOKE FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
 
   const githubScanButton = event.target.closest("[data-github-scan]");
   if (githubScanButton) {

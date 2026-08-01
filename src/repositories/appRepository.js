@@ -66,6 +66,63 @@ function toUser(row) {
   };
 }
 
+function invitationStatus(invitation) {
+  if (invitation.revokedAt) return "revoked";
+  if (invitation.usedAt) return "used";
+  if (new Date(invitation.expiresAt).getTime() <= Date.now()) return "expired";
+  return "pending";
+}
+
+function publicInvitation(invitation) {
+  if (!invitation) return null;
+  const clean = {
+    id: invitation.id,
+    email: invitation.email,
+    createdBy: invitation.createdBy || null,
+    usedBy: invitation.usedBy || null,
+    expiresAt: invitation.expiresAt,
+    usedAt: invitation.usedAt || null,
+    revokedAt: invitation.revokedAt || null,
+    createdAt: invitation.createdAt
+  };
+  return { ...clean, status: invitationStatus(clean) };
+}
+
+function toInvitation(row) {
+  if (!row) return null;
+  return publicInvitation({
+    id: row.id,
+    email: row.email,
+    createdBy: row.created_by,
+    usedBy: row.used_by,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+    revokedAt: row.revoked_at,
+    createdAt: row.created_at
+  });
+}
+
+function invitationError(status = 400) {
+  const error = new Error("Invitation is invalid, expired, or already used");
+  error.status = status;
+  return error;
+}
+
+function assertUsableInvitation(invitation) {
+  if (!invitation || invitation.revokedAt || invitation.usedAt) throw invitationError(410);
+  if (new Date(invitation.expiresAt).getTime() <= Date.now()) throw invitationError(410);
+}
+
+function normalizeInviteEmail(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    const error = new Error("A valid invitation email is required");
+    error.status = 400;
+    throw error;
+  }
+  return normalized;
+}
+
 function toUserPage(row) {
   if (!row) return null;
   return {
@@ -233,6 +290,193 @@ export async function createUser(data) {
   return toUser(result.rows[0]);
 }
 
+export async function createRegistrationInvitation({ email, expiresInHours = 48, createdBy = null } = {}) {
+  const normalizedEmail = normalizeInviteEmail(email);
+  const lifetimeHours = Number(expiresInHours);
+  if (!Number.isInteger(lifetimeHours) || lifetimeHours < 1 || lifetimeHours > 168) {
+    const error = new Error("Invitation lifetime must be between 1 and 168 hours");
+    error.status = 400;
+    throw error;
+  }
+
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(token);
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      db.registrationInvitations ||= [];
+      if (db.users.some((user) => user.email === normalizedEmail)) {
+        const error = new Error("An account already exists for this email");
+        error.status = 409;
+        throw error;
+      }
+
+      const now = new Date().toISOString();
+      db.registrationInvitations.forEach((invitation) => {
+        if (invitation.email === normalizedEmail && !invitation.usedAt && !invitation.revokedAt) {
+          invitation.revokedAt = now;
+        }
+      });
+      const invitation = {
+        id: createId("invite"),
+        email: normalizedEmail,
+        tokenHash,
+        createdBy,
+        usedBy: null,
+        expiresAt: new Date(Date.now() + lifetimeHours * 60 * 60 * 1000).toISOString(),
+        usedAt: null,
+        revokedAt: null,
+        createdAt: now
+      };
+      db.registrationInvitations.push(invitation);
+      return { invitation: publicInvitation(invitation), token };
+    });
+  }
+
+  return withTransaction(async (client) => {
+    const existing = await client.query("SELECT 1 FROM users WHERE lower(email) = $1 LIMIT 1", [normalizedEmail]);
+    if (existing.rows[0]) {
+      const error = new Error("An account already exists for this email");
+      error.status = 409;
+      throw error;
+    }
+    await client.query(
+      `UPDATE registration_invitations
+       SET revoked_at = now()
+       WHERE lower(email) = $1 AND used_at IS NULL AND revoked_at IS NULL`,
+      [normalizedEmail]
+    );
+    const result = await client.query(
+      `INSERT INTO registration_invitations (id, email, token_hash, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, now() + ($5::int * interval '1 hour'))
+       RETURNING *`,
+      [createId("invite"), normalizedEmail, tokenHash, createdBy, lifetimeHours]
+    );
+    return { invitation: toInvitation(result.rows[0]), token };
+  });
+}
+
+export async function inspectRegistrationInvitation(token) {
+  const tokenValue = String(token || "").trim();
+  if (!tokenValue) throw invitationError();
+
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const invitation = (db.registrationInvitations || []).find((item) => item.tokenHash === hashToken(tokenValue));
+    assertUsableInvitation(invitation);
+    return { email: invitation.email, expiresAt: invitation.expiresAt };
+  }
+
+  const result = await query(
+    "SELECT * FROM registration_invitations WHERE token_hash = $1 LIMIT 1",
+    [hashToken(tokenValue)]
+  );
+  const invitation = toInvitation(result.rows[0]);
+  assertUsableInvitation(invitation);
+  return { email: invitation.email, expiresAt: invitation.expiresAt };
+}
+
+export async function registerInvitedUser(data = {}) {
+  const token = String(data.inviteToken || "").trim();
+  if (!token) throw invitationError();
+  const name = String(data.name || "").trim();
+  if (!name) {
+    const error = new Error("Full name is required");
+    error.status = 400;
+    throw error;
+  }
+  const passwordHash = hashPassword(data.password);
+  const tokenHash = hashToken(token);
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      db.registrationInvitations ||= [];
+      const invitation = db.registrationInvitations.find((item) => item.tokenHash === tokenHash);
+      assertUsableInvitation(invitation);
+      if (db.users.some((user) => user.email === invitation.email)) {
+        const error = new Error("An account already exists for this email");
+        error.status = 409;
+        throw error;
+      }
+      const now = new Date().toISOString();
+      const user = {
+        id: createId("user"),
+        name,
+        email: invitation.email,
+        passwordHash,
+        role: roleForEmail(invitation.email),
+        status: "active",
+        walletBalance: 0,
+        collaboration: {},
+        createdAt: now,
+        updatedAt: now
+      };
+      db.users.push(user);
+      invitation.usedAt = now;
+      invitation.usedBy = user.id;
+      return publicJsonUser(user);
+    });
+  }
+
+  return withTransaction(async (client) => {
+    const invitationResult = await client.query(
+      "SELECT * FROM registration_invitations WHERE token_hash = $1 FOR UPDATE",
+      [tokenHash]
+    );
+    const invitation = toInvitation(invitationResult.rows[0]);
+    assertUsableInvitation(invitation);
+    const existing = await client.query("SELECT 1 FROM users WHERE lower(email) = $1 LIMIT 1", [invitation.email]);
+    if (existing.rows[0]) {
+      const error = new Error("An account already exists for this email");
+      error.status = 409;
+      throw error;
+    }
+    const userResult = await client.query(
+      `INSERT INTO users (id, name, email, password_hash, role, status, wallet_balance, collaboration)
+       VALUES ($1, $2, $3, $4, $5, 'active', 0, '{}'::jsonb)
+       RETURNING *`,
+      [createId("user"), name, invitation.email, passwordHash, roleForEmail(invitation.email)]
+    );
+    const user = toUser(userResult.rows[0]);
+    await client.query(
+      "UPDATE registration_invitations SET used_at = now(), used_by = $2 WHERE id = $1",
+      [invitation.id, user.id]
+    );
+    return user;
+  });
+}
+
+export async function listRegistrationInvitations() {
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    return (db.registrationInvitations || [])
+      .map(publicInvitation)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+  const result = await query("SELECT * FROM registration_invitations ORDER BY created_at DESC");
+  return result.rows.map(toInvitation);
+}
+
+export async function revokeRegistrationInvitation(invitationId) {
+  if (!invitationId) throw invitationError();
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const invitation = (db.registrationInvitations || []).find((item) => item.id === invitationId);
+      if (!invitation) return null;
+      if (!invitation.usedAt && !invitation.revokedAt) invitation.revokedAt = new Date().toISOString();
+      return publicInvitation(invitation);
+    });
+  }
+  const result = await query(
+    `UPDATE registration_invitations
+     SET revoked_at = COALESCE(revoked_at, CASE WHEN used_at IS NULL THEN now() ELSE NULL END)
+     WHERE id = $1
+     RETURNING *`,
+    [invitationId]
+  );
+  return toInvitation(result.rows[0]);
+}
+
 export async function authenticateUser(email, password) {
   if (!email || !password) throw new Error("Email and password are required");
   if (useJsonDb()) {
@@ -335,6 +579,21 @@ export async function getUserBySessionToken(token) {
     row = promoted.rows[0];
   }
   return toUser(row);
+}
+
+export async function revokeSessionToken(token) {
+  if (!token) return false;
+  const tokenHash = hashToken(token);
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const before = db.sessions.length;
+      db.sessions = db.sessions.filter((session) => session.tokenHash !== tokenHash);
+      return db.sessions.length !== before;
+    });
+  }
+
+  const result = await query("DELETE FROM user_sessions WHERE token_hash = $1", [tokenHash]);
+  return result.rowCount > 0;
 }
 
 export async function findUserByEmail(email) {
