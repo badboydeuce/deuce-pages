@@ -1,14 +1,15 @@
-import { getUserBySessionToken } from "../repositories/appRepository.js";
+import { getAuthSessionByToken } from "../repositories/appRepository.js";
 import { readSessionToken } from "../services/sessionCookie.js";
 
 export async function requireAuth(req, res, next) {
   try {
-    const user = await getUserBySessionToken(readSessionToken(req));
-    if (!user) {
+    const auth = await getAuthSessionByToken(readSessionToken(req));
+    if (!auth) {
       res.status(401).json({ error: "Authentication required" });
       return;
     }
-    req.user = user;
+    req.user = auth.user;
+    req.authSession = auth.session;
     next();
   } catch (error) {
     res.status(400).json({ error: error.message });

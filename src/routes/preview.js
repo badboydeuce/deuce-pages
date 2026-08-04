@@ -1,101 +1,136 @@
 import { Router } from "express";
-import { listPackages } from "../repositories/appRepository.js";
+import {
+  claimPackagePreviewTicket,
+  findPackage,
+  getPackagePreviewAccess
+} from "../repositories/appRepository.js";
 import {
   contentTypeFor,
   fetchPackageFile,
-  findPackageByPreviewToken,
   injectPreviewJourney,
   previewSourceForPackage,
   previewScreensForPackage,
   rewritePreviewAssets
 } from "../services/packagePreview.js";
 import { classifyFile } from "../services/githubImport.js";
+import { previewRouteBase } from "../services/appHosts.js";
+import {
+  clearPreviewSessionCookie,
+  readPreviewSessionToken,
+  setPreviewSessionCookie
+} from "../services/sessionCookie.js";
 import { inferRedirectFile, injectPreviewTurnstile, isCaptchaGatePage } from "../services/turnstile.js";
 
 export const previewRouter = Router();
 
-async function packageFromToken(token) {
-  const packages = await listPackages();
-  return findPackageByPreviewToken(packages, token);
+function noStore(res) {
+  res.setHeader("Cache-Control", "no-store, private");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet");
 }
 
-async function renderPreviewHtml(req, res, pagePackage, file) {
+async function requirePreviewSession(req, res, next) {
+  try {
+    const access = await getPackagePreviewAccess(readPreviewSessionToken(req));
+    if (!access) {
+      clearPreviewSessionCookie(res);
+      noStore(res);
+      res.status(401).type("text/plain").send("Preview session required");
+      return;
+    }
+    const pagePackage = await findPackage(access.packageId);
+    if (!pagePackage || pagePackage.version !== access.packageVersion) {
+      clearPreviewSessionCookie(res);
+      noStore(res);
+      res.status(410).type("text/plain").send("Preview session expired");
+      return;
+    }
+    req.previewAccess = access;
+    req.previewPackage = pagePackage;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function renderPreviewHtml(req, res, file) {
+  const pagePackage = req.previewPackage;
   const source = previewSourceForPackage(pagePackage, file);
   if (classifyFile(source.file) !== "html") {
-    res.status(400).send("Preview file must be HTML");
+    res.status(400).type("text/plain").send("Preview file must be HTML");
     return;
   }
 
   const response = await fetchPackageFile(source);
   const html = await response.text();
+  const basePath = previewRouteBase(req);
   if (!file && isCaptchaGatePage(html)) {
     const nextFile = inferRedirectFile(html);
-    res.redirect(302, `/preview/${encodeURIComponent(req.params.token)}/page?file=${encodeURIComponent(nextFile)}`);
+    res.redirect(302, basePath + "/p/page?file=" + encodeURIComponent(nextFile));
     return;
   }
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Cache-Control", "private, max-age=60");
-  res.setHeader("X-Robots-Tag", "noindex, nofollow");
+
+  noStore(res);
+  res.type("html");
   const screens = previewScreensForPackage(pagePackage);
-  const previewHtml = rewritePreviewAssets(injectPreviewTurnstile(html, { token: req.params.token }), { token: req.params.token, file: source.file });
-  res.send(injectPreviewJourney(previewHtml, { token: req.params.token, file: source.file, screens }));
+  const turnstileHtml = injectPreviewTurnstile(html, { basePath });
+  const previewHtml = rewritePreviewAssets(turnstileHtml, { basePath, file: source.file });
+  res.send(injectPreviewJourney(previewHtml, { basePath, file: source.file, screens }));
 }
 
-previewRouter.get("/:token/asset", async (req, res) => {
+previewRouter.get("/session/:ticket", async (req, res) => {
   try {
-    const pagePackage = await packageFromToken(req.params.token);
-    if (!pagePackage) {
-      res.status(404).send("Preview token not found");
-      return;
-    }
+    const session = await claimPackagePreviewTicket(req.params.ticket);
+    setPreviewSessionCookie(res, session);
+    noStore(res);
+    res.redirect(303, previewRouteBase(req) + "/p");
+  } catch {
+    clearPreviewSessionCookie(res);
+    noStore(res);
+    res.status(401).type("text/plain").send("Preview link is invalid, expired, or already used");
+  }
+});
 
+previewRouter.use("/p", requirePreviewSession);
+
+previewRouter.get("/p/asset", async (req, res) => {
+  try {
     const file = String(req.query.file || "");
     if (!file) {
-      res.status(400).send("Asset file is required");
+      res.status(400).type("text/plain").send("Asset file is required");
       return;
     }
 
-    const source = previewSourceForPackage(pagePackage, file);
+    const source = previewSourceForPackage(req.previewPackage, file);
     const response = await fetchPackageFile(source);
     const buffer = Buffer.from(await response.arrayBuffer());
+    noStore(res);
     res.setHeader("Content-Type", contentTypeFor(file));
-    res.setHeader("Cache-Control", "private, max-age=60");
     res.send(buffer);
-  } catch (error) {
-    res.status(404).send(String(error.message || error));
+  } catch {
+    noStore(res);
+    res.status(404).type("text/plain").send("Preview asset not found");
   }
 });
 
-previewRouter.get("/:token/page", async (req, res) => {
+previewRouter.get("/p/page", async (req, res) => {
+  const file = String(req.query.file || "");
+  if (!file) {
+    res.status(400).type("text/plain").send("Preview page file is required");
+    return;
+  }
   try {
-    const pagePackage = await packageFromToken(req.params.token);
-    if (!pagePackage) {
-      res.status(404).send("Preview token not found");
-      return;
-    }
-
-    const file = String(req.query.file || "");
-    if (!file) {
-      res.status(400).send("Preview page file is required");
-      return;
-    }
-
-    await renderPreviewHtml(req, res, pagePackage, file);
-  } catch (error) {
-    res.status(400).send(`<pre>${String(error.message || error)}</pre>`);
+    await renderPreviewHtml(req, res, file);
+  } catch {
+    noStore(res);
+    res.status(400).type("text/plain").send("Preview page is unavailable");
   }
 });
 
-previewRouter.get("/:token", async (req, res) => {
+previewRouter.get("/p", async (req, res) => {
   try {
-    const pagePackage = await packageFromToken(req.params.token);
-    if (!pagePackage) {
-      res.status(404).send("Preview token not found");
-      return;
-    }
-
-    await renderPreviewHtml(req, res, pagePackage);
-  } catch (error) {
-    res.status(400).send(`<pre>${String(error.message || error)}</pre>`);
+    await renderPreviewHtml(req, res);
+  } catch {
+    noStore(res);
+    res.status(400).type("text/plain").send("Preview page is unavailable");
   }
 });

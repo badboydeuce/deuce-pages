@@ -42,12 +42,31 @@ The repository layer lives in `src/repositories/appRepository.js`. Routes call t
 Set these environment variables in Render:
 
 ```txt
-APP_BASE_URL=
-API_BASE_URL=
-CORS_ORIGINS=
+APP_BASE_URL=https://deucetoolkit.cloud
+PUBLIC_BASE_URL=https://deucetoolkit.cloud
+PORTAL_BASE_URL=https://deucetoolkit.cloud
+PREVIEW_BASE_URL=https://preview.deucetoolkit.cloud
+API_BASE_URL=https://deucetoolkit.cloud
+CORS_ORIGINS=https://deucetoolkit.cloud
 JWT_SECRET=
 DATABASE_URL=
 ```
+
+Add both `deucetoolkit.cloud` and `preview.deucetoolkit.cloud` as custom domains
+on the same Render web service. Point the DNS record Render supplies for the
+preview hostname to that service. Do not add the preview origin to
+`CORS_ORIGINS`; browser navigation works without CORS and preview responses are
+intentionally unreadable from other origins.
+
+The preview hostname exposes only one-time preview-session routes. A signed-in
+user requests a launch with `POST /api/packages/:id/preview-session`, follows a
+90-second single-use exchange URL, then receives an HttpOnly host-only preview
+cookie lasting at most 15 minutes. The preview is also invalidated when its
+parent portal session ends. Imported HTML is served with a CSP sandbox and
+cannot reach the portal API or portal cookie.
+
+If `PREVIEW_TURNSTILE_SITE_KEY` is configured, allow
+`preview.deucetoolkit.cloud` in that Turnstile widget's hostname settings.
 
 ## Current Routes
 
@@ -69,6 +88,8 @@ POST  /api/admin/packages
 GET   /api/admin/packages/:id
 PATCH /api/admin/packages/:id
 POST  /api/admin/packages/:id/publish
+GET   /api/packages/:id/asset
+POST  /api/packages/:id/preview-session
 POST  /api/packages/:id/subscribe
 ```
 

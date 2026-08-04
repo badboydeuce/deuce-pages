@@ -1,4 +1,5 @@
 export const sessionCookieName = "deuce_session";
+export const previewSessionCookieName = "deuce_preview_session";
 
 function cookieValues(req) {
   const result = new Map();
@@ -22,6 +23,10 @@ export function readSessionToken(req) {
   return cookieValues(req).get(sessionCookieName) || "";
 }
 
+export function readPreviewSessionToken(req) {
+  return cookieValues(req).get(previewSessionCookieName) || "";
+}
+
 function sessionCookieOptions(expiresAt) {
   return {
     httpOnly: true,
@@ -41,6 +46,25 @@ export function clearSessionCookie(res) {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
+    path: "/"
+  });
+}
+
+export function setPreviewSessionCookie(res, session) {
+  res.cookie(previewSessionCookieName, session.token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+    expires: new Date(session.expiresAt)
+  });
+}
+
+export function clearPreviewSessionCookie(res) {
+  res.clearCookie(previewSessionCookieName, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
     path: "/"
   });
 }

@@ -12,6 +12,12 @@ services:
         sync: false
       - key: API_BASE_URL
         sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: PORTAL_BASE_URL
+        sync: false
+      - key: PREVIEW_BASE_URL
+        sync: false
       - key: CORS_ORIGINS
         sync: false
       - key: JWT_SECRET

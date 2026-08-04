@@ -52,6 +52,20 @@ CREATE TABLE IF NOT EXISTS page_packages (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS package_preview_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_session_id TEXT NOT NULL REFERENCES user_sessions(id) ON DELETE CASCADE,
+  package_id TEXT NOT NULL REFERENCES page_packages(id) ON DELETE CASCADE,
+  package_version TEXT NOT NULL,
+  exchange_token_hash TEXT UNIQUE NOT NULL,
+  preview_token_hash TEXT UNIQUE,
+  ticket_expires_at TIMESTAMPTZ NOT NULL,
+  claimed_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS package_versions (
   id TEXT PRIMARY KEY,
   package_id TEXT NOT NULL REFERENCES page_packages(id) ON DELETE CASCADE,
@@ -185,6 +199,10 @@ CREATE TABLE IF NOT EXISTS traffic_events (
 CREATE INDEX IF NOT EXISTS idx_page_packages_status ON page_packages(status);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_package_preview_exchange ON package_preview_sessions(exchange_token_hash);
+CREATE INDEX IF NOT EXISTS idx_package_preview_token ON package_preview_sessions(preview_token_hash);
+CREATE INDEX IF NOT EXISTS idx_package_preview_user_session ON package_preview_sessions(user_session_id);
+CREATE INDEX IF NOT EXISTS idx_package_preview_expires ON package_preview_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_registration_invitations_email ON registration_invitations(lower(email));
 CREATE INDEX IF NOT EXISTS idx_registration_invitations_token_hash ON registration_invitations(token_hash);
 CREATE INDEX IF NOT EXISTS idx_registration_invitations_created_at ON registration_invitations(created_at DESC);

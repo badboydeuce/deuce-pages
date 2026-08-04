@@ -3,7 +3,7 @@ import { Router } from "express";
 import { createPackage, findPackage, publishPackage, updatePackage } from "../repositories/appRepository.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { classifyFile, githubRawUrl, normalizeRepoUrl, scanGitHubRepository } from "../services/githubImport.js";
-import { withPreviewToken } from "../services/packagePreview.js";
+import { withPreviewAvailability } from "../services/packagePreview.js";
 import { injectPreviewTurnstile } from "../services/turnstile.js";
 import { finalizeLocalImport, startLooseImport, startZipImport } from "../services/localImport.js";
 import { objectStorageConfigured } from "../services/objectStorage.js";
@@ -64,7 +64,7 @@ importsRouter.post("/local/finalize", requireAdmin, async (req, res) => {
       ? await updatePackage(existing.id, packageData)
       : await createPackage(packageData);
     const finalPackage = publish ? await publishPackage(pagePackage.id) : pagePackage;
-    res.status(201).json({ package: withPreviewToken(finalPackage), scan, files: files.length });
+    res.status(201).json({ package: withPreviewAvailability(finalPackage), scan, files: files.length });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -353,7 +353,7 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
     const finalPackage = req.body.publish ? await publishPackage(pagePackage.id) : pagePackage;
     const responseScan = withGitHubPreviewTickets(scan, req.user.id);
 
-    res.status(201).json({ package: withPreviewToken(finalPackage), scan: responseScan });
+    res.status(201).json({ package: withPreviewAvailability(finalPackage), scan: responseScan });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

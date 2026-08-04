@@ -680,7 +680,7 @@ function normalizePackage(pagePackage) {
     previewFile,
     thumbnailDataUrl: pagePackage.packageManifest?.thumbnailDataUrl || "",
     thumbnailPath: findPackageThumbnail(pagePackage),
-    previewReady: Boolean((pagePackage.packageManifest?.github || pagePackage.packageManifest?.r2) && previewFile && pagePackage.previewToken)
+    previewReady: Boolean(pagePackage.previewAvailable && previewFile)
   };
 }
 
@@ -1892,11 +1892,9 @@ async function saveAdminPackage(page, { rerender = true } = {}) {
   return updated;
 }
 
-function openAdminPackagePreview(page) {
+async function openAdminPackagePreview(page) {
   if (!page) throw new Error("Package not found");
-  const url = packagePreviewUrl(page);
-  if (!url) throw new Error("Package preview is unavailable");
-  window.open(url, "_blank", "noopener");
+  await openPackagePreview(page);
   statusText.textContent = `${page.name.toUpperCase()} PREVIEW OPENED`;
 }
 
@@ -6123,13 +6121,13 @@ function renderLocalImportResult(result) {
   const scan = result.scan || {};
   const review = scan.review || {};
   const pagePackage = result.package;
-  const previewUrl = pagePackage ? packagePreviewUrl(pagePackage) : "";
+  const previewReady = Boolean(pagePackage?.previewAvailable);
   resultPanel.innerHTML = `
     <code>${escapeHtml(pagePackage ? `${pagePackage.name} ${pagePackage.status}` : "Local import complete")}</code>
     <code>${Number(result.files || scan.files?.length || 0)} files saved to private R2 storage.</code>
     <code>${escapeHtml(review.status || "ready")} — ${(review.warnings || []).length} warning(s)</code>
     ${(review.warnings || []).map((warning) => `<code>${escapeHtml(warning)}</code>`).join("")}
-    ${previewUrl ? `<div class="import-result-actions"><a href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener">Open package preview</a><button type="button" data-route="#admin-package-${escapeHtml(pagePackage.slug)}">Edit package</button></div>` : ""}
+    ${previewReady ? `<div class="import-result-actions"><button type="button" data-admin-package-preview="${escapeHtml(pagePackage.slug)}">Open package preview</button><button type="button" data-route="#admin-package-${escapeHtml(pagePackage.slug)}">Edit package</button></div>` : ""}
   `;
 }
 
@@ -6192,15 +6190,36 @@ function githubPreviewUrl(scan, filePath) {
   return `${apiBase()}/api/admin/import/github/preview?${params.toString()}`;
 }
 
-function packagePreviewUrl(pagePackage) {
-  if (!pagePackage.previewToken) return "";
-  return `${apiBase()}/preview/${encodeURIComponent(pagePackage.previewToken)}`;
+async function openPackagePreview(pagePackage) {
+  if (!pagePackage?.id || !(pagePackage.previewAvailable || pagePackage.previewReady)) {
+    throw new Error("Package preview is unavailable");
+  }
+
+  const popup = window.open("about:blank", "_blank");
+  if (popup) {
+    popup.opener = null;
+    popup.document.title = "Opening secure preview";
+    popup.document.body.textContent = "Opening secure preview...";
+  }
+
+  try {
+    const result = await requestApi(`/api/packages/${encodeURIComponent(pagePackage.id)}/preview-session`, {
+      method: "POST"
+    });
+    if (!result.previewUrl) throw new Error("Preview launch URL is unavailable");
+    if (popup) popup.location.replace(result.previewUrl);
+    else window.location.assign(result.previewUrl);
+    return result.previewUrl;
+  } catch (error) {
+    if (popup && !popup.closed) popup.close();
+    throw error;
+  }
 }
 
 function packageAssetUrl(pagePackage, filePath) {
-  if (!pagePackage.previewToken || !filePath) return "";
+  if (!pagePackage.id || !filePath) return "";
   const params = new URLSearchParams({ file: filePath });
-  return `${apiBase()}/preview/${encodeURIComponent(pagePackage.previewToken)}/asset?${params.toString()}`;
+  return `${apiBase()}/api/packages/${encodeURIComponent(pagePackage.id)}/asset?${params.toString()}`;
 }
 
 function packageThumbnailUrl(pagePackage) {
@@ -6560,7 +6579,7 @@ function renderGithubImportResult(scan, pagePackage) {
   const assets = scan.assets || [];
   const review = scan.review || { status: "review", checks: [], issues: [], warnings: [] };
   const firstPreviewUrl = htmlScreens[0] ? githubPreviewUrl(scan, htmlScreens[0].file) : "";
-  const previewUrl = pagePackage ? packagePreviewUrl(pagePackage) : "";
+  const previewReady = Boolean(pagePackage?.previewAvailable);
   const editorHash = pagePackage?.slug ? `#admin-package-${pagePackage.slug}` : "";
 
   resultPanel.innerHTML = `
@@ -6587,7 +6606,7 @@ function renderGithubImportResult(scan, pagePackage) {
     ` : ""}
     ${pagePackage ? `
       <div class="import-result-actions">
-        ${previewUrl ? `<a href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener">Open package preview</a>` : ""}
+        ${previewReady ? `<button type="button" data-admin-package-preview="${escapeHtml(pagePackage.slug)}">Open package preview</button>` : ""}
         ${editorHash ? `<button type="button" data-route="${escapeHtml(editorHash)}">Edit package</button>` : ""}
       </div>
     ` : ""}
@@ -7004,13 +7023,12 @@ preview.addEventListener("click", async (event) => {
   const marketPreviewButton = event.target.closest("[data-market-preview]");
   if (marketPreviewButton) {
     const pagePackage = marketPages.find((item) => item.slug === marketPreviewButton.dataset.marketPreview);
-    const previewUrl = pagePackage ? packagePreviewUrl(pagePackage) : "";
-    if (!previewUrl) {
-      statusText.textContent = "PACKAGE PREVIEW NOT AVAILABLE";
-      return;
+    try {
+      await openPackagePreview(pagePackage);
+      statusText.textContent = `${pagePackage.name.toUpperCase()} PREVIEW OPENED`;
+    } catch (error) {
+      statusText.textContent = `PREVIEW FAILED: ${error.message}`.toUpperCase();
     }
-    window.open(previewUrl, "_blank", "noopener");
-    statusText.textContent = `${pagePackage.name.toUpperCase()} PREVIEW OPENED`;
     return;
   }
 
@@ -7093,7 +7111,7 @@ preview.addEventListener("click", async (event) => {
 
   const previewAdminPackageButton = event.target.closest("[data-admin-package-preview]");
   if (previewAdminPackageButton) {
-    try { openAdminPackagePreview(getAdminPackage(previewAdminPackageButton.dataset.adminPackagePreview)); }
+    try { await openAdminPackagePreview(getAdminPackage(previewAdminPackageButton.dataset.adminPackagePreview)); }
     catch (error) { statusText.textContent = `PREVIEW FAILED: ${error.message}`.toUpperCase(); }
     return;
   }

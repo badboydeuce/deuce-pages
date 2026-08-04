@@ -16,9 +16,9 @@ import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
 import { configureClientIpTrust } from "./services/clientIp.js";
-import { requireAuth } from "./middleware/auth.js";
 import { getUserBySessionToken } from "./repositories/appRepository.js";
 import { readSessionToken } from "./services/sessionCookie.js";
+import { isPreviewHost, portalBaseUrl } from "./services/appHosts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,7 +48,8 @@ function isSameOrigin(req, origin) {
 }
 
 function isExecutablePackageRoute(req) {
-  return req.path.startsWith("/preview/")
+  return isPreviewHost(req)
+    || req.path.startsWith("/preview/")
     || /^\/api\/admin\/import\/github\/(?:preview|asset)$/.test(req.path)
     || /^\/api\/(?:runtime\/(?:runtime\/)?|)source(?:\/|$)/.test(req.path);
 }
@@ -106,9 +107,41 @@ const executablePackageHeaders = helmet({
   strictTransportSecurity: isProduction() ? { maxAge: 31536000, includeSubDomains: true } : false
 });
 
+const previewFrameAncestors = ["'self'", portalBaseUrl()].filter(Boolean);
+const isolatedPreviewHeaders = helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'none'"],
+      baseUri: ["'none'"],
+      connectSrc: ["'self'", "https://challenges.cloudflare.com"],
+      fontSrc: ["'self'", "data:"],
+      formAction: ["'self'"],
+      frameAncestors: previewFrameAncestors,
+      frameSrc: ["https://challenges.cloudflare.com"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      mediaSrc: ["'self'", "blob:"],
+      objectSrc: ["'none'"],
+      sandbox: ["allow-scripts", "allow-forms", "allow-modals", "allow-same-origin"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      workerSrc: ["'none'"],
+      upgradeInsecureRequests: isProduction() ? [] : null
+    }
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  referrerPolicy: { policy: "no-referrer" },
+  xFrameOptions: false,
+  strictTransportSecurity: isProduction() ? { maxAge: 31536000, includeSubDomains: true } : false
+});
+
 function securityHeaders(req, res, next) {
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
-  const middleware = isExecutablePackageRoute(req) ? executablePackageHeaders : portalHeaders;
+  const middleware = isPreviewHost(req) || req.path.startsWith("/preview/")
+    ? isolatedPreviewHeaders
+    : isExecutablePackageRoute(req) ? executablePackageHeaders : portalHeaders;
   return middleware(req, res, next);
 }
 
@@ -116,7 +149,8 @@ function corsMiddleware(req, res, next) {
   const origins = configuredCorsOrigins();
   const requestOrigin = req.headers.origin;
   const wildcardAllowed = !isProduction() && origins.includes("*");
-  const originAllowed = !requestOrigin || wildcardAllowed || origins.includes(requestOrigin) || isSameOrigin(req, requestOrigin);
+  const sameOrigin = requestOrigin ? isSameOrigin(req, requestOrigin) : true;
+  const originAllowed = !requestOrigin || (isPreviewHost(req) ? sameOrigin : wildcardAllowed || origins.includes(requestOrigin) || sameOrigin);
   const allowOrigin = requestOrigin && originAllowed ? (wildcardAllowed ? "*" : requestOrigin) : "";
 
   if (requestOrigin && !originAllowed) {
@@ -186,6 +220,14 @@ export function createApp() {
     next();
   });
 
+  app.use((req, res, next) => {
+    if (!isPreviewHost(req)) return next();
+    previewRouter(req, res, (error) => {
+      if (error) return next(error);
+      res.status(404).type("text/plain").send("Preview route not found");
+    });
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({
       ok: true,
@@ -213,7 +255,7 @@ export function createApp() {
   app.use("/api/runtime", runtimeRouter);
   app.use("/api", runtimeRouter);
   app.use("/api", eventsRouter);
-  app.use("/preview", requireAuth, previewRouter);
+  if (!isProduction()) app.use("/preview", previewRouter);
 
   app.get("/", (req, res) => res.redirect(302, "/blog/"));
   app.get("/robots.txt", (req, res) => {
@@ -232,9 +274,11 @@ export function createApp() {
   app.get("/favicon.svg", (req, res) => res.sendFile(path.join(publicRoot, "favicon.svg")));
   app.get("/access.css", (req, res) => res.sendFile(path.join(publicRoot, "access.css")));
   app.get("/access.js", (req, res) => sendNoStoreFile(res, "access.js"));
+  app.get("/login.js", (req, res) => sendNoStoreFile(res, "login.js"));
   app.get("/deuce-runtime-client.js", (req, res) => res.sendFile(path.join(publicRoot, "deuce-runtime-client.js")));
 
-  app.get(["/login", "/login/", "/invite", "/invite/"], (req, res) => sendNoStoreFile(res, "access.html"));
+  app.get(["/login", "/login/"], (req, res) => sendNoStoreFile(res, "login.html"));
+  app.get(["/invite", "/invite/"], (req, res) => sendNoStoreFile(res, "access.html"));
   app.use("/blog", express.static(blogRoot, {
     dotfiles: "deny",
     index: "index.html",

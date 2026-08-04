@@ -543,13 +543,14 @@ export async function createSession(userId) {
   return { token, sessionId: result.rows[0].id, expiresAt: result.rows[0].expires_at };
 }
 
-export async function getUserBySessionToken(token) {
+export async function getAuthSessionByToken(token) {
   if (!token) return null;
   if (useJsonDb()) {
     const db = await readJsonDb();
     const tokenHash = hashToken(token);
     const session = db.sessions.find((item) => item.tokenHash === tokenHash && new Date(item.expiresAt) > new Date());
     let user = session ? db.users.find((item) => item.id === session.userId && item.status === "active") : null;
+    if (!user) return null;
     const promotedRole = roleForEmail(user?.email, user?.role);
     if (user && promotedRole !== user.role) {
       user = await updateJsonDb((nextDb) => {
@@ -559,11 +560,19 @@ export async function getUserBySessionToken(token) {
         return target;
       });
     }
-    return publicJsonUser(user);
+    return {
+      user: publicJsonUser(user),
+      session: {
+        id: session.id,
+        userId: session.userId,
+        expiresAt: session.expiresAt
+      }
+    };
   }
 
   const result = await query(
-    `SELECT users.*
+    `SELECT users.*, user_sessions.id AS auth_session_id,
+            user_sessions.expires_at AS auth_session_expires_at
      FROM user_sessions
      JOIN users ON users.id = user_sessions.user_id
      WHERE user_sessions.token_hash = $1
@@ -573,13 +582,173 @@ export async function getUserBySessionToken(token) {
     [hashToken(token)]
   );
   let row = result.rows[0];
+  if (!row) return null;
+  const authSession = {
+    id: row.auth_session_id,
+    userId: row.id,
+    expiresAt: row.auth_session_expires_at
+  };
   const promotedRole = roleForEmail(row?.email, row?.role);
   if (row && promotedRole !== row.role) {
     const promoted = await query("UPDATE users SET role = $2, updated_at = now() WHERE id = $1 RETURNING *", [row.id, promotedRole]);
     row = promoted.rows[0];
   }
-  return toUser(row);
+  return { user: toUser(row), session: authSession };
 }
+
+export async function getUserBySessionToken(token) {
+  const auth = await getAuthSessionByToken(token);
+  return auth?.user || null;
+}
+
+function previewSessionError() {
+  const error = new Error("Preview session is invalid or expired");
+  error.status = 401;
+  return error;
+}
+
+export async function createPackagePreviewTicket({ userId, userSessionId, packageId, packageVersion }) {
+  const ticket = randomBytes(32).toString("base64url");
+  const now = Date.now();
+  const ticketExpiresAt = new Date(now + 90 * 1000).toISOString();
+  const expiresAt = new Date(now + 15 * 60 * 1000).toISOString();
+  const record = {
+    id: createId("pkgpreview"),
+    userId,
+    userSessionId,
+    packageId,
+    packageVersion,
+    exchangeTokenHash: hashToken(ticket),
+    previewTokenHash: null,
+    ticketExpiresAt,
+    claimedAt: null,
+    expiresAt,
+    createdAt: new Date(now).toISOString()
+  };
+
+  if (useJsonDb()) {
+    await updateJsonDb((db) => {
+      db.packagePreviewSessions = (db.packagePreviewSessions || []).filter((item) => new Date(item.expiresAt).getTime() > now);
+      db.packagePreviewSessions.push(record);
+      return record;
+    });
+    return { ticket, expiresAt, ticketExpiresAt };
+  }
+
+  await query(
+    `INSERT INTO package_preview_sessions
+      (id, user_id, user_session_id, package_id, package_version, exchange_token_hash, ticket_expires_at, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [record.id, userId, userSessionId, packageId, packageVersion, record.exchangeTokenHash, ticketExpiresAt, expiresAt]
+  );
+  return { ticket, expiresAt, ticketExpiresAt };
+}
+
+export async function claimPackagePreviewTicket(ticket) {
+  if (!ticket) throw previewSessionError();
+  const exchangeTokenHash = hashToken(ticket);
+  const previewToken = randomBytes(32).toString("base64url");
+  const previewTokenHash = hashToken(previewToken);
+
+  if (useJsonDb()) {
+    const access = await updateJsonDb((db) => {
+      const now = Date.now();
+      const target = (db.packagePreviewSessions || []).find((item) => item.exchangeTokenHash === exchangeTokenHash);
+      if (!target || target.claimedAt || new Date(target.ticketExpiresAt).getTime() <= now || new Date(target.expiresAt).getTime() <= now) {
+        throw previewSessionError();
+      }
+      const parentSession = db.sessions.find((item) => item.id === target.userSessionId && new Date(item.expiresAt).getTime() > now);
+      const user = parentSession && db.users.find((item) => item.id === target.userId && item.status === "active");
+      if (!user) throw previewSessionError();
+      target.previewTokenHash = previewTokenHash;
+      target.claimedAt = new Date(now).toISOString();
+      return {
+        userId: target.userId,
+        packageId: target.packageId,
+        packageVersion: target.packageVersion,
+        expiresAt: target.expiresAt
+      };
+    });
+    return { ...access, token: previewToken };
+  }
+
+  return withTransaction(async (client) => {
+    const found = await client.query(
+      `SELECT preview.*, users.status AS user_status,
+              user_sessions.expires_at AS user_session_expires_at
+       FROM package_preview_sessions preview
+       JOIN user_sessions ON user_sessions.id = preview.user_session_id
+       JOIN users ON users.id = preview.user_id
+       WHERE preview.exchange_token_hash = $1
+       FOR UPDATE OF preview`,
+      [exchangeTokenHash]
+    );
+    const row = found.rows[0];
+    const now = Date.now();
+    if (!row || row.claimed_at || row.user_status !== "active"
+      || new Date(row.ticket_expires_at).getTime() <= now
+      || new Date(row.expires_at).getTime() <= now
+      || new Date(row.user_session_expires_at).getTime() <= now) {
+      throw previewSessionError();
+    }
+    await client.query(
+      `UPDATE package_preview_sessions
+       SET preview_token_hash = $2, claimed_at = now()
+       WHERE id = $1`,
+      [row.id, previewTokenHash]
+    );
+    return {
+      token: previewToken,
+      userId: row.user_id,
+      packageId: row.package_id,
+      packageVersion: row.package_version,
+      expiresAt: row.expires_at
+    };
+  });
+}
+
+export async function getPackagePreviewAccess(token) {
+  if (!token) return null;
+  const previewTokenHash = hashToken(token);
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const now = Date.now();
+    const access = (db.packagePreviewSessions || []).find((item) => item.previewTokenHash === previewTokenHash
+      && item.claimedAt && new Date(item.expiresAt).getTime() > now);
+    if (!access) return null;
+    const parentSession = db.sessions.find((item) => item.id === access.userSessionId && new Date(item.expiresAt).getTime() > now);
+    const user = parentSession && db.users.find((item) => item.id === access.userId && item.status === "active");
+    if (!user) return null;
+    return {
+      userId: access.userId,
+      packageId: access.packageId,
+      packageVersion: access.packageVersion,
+      expiresAt: access.expiresAt
+    };
+  }
+
+  const result = await query(
+    `SELECT preview.user_id, preview.package_id, preview.package_version, preview.expires_at
+     FROM package_preview_sessions preview
+     JOIN user_sessions ON user_sessions.id = preview.user_session_id
+     JOIN users ON users.id = preview.user_id
+     WHERE preview.preview_token_hash = $1
+       AND preview.claimed_at IS NOT NULL
+       AND preview.expires_at > now()
+       AND user_sessions.expires_at > now()
+       AND users.status = 'active'
+     LIMIT 1`,
+    [previewTokenHash]
+  );
+  const row = result.rows[0];
+  return row ? {
+    userId: row.user_id,
+    packageId: row.package_id,
+    packageVersion: row.package_version,
+    expiresAt: row.expires_at
+  } : null;
+}
+
 
 export async function revokeSessionToken(token) {
   if (!token) return false;

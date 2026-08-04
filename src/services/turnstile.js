@@ -133,11 +133,13 @@ export function injectPreviewTurnstile(html, options = {}) {
 
   const hasWidget = /\bcf-turnstile\b/i.test(nextHtml);
   const hasScript = /challenges\.cloudflare\.com\/turnstile\/v0\/api\.js/i.test(nextHtml);
+  const hasPreviewRoute = Object.prototype.hasOwnProperty.call(options, "basePath");
+  const previewNext = String(options.basePath || "") + "/p/page?file=" + encodeURIComponent(redirectFile);
   const bootstrap = [
     siteKey ? `<script>window.DEUCE_TURNSTILE_SITE_KEY=${JSON.stringify(siteKey)};<\/script>` : "",
     hasWidget && siteKey && !hasScript ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer><\/script>` : "",
-    options.token && redirectFile ? `<script>
-window.DEUCE_PREVIEW_NEXT=${JSON.stringify(`/preview/${encodeURIComponent(options.token)}/page?file=${redirectFile}`)};
+    hasPreviewRoute && redirectFile ? `<script>
+window.DEUCE_PREVIEW_NEXT=${JSON.stringify(previewNext)};
 window.addEventListener("load", function () {
   window.onTurnstileSuccess = function () {
     var statusEl = document.getElementById("status");

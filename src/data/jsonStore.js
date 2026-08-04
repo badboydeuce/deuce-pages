@@ -11,6 +11,7 @@ function emptyDb() {
   return {
     users: [],
     sessions: [],
+    packagePreviewSessions: [],
     registrationInvitations: [],
     packages: [],
     userPages: [],

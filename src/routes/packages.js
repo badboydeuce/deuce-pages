@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  createPackagePreviewTicket,
   createPackage,
   deletePackage,
   findPackage,
@@ -10,9 +11,16 @@ import {
   updatePackage
 } from "../repositories/appRepository.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
-import { withPreviewToken } from "../services/packagePreview.js";
+import {
+  contentTypeFor,
+  fetchPackageFile,
+  previewSourceForPackage,
+  withPreviewAvailability
+} from "../services/packagePreview.js";
 import { validatePackageData } from "../services/packageValidation.js";
 import { deleteObjectPrefix } from "../services/objectStorage.js";
+import { previewLaunchUrl } from "../services/appHosts.js";
+import { classifyFile } from "../services/githubImport.js";
 
 export const packagesRouter = Router();
 
@@ -25,10 +33,14 @@ function adminOnlyOnAdminMount(req, res, next) {
   return requireAuth(req, res, next);
 }
 
+function canAccessPackage(req, pagePackage) {
+  return pagePackage?.status === "published" || String(req.user?.role || "").toLowerCase() === "admin";
+}
+
 packagesRouter.get("/", adminOnlyOnAdminMount, (req, res) => {
   listPackages()
     .then((packages) => res.json({
-      packages: (isAdminMount(req) ? packages : packages.filter((item) => item.status === "published")).map(withPreviewToken)
+      packages: (isAdminMount(req) ? packages : packages.filter((item) => item.status === "published")).map(withPreviewAvailability)
     }))
     .catch((error) => res.status(400).json({ error: error.message }));
 });
@@ -37,15 +49,65 @@ packagesRouter.post("/", requireAdmin, (req, res) => {
   const validation = validatePackageData(req.body, { publishing: String(req.body?.status || "").toLowerCase() === "published" });
   if (!validation.valid) return res.status(422).json({ error: "Package validation failed", issues: validation.issues });
   createPackage(validation.value)
-    .then((pagePackage) => res.status(201).json({ package: withPreviewToken(pagePackage) }))
+    .then((pagePackage) => res.status(201).json({ package: withPreviewAvailability(pagePackage) }))
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+packagesRouter.get("/:id/asset", requireAuth, async (req, res) => {
+  try {
+    const pagePackage = await findPackage(req.params.id);
+    if (!pagePackage || !canAccessPackage(req, pagePackage)) {
+      res.status(404).json({ error: "Package not found" });
+      return;
+    }
+    const file = String(req.query.file || "");
+    if (!file || classifyFile(file) !== "asset") {
+      res.status(400).json({ error: "A package image file is required" });
+      return;
+    }
+    const source = previewSourceForPackage(pagePackage, file);
+    const response = await fetchPackageFile(source);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.setHeader("Cache-Control", "no-store, private");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("Content-Type", contentTypeFor(file));
+    res.send(buffer);
+  } catch {
+    res.status(404).json({ error: "Package asset not found" });
+  }
+});
+
+packagesRouter.post("/:id/preview-session", requireAuth, async (req, res) => {
+  try {
+    const pagePackage = await findPackage(req.params.id);
+    if (!pagePackage || !canAccessPackage(req, pagePackage)) {
+      res.status(404).json({ error: "Package not found" });
+      return;
+    }
+    if (!withPreviewAvailability(pagePackage).previewAvailable) {
+      res.status(409).json({ error: "Package preview is unavailable" });
+      return;
+    }
+    const session = await createPackagePreviewTicket({
+      userId: req.user.id,
+      userSessionId: req.authSession.id,
+      packageId: pagePackage.id,
+      packageVersion: pagePackage.version
+    });
+    res.status(201).json({
+      previewUrl: previewLaunchUrl(req, session.ticket),
+      expiresAt: session.expiresAt
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 packagesRouter.get("/:id", adminOnlyOnAdminMount, (req, res) => {
   findPackage(req.params.id)
     .then((pagePackage) => {
       if (!pagePackage || (!isAdminMount(req) && pagePackage.status !== "published")) return res.status(404).json({ error: "Package not found" });
-      res.json({ package: withPreviewToken(pagePackage) });
+      res.json({ package: withPreviewAvailability(pagePackage) });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });
@@ -81,7 +143,7 @@ packagesRouter.patch("/:id", requireAdmin, (req, res) => {
     .then((result) => {
       if (!result) return res.status(404).json({ error: "Package not found" });
       if (result.validation) return res.status(422).json({ error: "Package validation failed", issues: result.validation.issues });
-      res.json({ package: withPreviewToken(result.pagePackage) });
+      res.json({ package: withPreviewAvailability(result.pagePackage) });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });
@@ -99,7 +161,7 @@ packagesRouter.post("/:id/publish", requireAdmin, (req, res) => {
       if (!result) return res.status(404).json({ error: "Package not found" });
       if (result.archived) return res.status(409).json({ error: "Restore the archived package before publishing it" });
       if (result.validation) return res.status(422).json({ error: "Package is not ready to publish", issues: result.validation.issues });
-      res.json({ package: withPreviewToken(result.pagePackage) });
+      res.json({ package: withPreviewAvailability(result.pagePackage) });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });

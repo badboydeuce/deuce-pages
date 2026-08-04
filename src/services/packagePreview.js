@@ -1,23 +1,14 @@
-import crypto from "node:crypto";
 import { classifyFile, githubRawUrl, normalizeRepoUrl } from "./githubImport.js";
 import { getObjectBuffer } from "./objectStorage.js";
 
-function previewSecret() {
-  return process.env.PREVIEW_TOKEN_SECRET || process.env.JWT_SECRET || "deuce-pages-local-preview-secret";
-}
-
-export function previewTokenForPackage(pagePackage) {
-  const versionKey = pagePackage.updatedAt || pagePackage.publishedAt || pagePackage.version || "v0";
-  const material = `${pagePackage.id}:${pagePackage.slug}:${versionKey}`;
-  const digest = crypto.createHmac("sha256", previewSecret()).update(material).digest("hex").slice(0, 18);
-  return `tk_${digest}`;
-}
-
-export function withPreviewToken(pagePackage) {
+export function withPreviewAvailability(pagePackage) {
   if (!pagePackage) return pagePackage;
   return {
     ...pagePackage,
-    previewToken: previewTokenForPackage(pagePackage)
+    previewAvailable: Boolean(
+      (pagePackage.packageManifest?.github || pagePackage.packageManifest?.r2)
+      && previewFileForPackage(pagePackage)
+    )
   };
 }
 
@@ -152,29 +143,29 @@ export function resolveRelativePath(fromFile, relativePath) {
   return fromParts.join("/");
 }
 
-export function rewritePreviewAssets(html, { token, file }) {
+export function rewritePreviewAssets(html, { basePath = "", file }) {
   return html.replace(/\b(src|href)=["']([^"']+)["']/gi, (match, attr, value) => {
     const resolved = resolveRelativePath(file, value);
     if (!resolved) return match;
     const params = new URLSearchParams({ file: resolved });
-    return `${attr}="/preview/${encodeURIComponent(token)}/asset?${params.toString()}"`;
+    return `${attr}="${basePath}/p/asset?${params.toString()}"`;
   });
 }
 
-export function injectPreviewJourney(html, { token, file, screens = [] }) {
+export function injectPreviewJourney(html, { basePath = "", file, screens = [] }) {
   const cleanFile = String(file || "").replace(/^\/+/, "");
   const journeyScreens = screens.length ? screens : [{ file: cleanFile, name: "Preview", role: "entry" }];
   const currentIndex = Math.max(0, journeyScreens.findIndex((screen) => screen.file === cleanFile));
   const safeIndex = currentIndex === -1 ? 0 : currentIndex;
   const bootstrap = `<script>
 (function () {
-  var journey = ${JSON.stringify({ token, file: cleanFile, screens: journeyScreens, currentIndex: safeIndex })};
+  var journey = ${JSON.stringify({ basePath, file: cleanFile, screens: journeyScreens, currentIndex: safeIndex })};
   var current = journey.screens[journey.currentIndex] || journey.screens[0] || { file: journey.file, name: "Preview" };
   var next = journey.screens[journey.currentIndex + 1] || null;
 
   function previewUrl(screen) {
     if (!screen || !screen.file) return "";
-    return "/preview/" + encodeURIComponent(journey.token) + "/page?file=" + encodeURIComponent(screen.file);
+    return journey.basePath + "/p/page?file=" + encodeURIComponent(screen.file);
   }
 
   function goNext() {
@@ -272,10 +263,4 @@ export function injectPreviewJourney(html, { token, file, screens = [] }) {
     return html.replace(/<\/body>/i, `${bootstrap}</body>`);
   }
   return `${html}${bootstrap}`;
-}
-
-export function findPackageByPreviewToken(packages, token) {
-  return packages.find((pagePackage) => (
-    previewTokenForPackage(pagePackage) === token
-  )) || null;
 }

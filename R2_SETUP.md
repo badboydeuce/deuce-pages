@@ -23,7 +23,7 @@ Apply this bucket CORS policy, replacing the origins with the production dashboa
 [
   {
     "AllowedOrigins": [
-      "https://deuce-pages.onrender.com",
+      "https://deucetoolkit.cloud",
       "http://localhost:10000"
     ],
     "AllowedMethods": ["PUT"],
