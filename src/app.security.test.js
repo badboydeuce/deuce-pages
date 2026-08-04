@@ -78,8 +78,17 @@ test("production HTTP security middleware protects portal and preview responses"
     assert.equal(login.headers.get("cache-control"), "no-store");
     const loginHtml = await login.text();
     assert.match(loginHtml, /id="loginForm"/);
+    assert.match(loginHtml, /class="auth-card"/);
     assert.doesNotMatch(loginHtml, /Authorized access only|PRIVATE OPERATOR WORKSPACE|Read the guide/);
     assert.doesNotMatch(loginHtml, /class="access-header"|class="access-intro"|<footer/);
+
+    const invite = await fetch(`${baseUrl}/invite`);
+    assert.equal(invite.status, 200);
+    assert.equal(invite.headers.get("cache-control"), "no-store");
+    const inviteHtml = await invite.text();
+    assert.match(inviteHtml, /id="inviteForm"/);
+    assert.match(inviteHtml, /class="auth-card"/);
+    assert.doesNotMatch(inviteHtml, /id="loginForm"|PRIVATE OPERATOR WORKSPACE|Read the guide/);
 
     const protectedPortal = await fetch(`${baseUrl}/portal`, { redirect: "manual" });
     assert.equal(protectedPortal.status, 303);

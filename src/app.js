@@ -274,11 +274,12 @@ export function createApp() {
   app.get("/favicon.svg", (req, res) => res.sendFile(path.join(publicRoot, "favicon.svg")));
   app.get("/access.css", (req, res) => res.sendFile(path.join(publicRoot, "access.css")));
   app.get("/access.js", (req, res) => sendNoStoreFile(res, "access.js"));
+  app.get("/invite.js", (req, res) => sendNoStoreFile(res, "invite.js"));
   app.get("/login.js", (req, res) => sendNoStoreFile(res, "login.js"));
   app.get("/deuce-runtime-client.js", (req, res) => res.sendFile(path.join(publicRoot, "deuce-runtime-client.js")));
 
   app.get(["/login", "/login/"], (req, res) => sendNoStoreFile(res, "login.html"));
-  app.get(["/invite", "/invite/"], (req, res) => sendNoStoreFile(res, "access.html"));
+  app.get(["/invite", "/invite/"], (req, res) => sendNoStoreFile(res, "invite.html"));
   app.use("/blog", express.static(blogRoot, {
     dotfiles: "deny",
     index: "index.html",

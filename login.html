@@ -9,16 +9,21 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/access.css">
   </head>
-  <body class="login-only">
-    <div class="noise" aria-hidden="true"></div>
-    <main class="access-layout">
-      <section class="access-panel" aria-label="Login">
-        <form id="loginForm" class="access-form">
-          <label>Email<input id="loginEmail" type="email" autocomplete="email" required></label>
-          <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
-          <button type="submit">Login</button>
+  <body>
+    <main class="auth-shell">
+      <section class="auth-card" aria-label="Login">
+        <form id="loginForm" class="auth-form">
+          <label class="auth-field">
+            <span>Email</span>
+            <input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com" required>
+          </label>
+          <label class="auth-field">
+            <span>Password</span>
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" required>
+          </label>
+          <button class="auth-submit" type="submit">Login</button>
         </form>
-        <p id="formError" class="form-error" role="alert" hidden></p>
+        <p id="formError" class="auth-error" role="alert" hidden></p>
       </section>
     </main>
     <script src="/login.js"></script>

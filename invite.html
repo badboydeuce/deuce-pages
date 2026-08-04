@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+    <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+    <title>Create Account | Deuce Pages</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/access.css">
+  </head>
+  <body>
+    <main class="auth-shell">
+      <section class="auth-card" aria-label="Create invited account" aria-live="polite">
+        <p id="inviteState" class="auth-state" data-state="loading">Validating invitation</p>
+        <form id="inviteForm" class="auth-form" hidden>
+          <label class="auth-field">
+            <span>Full name</span>
+            <input id="inviteName" type="text" autocomplete="name" placeholder="Your name" required>
+          </label>
+          <label class="auth-field">
+            <span>Email</span>
+            <input id="inviteEmail" type="email" autocomplete="email" disabled>
+          </label>
+          <label class="auth-field">
+            <span>Password</span>
+            <input id="invitePassword" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" required>
+          </label>
+          <label class="auth-field">
+            <span>Confirm password</span>
+            <input id="inviteConfirm" type="password" autocomplete="new-password" minlength="8" placeholder="Repeat password" required>
+          </label>
+          <button class="auth-submit" type="submit">Create account</button>
+        </form>
+        <p id="formError" class="auth-error" role="alert" hidden></p>
+      </section>
+    </main>
+    <script src="/invite.js"></script>
+  </body>
+</html>
