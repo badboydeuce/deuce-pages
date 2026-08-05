@@ -21,6 +21,23 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
   process.env.NODE_ENV = "development";
 
   await fs.writeFile(dbPath, JSON.stringify({
+    packages: [{
+      id: "package_live",
+      slug: "package-live",
+      name: "Private GitHub Package",
+      version: "v1",
+      status: "published",
+      sourceType: "github",
+      repoUrl: "https://github.com/example/private-package.git",
+      packageManifest: {
+        thumbnailDataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
+        github: { owner: "example", repo: "private-package", branch: "main" },
+        files: ["index.html"],
+        screens: [{ file: "index.html", name: "Home", role: "entry" }]
+      },
+      createdAt: now,
+      updatedAt: now
+    }],
     userPages: [{
       id: "page_live",
       userId: "user_live",
@@ -74,12 +91,37 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
     });
   }
 
+  async function requestBranding(secret = relaySecret) {
+    return fetch(baseUrl + "/api/runtime/branding?userPageId=page_live", {
+      headers: {
+        "x-deuce-relay-secret": secret,
+        "x-deuce-client-host": "client.example"
+      }
+    });
+  }
+
   try {
     const initial = await requestLiveConfig();
     assert.equal(initial.status, 200);
     assert.equal(initial.headers.get("cache-control"), "no-store");
     const initialBody = await initial.json();
     assert.equal(initialBody.config.security.captcha, false);
+    const publicConfig = JSON.stringify(initialBody);
+    assert.equal(publicConfig.includes("data:image"), false);
+    assert.equal(publicConfig.includes("github.com/example/private-package"), false);
+
+    const branding = await requestBranding();
+    assert.equal(branding.status, 200);
+    assert.equal(branding.headers.get("content-type"), "image/png");
+    assert.equal(branding.headers.get("cache-control"), "no-store");
+    assert.equal(branding.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(branding.headers.get("cross-origin-resource-policy"), "cross-origin");
+    const brandingBytes = Buffer.from(await branding.arrayBuffer());
+    assert.equal(brandingBytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+
+    const deniedBranding = await requestBranding("wrong_relay_secret");
+    assert.equal(deniedBranding.status, 403);
+
 
     await repository.updateUserPageConfig("page_live", {
       securityConfig: {
@@ -123,6 +165,12 @@ test("generated launchers refresh live security before booting", async () => {
   const source = await fs.readFile(path.resolve(process.cwd(), "script.js"), "utf8");
   assert.equal((source.match(/async function refreshLiveConfig\(\)/g) || []).length, 2);
   assert.equal((source.match(/fetch\(config\.runtime\.configEndpoint/g) || []).length, 2);
+  assert.equal((source.match(/\/branding\?userPageId=/g) || []).length, 2);
+  assert.match(source, /id="deuceGateLogo"/);
+  assert.match(source, /id="captchaBrandImage"/);
+  assert.equal((source.match(/Protected by Cloudflare Turnstile/g) || []).length, 2);
+  assert.match(source, /Confirming verification\.\.\./);
+  assert.match(source, /Verification failed\. Please try again\./);
   assert.ok((source.match(/cache: "no-store"/g) || []).length >= 2);
   assert.ok((source.match(/SECURITY CONFIGURATION UNAVAILABLE/g) || []).length >= 2);
   assert.match(source, /await withButtonBusy\(saveSecurityButton, "Saving"/);

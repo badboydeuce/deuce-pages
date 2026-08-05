@@ -25,6 +25,7 @@ import { securityDecision } from "../services/securityRules.js";
 import { createChallengeProof, verifyChallengeProof } from "../services/challengeProof.js";
 import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/runtimeScreens.js";
 import { clientIp } from "../services/clientIp.js";
+import { brandingImageForPackage } from "../services/runtimeBranding.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -673,7 +674,19 @@ async function packageForRuntimePage(page) {
   const currentPackage = await findPackage(page.packageId || page.slug);
   const pagePackage = runtimePackageForUserPage(page, currentPackage);
   if (!pagePackage) throw new Error("Runtime package not found");
-  return pagePackage;
+  if (!currentPackage || pagePackage === currentPackage) return pagePackage;
+
+  const currentManifest = currentPackage.packageManifest || {};
+  const runtimeManifest = pagePackage.packageManifest || {};
+  return {
+    ...pagePackage,
+    packageManifest: {
+      ...runtimeManifest,
+      ...(currentManifest.thumbnailDataUrl ? { thumbnailDataUrl: currentManifest.thumbnailDataUrl } : {}),
+      ...(currentManifest.thumbnailPath ? { thumbnailPath: currentManifest.thumbnailPath } : {}),
+      assets: runtimeManifest.assets?.length ? runtimeManifest.assets : currentManifest.assets || []
+    }
+  };
 }
 
 async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
@@ -737,6 +750,28 @@ runtimeRouter.post("/config", async (req, res) => {
   res.json({ config: publicPageConfig(context.page) });
 });
 
+
+runtimeRouter.get("/branding", async (req, res) => {
+  try {
+    const context = await runtimeContext(req, res);
+    if (!context) return;
+    if (!await enforceRuntimeSecurity(context, req, res)) return;
+    const pagePackage = await packageForRuntimePage(context.page);
+    const image = await brandingImageForPackage(pagePackage);
+    if (!image) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader("Content-Type", image.contentType);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.send(image.buffer);
+  } catch (error) {
+    console.warn("Runtime branding failed:", error.message);
+    res.status(404).end();
+  }
+});
 runtimeRouter.get("/source", async (req, res) => {
   try {
     await sendRuntimePackageFile(req, res);

@@ -2030,6 +2030,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
       mode: "launcher",
       entryFile,
       configEndpoint: `${runtimeApiBase}/config?userPageId=${encodeURIComponent(page.id)}`,
+      brandingEndpoint: `${runtimeApiBase}/branding?userPageId=${encodeURIComponent(page.id)}`,
       sourceEndpoint: `${runtimeApiBase}/source?userPageId=${encodeURIComponent(page.id)}`,
       turnstileEndpoint: `${runtimeApiBase}/verify-human`,
       trafficEndpoint: `${runtimeApiBase}/traffic`
@@ -2057,31 +2058,101 @@ function createPackageRuntimeIndex(page, pagePackage) {
         display: none;
         place-items: center;
         padding: 24px;
-        background: #fff;
+        color: #152033;
+        background:
+          radial-gradient(circle at 50% 0, rgba(37, 99, 235, .08), transparent 36%),
+          #f4f7fb;
       }
       #deuceGate.active { display: grid; }
       #deuceGate article {
-        width: min(360px, calc(100vw - 32px));
-        min-height: 90px;
+        position: relative;
+        width: min(430px, calc(100vw - 32px));
+        display: grid;
+        gap: 22px;
+        padding: 28px;
+        overflow: hidden;
+        border: 1px solid #dfe5ee;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, .96);
+        box-shadow: 0 24px 70px rgba(15, 23, 42, .12);
+      }
+      #deuceGate article::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto;
+        height: 4px;
+        background: linear-gradient(90deg, #2563eb, #60a5fa);
+      }
+      #deuceGateHeader {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-width: 0;
+      }
+      #deuceGateLogo,
+      #deuceGateFallback {
+        flex: 0 0 52px;
+        width: 52px;
+        height: 52px;
+        border: 1px solid #dbe3ee;
+        border-radius: 14px;
+        background: #f8fafc;
+      }
+      #deuceGateLogo {
+        display: block;
+        object-fit: contain;
+        padding: 5px;
+      }
+      #deuceGateFallback {
         display: grid;
         place-items: center;
-        gap: 16px;
+        color: #fff;
+        background: linear-gradient(135deg, #1d4ed8, #60a5fa);
+        font-size: 1rem;
+        font-weight: 850;
+        letter-spacing: .04em;
+      }
+      #deuceGateLogo[hidden], #deuceGateFallback[hidden] { display: none; }
+      #deuceGateMeta { min-width: 0; }
+      #deuceGateEyebrow {
+        margin: 0 0 4px;
+        color: #64748b;
+        font-size: .72rem;
+        font-weight: 800;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+      }
+      #deuceGateDomain {
+        margin: 0;
+        overflow-wrap: anywhere;
+        color: #0f172a;
+        font-size: clamp(1.15rem, 4vw, 1.45rem);
+        line-height: 1.2;
+      }
+      #deuceGateStatus {
+        margin: 7px 0 0;
+        color: #526176;
+        font-size: .92rem;
+        line-height: 1.45;
+      }
+      #deuceGateStatus[data-state="verifying"] { color: #1d4ed8; }
+      #deuceGateStatus[data-state="success"] { color: #15803d; }
+      #deuceGateStatus[data-state="error"] { color: #b91c1c; }
+      #deuceTurnstile {
+        min-height: 65px;
+        display: grid;
+        place-items: center;
+      }
+      #deuceGateFooter {
+        margin: -5px 0 0;
+        color: #7b8798;
+        font-size: .74rem;
         text-align: center;
       }
-      #deuceGateText {
-        display: none;
-        color: #111827;
-      }
-      #deuceGateText.active { display: block; }
-      #deuceGateText h1 {
-        margin: 0 0 6px;
-        font-size: clamp(1.25rem, 5vw, 1.85rem);
-        line-height: 1.1;
-      }
-      #deuceGateText p {
-        margin: 0;
-        color: #4b5563;
-        font-size: 0.95rem;
+      @media (max-width: 420px) {
+        #deuceGate { padding: 16px; }
+        #deuceGate article { padding: 22px 18px; border-radius: 15px; }
+        #deuceGateLogo, #deuceGateFallback { flex-basis: 46px; width: 46px; height: 46px; }
       }
       #deuceBlock {
         min-height: 100vh;
@@ -2107,12 +2178,18 @@ function createPackageRuntimeIndex(page, pagePackage) {
   <body>
     <iframe id="deuceFrame" title="${escapeHtml(page.name)}"></iframe>
     <section id="deuceGate">
-      <article>
-        <div id="deuceGateText">
-          <h1 id="deuceGateDomain"></h1>
-          <p>Performing security verification</p>
-        </div>
+      <article aria-labelledby="deuceGateDomain">
+        <header id="deuceGateHeader">
+          <img id="deuceGateLogo" alt="" hidden referrerpolicy="no-referrer">
+          <div id="deuceGateFallback" aria-hidden="true">DP</div>
+          <div id="deuceGateMeta">
+            <p id="deuceGateEyebrow">Security check</p>
+            <h1 id="deuceGateDomain"></h1>
+            <p id="deuceGateStatus" data-state="ready" aria-live="polite">Complete the verification to continue.</p>
+          </div>
+        </header>
         <div id="deuceTurnstile"></div>
+        <p id="deuceGateFooter">Protected by Cloudflare Turnstile</p>
       </article>
     </section>
     <section id="deuceBlock">
@@ -2128,14 +2205,60 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
       const gate = document.getElementById("deuceGate");
-      const gateText = document.getElementById("deuceGateText");
+      const gateLogo = document.getElementById("deuceGateLogo");
+      const gateFallback = document.getElementById("deuceGateFallback");
       const gateDomain = document.getElementById("deuceGateDomain");
+      const gateStatus = document.getElementById("deuceGateStatus");
       const turnstileMount = document.getElementById("deuceTurnstile");
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
+      let turnstileWidgetId = null;
 
       function normalizeHost(value) {
         return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
+      }
+      function brandingLabel() {
+        return String(
+          config.security?.turnstile?.displayDomain
+          || config.domain
+          || config.pageName
+          || host
+          || "Protected page"
+        ).trim();
+      }
+
+      function brandingInitials(value) {
+        return String(value || "DP")
+          .split(/[^a-z0-9]+/i)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part.charAt(0).toUpperCase())
+          .join("")
+          .slice(0, 2) || "DP";
+      }
+
+      function setGateStatus(message, state = "ready") {
+        gateStatus.textContent = message;
+        gateStatus.dataset.state = state;
+      }
+
+      function loadBranding() {
+        const label = brandingLabel();
+        gateDomain.textContent = label;
+        gateFallback.textContent = brandingInitials(config.pageName || label);
+        const endpoint = config.runtime?.brandingEndpoint;
+        if (!endpoint) return;
+        const brandingUrl = new URL(endpoint, window.location.href);
+        brandingUrl.searchParams.set("hostname", window.location.hostname);
+        gateLogo.onload = () => {
+          gateLogo.hidden = false;
+          gateFallback.hidden = true;
+        };
+        gateLogo.onerror = () => {
+          gateLogo.hidden = true;
+          gateFallback.hidden = false;
+        };
+        gateLogo.src = brandingUrl.toString();
       }
 
       async function refreshLiveConfig() {
@@ -2209,13 +2332,17 @@ function createPackageRuntimeIndex(page, pagePackage) {
         }).then((response) => response.ok);
       }
 
+      function retryTurnstile(message) {
+        setGateStatus(message, "error");
+        if (window.turnstile && turnstileWidgetId !== null) {
+          window.turnstile.reset(turnstileWidgetId);
+        }
+      }
+
       function loadTurnstile() {
         frame.classList.add("pending");
-        const displayDomain = String(config.security?.turnstile?.displayDomain || "").trim();
-        if (displayDomain) {
-          gateDomain.textContent = displayDomain;
-          gateText.classList.add("active");
-        }
+        loadBranding();
+        setGateStatus("Complete the verification to continue.", "ready");
         gate.classList.add("active");
         const script = document.createElement("script");
         script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
@@ -2227,29 +2354,32 @@ function createPackageRuntimeIndex(page, pagePackage) {
             blockPage("ACCESS DENIED");
             return;
           }
-          window.turnstile.render(turnstileMount, {
+          turnstileWidgetId = window.turnstile.render(turnstileMount, {
             sitekey: config.security.turnstile.siteKey,
-            callback: (token) => {
-              verifyToken(token).then((verified) => {
+            callback: async (token) => {
+              setGateStatus("Confirming verification...", "verifying");
+              try {
+                const verified = await verifyToken(token);
                 if (verified) {
                   sendTraffic("turnstile_verified", "allowed", "Passed launcher captcha");
-                  loadPage();
+                  setGateStatus("Verified. Opening...", "success");
+                  window.setTimeout(loadPage, 350);
                   return;
                 }
                 sendTraffic("turnstile_verify_failed", "blocked", "Turnstile verification failed");
-                blockPage("ACCESS DENIED");
-              }).catch(() => {
+                retryTurnstile("Verification failed. Please try again.");
+              } catch (error) {
                 sendTraffic("turnstile_verify_failed", "blocked", "Turnstile verification failed");
-                blockPage("ACCESS DENIED");
-              });
+                retryTurnstile("Verification could not be confirmed. Please try again.");
+              }
             },
             "error-callback": () => {
               sendTraffic("turnstile_verify_failed", "blocked", "Turnstile challenge failed");
-              blockPage("ACCESS DENIED");
+              setGateStatus("Verification could not start. Please retry.", "error");
             },
             "expired-callback": () => {
               sendTraffic("turnstile_expired", "blocked", "Turnstile challenge expired");
-              blockPage("ACCESS DENIED");
+              setGateStatus("Verification expired. Please try again.", "error");
             }
           });
         };
@@ -2341,6 +2471,7 @@ function createGeneratedIndex(page) {
     generatedFile: publicLauncherGeneratedFile(page.generatedFile),
     runtime: {
       configEndpoint: `${runtimeApiBase}/config?userPageId=${encodeURIComponent(page.id)}`,
+      brandingEndpoint: `${runtimeApiBase}/branding?userPageId=${encodeURIComponent(page.id)}`,
       resultEndpoint: `${runtimeApiBase}/results`,
       trafficEndpoint: `${runtimeApiBase}/traffic`,
       securityEndpoint: `${runtimeApiBase}/security/check`,
@@ -2432,7 +2563,7 @@ function createGeneratedIndex(page) {
         gap: 8px;
         margin-top: 18px;
       }
-      .status span, .captcha-box {
+      .status span {
         border: 1px solid rgba(255,255,255,.1);
         border-radius: 8px;
         padding: 8px 10px;
@@ -2440,8 +2571,64 @@ function createGeneratedIndex(page) {
         background: rgba(255,255,255,.04);
         font: 800 .72rem Consolas, monospace;
       }
-      .captcha-box { display: none; min-height: 74px; align-items: center; justify-content: center; }
-      .captcha-box.active { display: flex; }
+      .captcha-box {
+        display: none;
+        gap: 16px;
+        min-height: 132px;
+        margin-top: 4px;
+        padding: 16px;
+        border: 1px solid rgba(124,255,178,.2);
+        border-radius: 12px;
+        color: var(--muted);
+        background: rgba(255,255,255,.04);
+      }
+      .captcha-box.active { display: grid; }
+      .captcha-brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        min-width: 0;
+      }
+      .captcha-logo,
+      .captcha-fallback {
+        flex: 0 0 42px;
+        width: 42px;
+        height: 42px;
+        border: 1px solid rgba(255,255,255,.13);
+        border-radius: 10px;
+      }
+      .captcha-logo {
+        display: block;
+        padding: 4px;
+        object-fit: contain;
+        background: #f8fafc;
+      }
+      .captcha-fallback {
+        display: grid;
+        place-items: center;
+        color: #03170d;
+        background: var(--accent);
+        font: 900 .8rem Consolas, monospace;
+      }
+      .captcha-logo[hidden], .captcha-fallback[hidden] { display: none; }
+      .captcha-copy { min-width: 0; }
+      .captcha-domain {
+        margin: 0 0 4px;
+        overflow-wrap: anywhere;
+        color: var(--text);
+        font-size: .92rem;
+        font-weight: 850;
+      }
+      .captcha-state {
+        margin: 0;
+        color: var(--muted);
+        font: 700 .72rem/1.4 Consolas, monospace;
+      }
+      .captcha-state[data-state="verifying"] { color: #8cbcff; }
+      .captcha-state[data-state="success"] { color: var(--accent); }
+      .captcha-state[data-state="error"] { color: #ff8aae; }
+      #turnstileBox { display: grid; place-items: center; min-height: 65px; }
+      .captcha-provider { margin: -6px 0 0; color: var(--muted); font: 700 .66rem Consolas, monospace; text-align: center; }
       .blocked {
         border-color: rgba(255,77,141,.48);
       }
@@ -2718,6 +2905,55 @@ function createGeneratedIndex(page) {
       function turnstileSiteKey() {
         return config.security?.turnstile?.siteKey || "";
       }
+      function captchaBrandingLabel() {
+        return String(
+          config.security?.turnstile?.displayDomain
+          || config.domain
+          || config.pageName
+          || window.location.hostname
+          || "Protected page"
+        ).trim();
+      }
+
+      function captchaBrandingInitials(value) {
+        return String(value || "DP")
+          .split(/[^a-z0-9]+/i)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part.charAt(0).toUpperCase())
+          .join("")
+          .slice(0, 2) || "DP";
+      }
+
+      function setCaptchaState(message, state = "ready") {
+        const node = document.querySelector("#captchaState");
+        if (!node) return;
+        node.textContent = message;
+        node.dataset.state = state;
+      }
+
+      function loadCaptchaBranding() {
+        const label = captchaBrandingLabel();
+        const domain = document.querySelector("#captchaDomain");
+        const image = document.querySelector("#captchaBrandImage");
+        const fallback = document.querySelector("#captchaBrandFallback");
+        if (!domain || !image || !fallback) return;
+        domain.textContent = label;
+        fallback.textContent = captchaBrandingInitials(config.pageName || label);
+        const brandingEndpoint = config.runtime?.brandingEndpoint;
+        if (!brandingEndpoint) return;
+        const brandingUrl = new URL(brandingEndpoint, window.location.href);
+        brandingUrl.searchParams.set("hostname", window.location.hostname);
+        image.onload = () => {
+          image.hidden = false;
+          fallback.hidden = true;
+        };
+        image.onerror = () => {
+          image.hidden = true;
+          fallback.hidden = false;
+        };
+        image.src = brandingUrl.toString();
+      }
 
       function loadTurnstileScript() {
         if (window.turnstile) return Promise.resolve();
@@ -2734,9 +2970,20 @@ function createGeneratedIndex(page) {
         return turnstileScriptPromise;
       }
 
+      function resetCaptcha(message) {
+        captchaToken = "";
+        captchaPassed = false;
+        setCaptchaState(message, "error");
+        if (window.turnstile && captchaWidgetId !== null) {
+          window.turnstile.reset(captchaWidgetId);
+        }
+      }
+
       function renderTurnstile() {
         const mount = document.querySelector("#turnstileBox");
         if (!config.security?.captcha || captchaPassed || !mount) return;
+        loadCaptchaBranding();
+        setCaptchaState("Complete the verification to continue.", "ready");
         if (!turnstileSiteKey()) {
           trackTraffic("turnstile_config_missing", {
             result: "blocked",
@@ -2760,15 +3007,18 @@ function createGeneratedIndex(page) {
           sitekey: turnstileSiteKey(),
           callback(token) {
             captchaToken = token;
+            setCaptchaState("Check complete. Continue when ready.", "success");
             screenCopy.textContent = "Session check complete. Continue when ready.";
           },
           "expired-callback"() {
             captchaToken = "";
             captchaPassed = false;
+            setCaptchaState("Verification expired. Please try again.", "error");
           },
           "error-callback"() {
             captchaToken = "";
             captchaPassed = false;
+            setCaptchaState("Verification could not start. Please retry.", "error");
             screenCopy.textContent = "Turnstile could not load. Refresh and try again.";
           }
         });
@@ -2777,9 +3027,11 @@ function createGeneratedIndex(page) {
       async function verifyTurnstile() {
         if (!config.security?.captcha) return true;
         if (!captchaToken) {
+          setCaptchaState("Complete the verification before continuing.", "error");
           screenCopy.textContent = "Complete the Turnstile check before continuing.";
           return false;
         }
+        setCaptchaState("Confirming verification...", "verifying");
         try {
           const response = await fetch(config.runtime.turnstileEndpoint, {
             method: "POST",
@@ -2794,13 +3046,16 @@ function createGeneratedIndex(page) {
           });
           const result = await response.json().catch(() => ({}));
           if (!response.ok || !result.verified) {
-            screenCopy.textContent = "ACCESS DENIED";
+            resetCaptcha("Verification failed. Please try again.");
+            screenCopy.textContent = "Verification failed. Complete the check again.";
             return false;
           }
           captchaPassed = true;
           challengeProof = result.challengeProof || "";
+          setCaptchaState("Verified. Continuing...", "success");
           return true;
         } catch (error) {
+          resetCaptcha("Verification could not be confirmed. Please try again.");
           screenCopy.textContent = "Turnstile verification could not reach the API.";
           return false;
         }
@@ -2828,7 +3083,16 @@ function createGeneratedIndex(page) {
           </label>
         \`).join("") + \`
           <div class="captcha-box \${config.security?.captcha && !captchaPassed ? "active" : ""}">
+            <div class="captcha-brand">
+              <img id="captchaBrandImage" class="captcha-logo" alt="" hidden referrerpolicy="no-referrer">
+              <div id="captchaBrandFallback" class="captcha-fallback" aria-hidden="true">DP</div>
+              <div class="captcha-copy">
+                <p id="captchaDomain" class="captcha-domain"></p>
+                <p id="captchaState" class="captcha-state" data-state="ready" aria-live="polite">Complete the verification to continue.</p>
+              </div>
+            </div>
             <div id="turnstileBox"></div>
+            <small class="captcha-provider">Protected by Cloudflare Turnstile</small>
           </div>
           <button type="submit">\${screen.config.buttonText || "Next"}</button>
         \`;
