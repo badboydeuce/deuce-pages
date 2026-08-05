@@ -3397,13 +3397,31 @@ function dashboardPageInitials(name = "Page") {
     .toUpperCase() || "PG";
 }
 
+function dashboardPageLogoMarkup(page) {
+  const packageId = String(page.packageId || "");
+  const pageSlug = String(page.slug || "");
+  const pagePackage = marketPages.find((item) => (
+    (packageId && String(item.id || "") === packageId)
+    || (pageSlug && String(item.slug || "") === pageSlug)
+  ));
+  const thumbnailUrl = pagePackage ? packageThumbnailUrl(pagePackage) : "";
+  const fallback = `<span class="dashboard-page-mark-fallback">${escapeHtml(dashboardPageInitials(page.name))}</span>`;
+  if (!thumbnailUrl) return `<span class="dashboard-page-mark" aria-hidden="true">${fallback}</span>`;
+  return `
+    <span class="dashboard-page-mark has-image" aria-hidden="true">
+      <img src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.classList.remove('has-image');this.remove()">
+      ${fallback}
+    </span>
+  `;
+}
+
 function renderDashboard() {
   activeFlowSlug = null;
   const pageRows = ownedPages.map((page) => {
     const action = dashboardPageAction(page);
     return `
       <article class="dashboard-subscription-row is-${action.tone}">
-        <span class="dashboard-page-mark" aria-hidden="true">${escapeHtml(dashboardPageInitials(page.name))}</span>
+        ${dashboardPageLogoMarkup(page)}
         <div class="dashboard-page-copy">
           <h3>${escapeHtml(page.name || "Subscribed page")}</h3>
           <span class="dashboard-page-status"><i aria-hidden="true"></i>${escapeHtml(action.status)}</span>
