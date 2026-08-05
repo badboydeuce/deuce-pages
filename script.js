@@ -153,22 +153,6 @@ function clearAppBusySoon(delay = 220) {
   appBusyTimer = window.setTimeout(() => setAppBusy(false), delay);
 }
 
-function renderBootScreen(title = "Opening workspace", copy = "Loading your session, pages, wallet, and live controls.") {
-  preview.innerHTML = `
-    <section class="app-view app-loading-view">
-      <div class="loader-orbit" aria-hidden="true">
-        <span></span><span></span><span></span>
-      </div>
-      <div class="view-heading">
-        <small>deuce pages</small>
-        <h2>${escapeHtml(title)}</h2>
-        <p>${escapeHtml(copy)}</p>
-      </div>
-      <div class="loading-rail" aria-hidden="true"><span></span></div>
-    </section>
-  `;
-}
-
 function pulseButton(button) {
   if (!button) return;
   button.classList.add("is-pressed");
@@ -6776,7 +6760,6 @@ resetStreams();
 drawMatrix();
 renderButtons();
 applyAppearancePreference();
-renderBootScreen();
 async function initApp() {
   try {
     localStorage.removeItem("deuceAuthState");
