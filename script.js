@@ -133,6 +133,7 @@ let draggedScreenName = null;
 let apiLoadError = "";
 const appearanceStorageKey = "deuceAppearance";
 let appBusyTimer = null;
+let initialBootActive = true;
 const resultsAutoRefreshMs = 5000;
 let resultsAutoRefreshTimer = null;
 let resultsAutoRefreshSlug = "";
@@ -142,10 +143,12 @@ let activeResultViewer = null;
 
 function setAppBusy(isBusy, label = "Working") {
   window.clearTimeout(appBusyTimer);
-  document.body.classList.toggle("app-busy", Boolean(isBusy));
-  appShell?.classList.toggle("is-loading", Boolean(isBusy));
+  const busy = Boolean(isBusy);
+  const showCompactIndicator = busy && !initialBootActive;
+  document.body.classList.toggle("app-busy", busy);
+  appShell?.classList.toggle("is-loading", showCompactIndicator);
   appShell?.setAttribute("data-busy-label", label);
-  if (isBusy && statusText) statusText.textContent = label.toUpperCase();
+  if (busy && statusText) statusText.textContent = label.toUpperCase();
 }
 
 function clearAppBusySoon(delay = 220) {
@@ -7116,7 +7119,8 @@ async function initApp() {
     syncAdminVisibility();
     await renderRoute();
   } finally {
-    clearAppBusySoon(320);
+    initialBootActive = false;
+    setAppBusy(false);
   }
 }
 
