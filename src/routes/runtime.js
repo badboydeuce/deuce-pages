@@ -22,7 +22,13 @@ import {
   verifyTurnstileToken
 } from "../services/turnstile.js";
 import { securityDecision } from "../services/securityRules.js";
-import { createChallengeProof, verifyChallengeProof } from "../services/challengeProof.js";
+import {
+  createChallengeProof,
+  createSourceChallengeProof,
+  verifyChallengeProof,
+  verifySourceChallengeProof
+} from "../services/challengeProof.js";
+import { clearSourceProofCookie, readSourceProofCookie, setSourceProofCookie } from "../services/sourceProofCookie.js";
 import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/runtimeScreens.js";
 import { clientIp } from "../services/clientIp.js";
 import { brandingImageForPackage } from "../services/runtimeBranding.js";
@@ -145,8 +151,10 @@ function allowedHostsFor(page) {
   ].map(normalizeHost).filter(Boolean)));
 }
 
-function publicPageConfig(page) {
+function publicPageConfig(page, decision = null) {
   const security = page.securityConfig || {};
+  const challengeRequired = Boolean(decision?.challengeRequired);
+  const captchaRequired = Boolean(security.captcha || challengeRequired);
   return {
     id: page.id,
     pageId: page.slug,
@@ -167,7 +175,12 @@ function publicPageConfig(page) {
     security: {
       domains: allowedHostsFor(page),
       captcha: Boolean(security.captcha),
-      turnstile: publicTurnstileConfig(security),
+      captchaRequired,
+      challengeRequired,
+      turnstile: {
+        ...publicTurnstileConfig(security),
+        enabled: captchaRequired
+      },
       bannedIpCount: (security.bannedIps || []).length,
       whitelistIpCount: (security.whitelistIps || []).length,
       blockedDevices: security.blockedDevices || []
@@ -218,6 +231,24 @@ async function enforceRuntimeSecurity(context, req, res) {
   if (decision.allowed) return decision;
   accessDenied(res);
   return null;
+}
+function sourceProofRequired(context, decision) {
+  return Boolean(context.page.securityConfig?.captcha || decision?.challengeRequired);
+}
+
+function validSourceProof(context, req) {
+  return verifySourceChallengeProof(readSourceProofCookie(req), {
+    userPageId: context.page.id,
+    ip: context.ip
+  });
+}
+
+function enforceSourceProof(context, decision, req, res) {
+  if (!sourceProofRequired(context, decision)) return true;
+  if (validSourceProof(context, req)) return true;
+  if (readSourceProofCookie(req)) clearSourceProofCookie(res);
+  accessDenied(res);
+  return false;
 }
 
 function packageContainsFile(pagePackage, file) {
@@ -694,6 +725,7 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   if (!context) return;
   const securityDecisionResult = await enforceRuntimeSecurity(context, req, res);
   if (!securityDecisionResult) return;
+  if (!enforceSourceProof(context, securityDecisionResult, req, res)) return;
 
   const pagePackage = await packageForRuntimePage(context.page);
   const requestedFile = String(req.query?.file || "");
@@ -738,16 +770,18 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
 runtimeRouter.get("/config", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
-  if (!await enforceRuntimeSecurity(context, req, res)) return;
-  res.json({ config: publicPageConfig(context.page) });
+  const decision = await enforceRuntimeSecurity(context, req, res);
+  if (!decision) return;
+  res.json({ config: publicPageConfig(context.page, decision) });
 });
 
 runtimeRouter.post("/config", async (req, res) => {
   if (payloadTooLarge(req, res, runtimePayloadLimits.config)) return;
   const context = await runtimeContext(req, res);
   if (!context) return;
-  if (!await enforceRuntimeSecurity(context, req, res)) return;
-  res.json({ config: publicPageConfig(context.page) });
+  const decision = await enforceRuntimeSecurity(context, req, res);
+  if (!decision) return;
+  res.json({ config: publicPageConfig(context.page, decision) });
 });
 
 
@@ -823,6 +857,12 @@ runtimeRouter.post("/verify-human", async (req, res) => {
     secret: turnstileSecretFor(security),
     remoteIp: context.ip
   });
+  if (result.success) {
+    setSourceProofCookie(res, createSourceChallengeProof({
+      userPageId: context.page.id,
+      ip: context.ip
+    }));
+  }
   res.status(result.success ? 200 : 400).json({
     verified: result.success,
     reason: result.success ? "Verified" : accessDeniedMessage,
@@ -886,11 +926,13 @@ runtimeRouter.post("/results", async (req, res) => {
     res.status(403).json({ error: accessDeniedMessage });
     return;
   }
-  if (decision.challengeRequired && !verifyChallengeProof(req.body?.challengeProof, {
-    userPageId: context.page.id,
-    sessionId: req.body?.sessionId,
-    ip: context.ip
-  })) {
+  if (decision.challengeRequired
+    && !validSourceProof(context, req)
+    && !verifyChallengeProof(req.body?.challengeProof, {
+      userPageId: context.page.id,
+      sessionId: req.body?.sessionId,
+      ip: context.ip
+    })) {
     res.status(403).json({ error: accessDeniedMessage });
     return;
   }

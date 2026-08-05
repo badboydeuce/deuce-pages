@@ -171,6 +171,9 @@ test("generated launchers refresh live security before booting", async () => {
   assert.equal((source.match(/Protected by Cloudflare Turnstile/g) || []).length, 2);
   assert.match(source, /Confirming verification\.\.\./);
   assert.match(source, /Verification failed\. Please try again\./);
+  assert.match(source, /credentials: "same-origin"/);
+  assert.match(source, /sessionId,/);
+  assert.match(source, /config\.security\?\.captchaRequired/);
   assert.ok((source.match(/cache: "no-store"/g) || []).length >= 2);
   assert.ok((source.match(/SECURITY CONFIGURATION UNAVAILABLE/g) || []).length >= 2);
   assert.match(source, /await withButtonBusy\(saveSecurityButton, "Saving"/);

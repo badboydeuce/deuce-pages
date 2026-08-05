@@ -2202,6 +2202,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
     <script>
       window.DEUCE_PAGE_CONFIG = ${configJson};
       const config = window.DEUCE_PAGE_CONFIG;
+      const sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
       const gate = document.getElementById("deuceGate");
@@ -2322,14 +2323,19 @@ function createPackageRuntimeIndex(page, pagePackage) {
       function verifyToken(token) {
         return fetch(config.runtime.turnstileEndpoint, {
           method: "POST",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             userPageId: config.id,
             pageId: config.pageId,
+            sessionId,
             hostname: window.location.hostname,
             token
           })
-        }).then((response) => response.ok);
+        }).then(async (response) => {
+          const result = await response.json().catch(() => ({}));
+          return Boolean(response.ok && result.verified);
+        });
       }
 
       function retryTurnstile(message) {
@@ -2400,14 +2406,14 @@ function createPackageRuntimeIndex(page, pagePackage) {
         }
 
         const allowedHosts = (config.security?.domains || config.allowedDomains || []).map(normalizeHost).filter(Boolean);
-        const captchaEnabled = Boolean(config.security?.captcha);
+        const captchaRequired = Boolean(config.security?.captchaRequired || config.security?.captcha || config.security?.challengeRequired);
         const siteKey = config.security?.turnstile?.siteKey || "";
         if (allowedHosts.length && !allowedHosts.includes(normalizeHost(host))) {
           blockPage("ACCESS DENIED");
-        } else if (captchaEnabled && !siteKey) {
+        } else if (captchaRequired && !siteKey) {
           sendTraffic("turnstile_config_missing", "blocked", "Turnstile site key is missing");
           blockPage("SECURITY CONFIGURATION UNAVAILABLE");
-        } else if (captchaEnabled) {
+        } else if (captchaRequired) {
           loadTurnstile();
         } else {
           loadPage();
