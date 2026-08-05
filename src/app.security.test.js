@@ -73,6 +73,15 @@ test("production HTTP security middleware protects portal and preview responses"
     assert.equal(blog.headers.get("x-robots-tag"), "noindex, nofollow, noarchive, nosnippet");
     assert.match(await blog.text(), /name="robots" content="noindex, nofollow, noarchive, nosnippet"/);
 
+    const theme = await fetch(`${baseUrl}/theme-tokens.css`);
+    assert.equal(theme.status, 200);
+    assert.match(theme.headers.get("content-type") || "", /text\/css/);
+    const themeCss = await theme.text();
+    assert.match(themeCss, /--accent-rgb: 124 255 178/);
+    assert.match(themeCss, /--success-rgb:/);
+    assert.match(themeCss, /--warning-rgb:/);
+    assert.match(themeCss, /--danger-rgb:/);
+
     const login = await fetch(`${baseUrl}/login`);
     assert.equal(login.status, 200);
     assert.equal(login.headers.get("cache-control"), "no-store");

@@ -214,14 +214,21 @@ function setThemeMode(theme, persist = false) {
   if (persist) saveAppearancePreference({ theme: nextTheme });
 }
 
+const accentPalette = new Map([
+  ["#7cffb2", { key: "phosphor", hex: "#7CFFB2" }],
+  ["#6debff", { key: "ice", hex: "#6DEBFF" }],
+  ["#ff4d8d", { key: "magenta", hex: "#FF4D8D" }],
+  ["#f9d56e", { key: "amber", hex: "#F9D56E" }]
+]);
+
 function setAccentColor(accent, persist = false) {
-  const nextAccent = accent || "#7CFFB2";
-  document.documentElement.style.setProperty("--accent", nextAccent);
-  document.documentElement.style.setProperty("--line", `${nextAccent}33`);
+  const requested = String(accent || "").trim().toLowerCase();
+  const selection = accentPalette.get(requested) || accentPalette.get("#7cffb2");
+  document.documentElement.dataset.accent = selection.key;
   document.querySelectorAll(".swatch").forEach((item) => {
-    item.classList.toggle("active", item.dataset.accent?.toLowerCase() === nextAccent.toLowerCase());
+    item.classList.toggle("active", item.dataset.accent?.toLowerCase() === selection.hex.toLowerCase());
   });
-  if (persist) saveAppearancePreference({ accent: nextAccent });
+  if (persist) saveAppearancePreference({ accent: selection.hex });
 }
 
 function applyAppearancePreference() {
@@ -2048,6 +2055,16 @@ function createPackageRuntimeIndex(page, pagePackage) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(page.name)}</title>
     <style>
+      :root {
+        --accent: #7cffb2;
+        --accent-rgb: 124 255 178;
+        --success: #15803d;
+        --success-rgb: 21 128 61;
+        --danger: #b91c1c;
+        --danger-rgb: 185 28 28;
+        --info: #1d4ed8;
+        --info-rgb: 29 78 216;
+      }
       * { box-sizing: border-box; }
       html, body { width: 100%; min-height: 100%; margin: 0; background: #050607; }
       body { overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -2135,9 +2152,9 @@ function createPackageRuntimeIndex(page, pagePackage) {
         font-size: .92rem;
         line-height: 1.45;
       }
-      #deuceGateStatus[data-state="verifying"] { color: #1d4ed8; }
-      #deuceGateStatus[data-state="success"] { color: #15803d; }
-      #deuceGateStatus[data-state="error"] { color: #b91c1c; }
+      #deuceGateStatus[data-state="verifying"] { color: var(--info); }
+      #deuceGateStatus[data-state="success"] { color: var(--success); }
+      #deuceGateStatus[data-state="error"] { color: var(--danger); }
       #deuceTurnstile {
         min-height: 65px;
         display: grid;
@@ -2165,12 +2182,12 @@ function createPackageRuntimeIndex(page, pagePackage) {
       #deuceBlock.active { display: grid; }
       #deuceBlock article {
         max-width: 520px;
-        border: 1px solid rgba(124,255,178,.24);
+        border: 1px solid rgb(var(--accent-rgb) / .24);
         border-radius: 10px;
         padding: 28px;
         background: #0d1112;
       }
-      #deuceBlock small { color: #7cffb2; font-weight: 800; text-transform: uppercase; }
+      #deuceBlock small { color: var(--accent); font-weight: 800; text-transform: uppercase; }
       #deuceBlock h1 { margin: 10px 0; font-size: 1.7rem; }
       #deuceBlock p { color: #8da199; line-height: 1.55; }
     </style>
@@ -2502,8 +2519,16 @@ function createGeneratedIndex(page) {
         --text: #eef8f2;
         --muted: #8da199;
         --accent: #7cffb2;
-        --line: rgba(124,255,178,.22);
-        --danger: #ff4d8d;
+        --accent-rgb: 124 255 178;
+        --success: #7cffb2;
+        --success-rgb: 124 255 178;
+        --warning: #f5c451;
+        --warning-rgb: 245 196 81;
+        --danger: #ff6b7a;
+        --danger-rgb: 255 107 122;
+        --info: #7cc8ff;
+        --info-rgb: 124 200 255;
+        --line: rgb(var(--accent-rgb) / .22);
         font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
       * { box-sizing: border-box; }
@@ -2516,7 +2541,7 @@ function createGeneratedIndex(page) {
         color: var(--text);
         background:
           linear-gradient(115deg, rgba(2,3,3,.98), rgba(7,10,11,.9)),
-          repeating-linear-gradient(90deg, rgba(124,255,178,.08) 0 1px, transparent 1px 72px),
+          repeating-linear-gradient(90deg, rgb(var(--accent-rgb) / .08) 0 1px, transparent 1px 72px),
           var(--bg);
       }
       main {
@@ -2583,7 +2608,7 @@ function createGeneratedIndex(page) {
         min-height: 132px;
         margin-top: 4px;
         padding: 16px;
-        border: 1px solid rgba(124,255,178,.2);
+        border: 1px solid rgb(var(--accent-rgb) / .2);
         border-radius: 12px;
         color: var(--muted);
         background: rgba(255,255,255,.04);
@@ -2631,14 +2656,14 @@ function createGeneratedIndex(page) {
         font: 700 .72rem/1.4 Consolas, monospace;
       }
       .captcha-state[data-state="verifying"] { color: #8cbcff; }
-      .captcha-state[data-state="success"] { color: var(--accent); }
-      .captcha-state[data-state="error"] { color: #ff8aae; }
+      .captcha-state[data-state="success"] { color: var(--success); }
+      .captcha-state[data-state="error"] { color: var(--danger); }
       #turnstileBox { display: grid; place-items: center; min-height: 65px; }
       .captcha-provider { margin: -6px 0 0; color: var(--muted); font: 700 .66rem Consolas, monospace; text-align: center; }
       .blocked {
-        border-color: rgba(255,77,141,.48);
+        border-color: rgb(var(--danger-rgb) / .48);
       }
-      .blocked h1 { color: #ff8aae; }
+      .blocked h1 { color: var(--danger); }
       .hidden { display: none; }
     </style>
   </head>

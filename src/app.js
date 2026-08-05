@@ -272,6 +272,7 @@ export function createApp() {
   });
 
   app.get("/favicon.svg", (req, res) => res.sendFile(path.join(publicRoot, "favicon.svg")));
+  app.get("/theme-tokens.css", (req, res) => res.sendFile(path.join(publicRoot, "theme-tokens.css")));
   app.get("/access.css", (req, res) => res.sendFile(path.join(publicRoot, "access.css")));
   app.get("/access.js", (req, res) => sendNoStoreFile(res, "access.js"));
   app.get("/invite.js", (req, res) => sendNoStoreFile(res, "invite.js"));
