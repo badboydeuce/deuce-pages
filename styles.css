@@ -7086,3 +7086,228 @@ body.result-viewer-open {
     justify-items: stretch;
   }
 }
+
+/* Mobile workspace: compact chrome, thumb navigation, and safe-area spacing. */
+@media (max-width: 620px) {
+  html {
+    min-height: 100%;
+    scroll-padding-top: calc(72px + env(safe-area-inset-top, 0px));
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
+  .app-shell,
+  .workspace {
+    min-height: 100dvh;
+  }
+
+  .app-shell:not(.auth-mode) .sidebar {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 50;
+    display: block;
+    width: 100%;
+    padding:
+      7px max(8px, env(safe-area-inset-right, 0px))
+      calc(7px + env(safe-area-inset-bottom, 0px))
+      max(8px, env(safe-area-inset-left, 0px));
+    border: 0;
+    border-top: 1px solid rgb(var(--accent-rgb) / 0.2);
+    background: color-mix(in srgb, var(--bg-deep) 92%, transparent);
+    box-shadow: 0 -14px 36px rgba(0, 0, 0, 0.24);
+    backdrop-filter: blur(20px) saturate(1.15);
+  }
+
+  :root[data-theme="light"] .app-shell:not(.auth-mode) .sidebar {
+    border-top-color: rgba(16, 32, 24, 0.12);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 -12px 32px rgba(28, 45, 36, 0.1);
+  }
+
+  .app-shell:not(.auth-mode) .sidebar .brand,
+  .app-shell:not(.auth-mode) .sidebar .intel-strip {
+    display: none;
+  }
+
+  .app-shell:not(.auth-mode) .side-nav {
+    display: flex;
+    width: min(100%, 640px);
+    margin: 0 auto;
+    padding: 0;
+    gap: 4px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .app-shell:not(.auth-mode) .nav-item {
+    flex: 1 1 0;
+    min-width: 62px;
+    min-height: 58px;
+    padding: 6px 5px;
+    gap: 4px;
+    border-color: transparent;
+    border-radius: 12px;
+    scroll-snap-align: center;
+  }
+
+  .app-shell:not(.auth-mode) .nav-item::before {
+    inset: auto 14px 2px;
+    height: 2px;
+  }
+
+  .app-shell:not(.auth-mode) .nav-icon {
+    width: 28px;
+    height: 28px;
+    font-size: 0.88rem;
+  }
+
+  .app-shell:not(.auth-mode) .nav-item strong {
+    max-width: 11ch;
+    font-size: 0.67rem;
+    line-height: 1.08;
+    overflow-wrap: anywhere;
+  }
+
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 45;
+    min-height: 66px;
+    padding:
+      max(10px, env(safe-area-inset-top, 0px))
+      max(12px, env(safe-area-inset-right, 0px))
+      10px
+      max(12px, env(safe-area-inset-left, 0px));
+    background: color-mix(in srgb, var(--bg-deep) 88%, transparent);
+    backdrop-filter: none;
+  }
+
+  :root[data-theme="light"] .toolbar {
+    background: rgba(255, 255, 255, 0.9);
+  }
+
+  .topbar-actions {
+    flex: 0 0 auto;
+    gap: 7px;
+  }
+
+  .notification-toggle,
+  .topbar-menu summary {
+    width: 42px;
+    height: 42px;
+    min-height: 42px;
+  }
+
+  .dropdown-panel,
+  .notification-panel {
+    position: fixed;
+    inset:
+      auto max(12px, env(safe-area-inset-right, 0px))
+      calc(78px + env(safe-area-inset-bottom, 0px))
+      max(12px, env(safe-area-inset-left, 0px));
+    width: auto;
+    max-height: min(68dvh, 560px);
+    margin: 0;
+    overflow-y: auto;
+    border-radius: 16px;
+  }
+
+  .notification-panel > header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: inherit;
+  }
+
+  .notification-list {
+    max-height: min(54dvh, 430px);
+  }
+
+  .app-shell:not(.auth-mode) .preview {
+    padding:
+      16px max(12px, env(safe-area-inset-right, 0px))
+      calc(92px + env(safe-area-inset-bottom, 0px))
+      max(12px, env(safe-area-inset-left, 0px));
+  }
+
+  .app-view,
+  .app-view > *,
+  .dashboard-panel,
+  .admin-table-card,
+  .owned-page-card,
+  .security-card,
+  .wallet-card {
+    min-width: 0;
+  }
+
+  .preview input,
+  .preview select,
+  .preview textarea {
+    min-height: 46px;
+    font-size: 16px;
+  }
+
+  .preview textarea {
+    min-height: 112px;
+  }
+
+  .view-nav button,
+  .admin-actions button,
+  .screen-actions button,
+  .result-actions button,
+  .wallet-actions button,
+  .fund-review-actions button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .dashboard-panel,
+  .admin-table-card,
+  .owned-page-card,
+  .security-card,
+  .wallet-card,
+  .auth-card {
+    border-radius: 14px;
+  }
+
+  pre,
+  code,
+  .copy-field,
+  .invite-link-result,
+  .wallet-address-card {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 420px) {
+  .dashboard-kpis,
+  .dashboard-health-list,
+  .my-page-status-grid,
+  .result-count-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-left h2 {
+    max-width: min(52vw, 190px);
+  }
+
+  .status-line span:last-child {
+    max-width: 44vw;
+  }
+
+  .notification-panel > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .notification-panel header button {
+    width: 100%;
+    min-height: 40px;
+  }
+}

@@ -276,3 +276,133 @@ main,
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; }
 }
+
+/* Phone refinements: shorter first screen, larger targets, and safer wrapping. */
+@media (max-width: 680px) {
+  html {
+    scroll-padding-top: calc(20px + env(safe-area-inset-top, 0px));
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
+  .site-header {
+    padding-top: max(16px, env(safe-area-inset-top, 0px));
+  }
+
+  .brand,
+  .portal-link,
+  .hero-actions a,
+  .closing > a,
+  .faq-list summary {
+    touch-action: manipulation;
+  }
+
+  .portal-link {
+    min-height: 42px;
+  }
+
+  .hero {
+    gap: 34px;
+    padding: 54px 0 38px;
+  }
+
+  .hero h1 {
+    margin: 18px 0;
+    font-size: clamp(2.8rem, 14vw, 4.45rem);
+    line-height: 0.94;
+  }
+
+  .hero-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    margin-top: 28px;
+  }
+
+  .hero-actions a,
+  .closing > a {
+    min-height: 46px;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .hero-console ol {
+    padding: 10px 14px;
+  }
+
+  .hero-console li {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 7px;
+    padding: 13px 2px;
+  }
+
+  .hero-console li em {
+    grid-column: 2;
+  }
+
+  .hero-console > p {
+    flex-wrap: wrap;
+    gap: 7px 14px;
+    padding: 13px 16px;
+  }
+
+  .guide-section {
+    padding-top: 82px;
+  }
+
+  .section-heading {
+    margin-bottom: 32px;
+  }
+
+  .section-heading h2 {
+    font-size: clamp(2rem, 11vw, 3rem);
+  }
+
+  .security-note {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .faq-list summary {
+    min-height: 58px;
+  }
+
+  .closing {
+    margin-top: 88px;
+    padding: 24px;
+  }
+
+  .closing > a {
+    width: 100%;
+  }
+
+  .site-footer {
+    margin-top: 76px;
+    padding-bottom: max(28px, env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 420px) {
+  .site-header,
+  main,
+  .site-footer {
+    width: min(100% - 24px, 1180px);
+  }
+
+  .brand small {
+    display: none;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.65rem, 13.5vw, 3.65rem);
+  }
+
+  .notice,
+  .step-grid article,
+  .security-grid article,
+  .check-card {
+    padding: 20px;
+  }
+}
