@@ -232,7 +232,7 @@ function applyAppearancePreference() {
 
 async function saveFlowState(page) {
   try {
-    await requestApi(`/api/user-pages/${page.id}/config`, {
+    const result = await requestApi(`/api/user-pages/${page.id}/config`, {
       method: "PATCH",
       body: JSON.stringify({
         domain: page.domain,
@@ -245,8 +245,10 @@ async function saveFlowState(page) {
         hostingConfig: page.hostingConfig || {}
       })
     });
+    return result?.userPage || page;
   } catch (error) {
     statusText.textContent = `SAVE FAILED: ${error.message}`.toUpperCase();
+    return null;
   }
 }
 
@@ -2123,7 +2125,6 @@ function createPackageRuntimeIndex(page, pagePackage) {
     <script>
       window.DEUCE_PAGE_CONFIG = ${configJson};
       const config = window.DEUCE_PAGE_CONFIG;
-      const allowed = config.allowedDomains || [];
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
       const gate = document.getElementById("deuceGate");
@@ -2132,11 +2133,34 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const turnstileMount = document.getElementById("deuceTurnstile");
       const block = document.getElementById("deuceBlock");
       const blockCopy = document.getElementById("deuceBlockCopy");
-      const captcha = config.security?.captcha && config.security?.turnstile?.siteKey;
-      const displayDomain = String(config.security?.turnstile?.displayDomain || "").trim();
 
       function normalizeHost(value) {
         return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
+      }
+
+      async function refreshLiveConfig() {
+        if (!config.runtime?.configEndpoint) {
+          throw new Error("Live security configuration endpoint is missing");
+        }
+        const response = await fetch(config.runtime.configEndpoint, {
+          method: "GET",
+          cache: "no-store",
+          headers: { Accept: "application/json" }
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.config) {
+          throw new Error(result.error || "Live security configuration is unavailable");
+        }
+        const live = result.config;
+        config.domain = live.domain || config.domain;
+        config.hosting = live.hosting || config.hosting;
+        config.allowedDomains = live.security?.domains || config.allowedDomains || [];
+        config.subscription = live.subscription || config.subscription;
+        config.security = live.security || {};
+        config.resultSettings = live.resultSettings || config.resultSettings;
+        config.generatedFile = live.generatedFile || config.generatedFile;
+        window.DEUCE_PAGE_CONFIG = config;
+        return config;
       }
 
       function blockPage(message) {
@@ -2187,6 +2211,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
 
       function loadTurnstile() {
         frame.classList.add("pending");
+        const displayDomain = String(config.security?.turnstile?.displayDomain || "").trim();
         if (displayDomain) {
           gateDomain.textContent = displayDomain;
           gateText.classList.add("active");
@@ -2235,15 +2260,31 @@ function createPackageRuntimeIndex(page, pagePackage) {
         document.head.appendChild(script);
       }
 
-      const allowedHosts = allowed.map(normalizeHost).filter(Boolean);
+      async function boot() {
+        try {
+          await refreshLiveConfig();
+        } catch (error) {
+          sendTraffic("config_load_failed", "blocked", error.message);
+          blockPage("SECURITY CONFIGURATION UNAVAILABLE");
+          return;
+        }
 
-      if (allowedHosts.length && !allowedHosts.includes(normalizeHost(host))) {
-        blockPage("ACCESS DENIED");
-      } else if (captcha) {
-        loadTurnstile();
-      } else {
-        loadPage();
+        const allowedHosts = (config.security?.domains || config.allowedDomains || []).map(normalizeHost).filter(Boolean);
+        const captchaEnabled = Boolean(config.security?.captcha);
+        const siteKey = config.security?.turnstile?.siteKey || "";
+        if (allowedHosts.length && !allowedHosts.includes(normalizeHost(host))) {
+          blockPage("ACCESS DENIED");
+        } else if (captchaEnabled && !siteKey) {
+          sendTraffic("turnstile_config_missing", "blocked", "Turnstile site key is missing");
+          blockPage("SECURITY CONFIGURATION UNAVAILABLE");
+        } else if (captchaEnabled) {
+          loadTurnstile();
+        } else {
+          loadPage();
+        }
       }
+
+      boot();
     <\/script>
   </body>
 </html>`;
@@ -2407,7 +2448,6 @@ function createGeneratedIndex(page) {
       .blocked h1 { color: #ff8aae; }
       .hidden { display: none; }
     </style>
-    ${publicSecurity.turnstile.siteKey && (publicSecurity.captcha || publicSecurity.vpnProxyRules?.reputationFailureMode === "challenge") ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>' : ""}
   </head>
   <body>
     <main>
@@ -2430,10 +2470,11 @@ function createGeneratedIndex(page) {
       const sessionData = {};
       const sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
       let runtimeAllowed = true;
-      let captchaPassed = !config.security?.captcha;
+      let captchaPassed = false;
       let captchaToken = "";
       let challengeProof = "";
       let captchaWidgetId = null;
+      let turnstileScriptPromise = null;
       const pageName = document.querySelector("#pageName");
       const progress = document.querySelector("#progress");
       const stepLabel = document.querySelector("#stepLabel");
@@ -2467,8 +2508,33 @@ function createGeneratedIndex(page) {
         return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
       }
 
+      async function refreshLiveConfig() {
+        if (!config.runtime?.configEndpoint) {
+          throw new Error("Live security configuration endpoint is missing");
+        }
+        const response = await fetch(config.runtime.configEndpoint, {
+          method: "GET",
+          cache: "no-store",
+          headers: { Accept: "application/json" }
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.config) {
+          throw new Error(result.error || "Live security configuration is unavailable");
+        }
+        const live = result.config;
+        config.domain = live.domain || config.domain;
+        config.hosting = live.hosting || config.hosting;
+        config.allowedDomains = live.security?.domains || config.allowedDomains || [];
+        config.subscription = live.subscription || config.subscription;
+        config.security = live.security || {};
+        config.resultSettings = live.resultSettings || config.resultSettings;
+        config.generatedFile = live.generatedFile || config.generatedFile;
+        window.DEUCE_PAGE_CONFIG = config;
+        return config;
+      }
+
       function enforceDomain() {
-        const allowedDomains = (config.allowedDomains || config.security?.domains || []).map(normalizeHost).filter(Boolean);
+        const allowedDomains = (config.security?.domains || config.allowedDomains || []).map(normalizeHost).filter(Boolean);
         const hostname = normalizeHost(window.location.hostname);
 
         if (allowedDomains.length && !allowedDomains.includes(hostname)) {
@@ -2653,15 +2719,40 @@ function createGeneratedIndex(page) {
         return config.security?.turnstile?.siteKey || "";
       }
 
+      function loadTurnstileScript() {
+        if (window.turnstile) return Promise.resolve();
+        if (turnstileScriptPromise) return turnstileScriptPromise;
+        turnstileScriptPromise = new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+          script.async = true;
+          script.defer = true;
+          script.onload = () => window.turnstile ? resolve() : reject(new Error("Turnstile did not initialize"));
+          script.onerror = () => reject(new Error("Turnstile could not load"));
+          document.head.appendChild(script);
+        });
+        return turnstileScriptPromise;
+      }
+
       function renderTurnstile() {
         const mount = document.querySelector("#turnstileBox");
         if (!config.security?.captcha || captchaPassed || !mount) return;
         if (!turnstileSiteKey()) {
-          mount.textContent = "Turnstile site key is missing. Update this page security config.";
+          trackTraffic("turnstile_config_missing", {
+            result: "blocked",
+            reason: "Turnstile site key is missing"
+          });
+          blockPage("ACCESS DENIED", "HUMAN VERIFICATION UNAVAILABLE");
           return;
         }
         if (!window.turnstile) {
-          window.setTimeout(renderTurnstile, 300);
+          loadTurnstileScript().then(renderTurnstile).catch((error) => {
+            trackTraffic("turnstile_load_failed", {
+              result: "blocked",
+              reason: error.message
+            });
+            blockPage("ACCESS DENIED", "HUMAN VERIFICATION UNAVAILABLE");
+          });
           return;
         }
         if (captchaWidgetId !== null) return;
@@ -2817,7 +2908,24 @@ function createGeneratedIndex(page) {
       });
 
       async function boot() {
-        setStatus(["booting", config.pageId, config.generatedFile?.version || "generated"]);
+        setStatus(["loading live security", config.pageId, config.generatedFile?.version || "generated"]);
+        try {
+          await refreshLiveConfig();
+        } catch (error) {
+          trackTraffic("config_load_failed", {
+            result: "blocked",
+            reason: error.message
+          });
+          blockPage("ACCESS DENIED", "SECURITY CONFIGURATION UNAVAILABLE");
+          return;
+        }
+
+        pageName.textContent = config.pageName;
+        captchaPassed = !Boolean(config.security?.captcha);
+        if (config.security?.captcha && !turnstileSiteKey()) {
+          blockPage("ACCESS DENIED", "HUMAN VERIFICATION UNAVAILABLE");
+          return;
+        }
         if (!enforceDomain()) return;
         const remoteAllowed = await checkRemoteSecurity("boot");
         if (!remoteAllowed) return;
@@ -4639,7 +4747,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
         <article class="security-panel go-live-step-card ${page.generatedFile?.lastGeneratedAt ? "is-complete" : readyToDownload ? "is-active" : ""}">
           <small>step 4</small>
           <h3>Download final index.html</h3>
-          <p>Download after the live domain, relay secret, and managed Worker route are set. The raw host URL is not required yet. Upload only this file as index.html on the static host; the full page package stays controlled by DEUCE runtime.</p>
+          <p>Download after the live domain, relay secret, and managed Worker route are set. Upload this smart launcher once as index.html; CAPTCHA changes then load automatically on the next visitor refresh. Download again only when the launcher code itself changes.</p>
           <div class="admin-rule-list">
             ${isRenderStatic ? `
               <div><strong>1</strong><span>Download the generated index.html from this step.</span></div>
@@ -5845,7 +5953,7 @@ async function validateTurnstileForPage(page) {
   }
 }
 
-function saveSecurityConfig(page, tab = "security") {
+async function saveSecurityConfig(page, tab = "security") {
   if (!page) {
     renderMissingPage();
     return;
@@ -5883,7 +5991,7 @@ function saveSecurityConfig(page, tab = "security") {
     return;
   }
 
-  applyPageSecurityConfig(page, {
+  const nextSecurityConfig = {
     ...current,
     domains: domainsField ? splitRuleList(domainsField.value) : current.domains || [],
     captcha: captchaField ? captchaField.checked : Boolean(current.captcha),
@@ -5895,10 +6003,21 @@ function saveSecurityConfig(page, tab = "security") {
     whitelistIps: ipRules.whitelistIps,
     blockedDevices: preview.querySelector("[data-security-device]") ? blockedDevices : current.blockedDevices || [],
     vpnProxyRules
-  });
-  saveFlowState(page);
-  renderSecurityCenter(pageRouteKey(page), tab);
-  statusText.textContent = "SECURITY SETTINGS SAVED";
+  };
+  applyPageSecurityConfig(page, nextSecurityConfig);
+  const savedPage = await saveFlowState(page);
+  if (!savedPage) {
+    applyPageSecurityConfig(page, current);
+    await renderSecurityCenter(pageRouteKey(page), tab);
+    statusText.textContent = "SECURITY SETTINGS NOT SAVED";
+    return false;
+  }
+  if (savedPage.securityConfig) {
+    applyPageSecurityConfig(page, savedPage.securityConfig);
+  }
+  await renderSecurityCenter(pageRouteKey(page), tab);
+  statusText.textContent = "SECURITY SETTINGS SAVED / LIVE ON NEXT REFRESH";
+  return true;
 }
 
 function saveUserConfig(page) {
@@ -7353,7 +7472,10 @@ preview.addEventListener("click", async (event) => {
 
   const saveSecurityButton = event.target.closest("[data-save-security]");
   if (saveSecurityButton) {
-    saveSecurityConfig(getPageBySlug(saveSecurityButton.dataset.saveSecurity), saveSecurityButton.dataset.saveSecurityTab || "security");
+    await withButtonBusy(saveSecurityButton, "Saving", () => saveSecurityConfig(
+      getPageBySlug(saveSecurityButton.dataset.saveSecurity),
+      saveSecurityButton.dataset.saveSecurityTab || "security"
+    ));
     return;
   }
 
