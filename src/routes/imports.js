@@ -348,8 +348,16 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
           lastSyncedCommitSha: scan.commitSha,
           lastSyncedTreeSha: scan.treeSha,
           lastSyncedAt: new Date().toISOString(),
+          lastObservedCommitSha: scan.commitSha,
+          lastObservedAt: new Date().toISOString(),
           committedAt: scan.committedAt,
-          commitUrl: scan.commitUrl
+          commitUrl: scan.commitUrl,
+          health: {
+            state: "healthy",
+            reason: "Configured branch is healthy",
+            checkedAt: new Date().toISOString(),
+            commitSha: scan.commitSha
+          }
         },
         files: scan.files,
         scripts: scan.scripts,

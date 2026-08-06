@@ -39,6 +39,7 @@ let marketPages = [];
 let adminPackages = [];
 const adminPackageLibraryState = { search: "", status: "all", source: "all", sort: "updated" };
 const githubLiveStatusByPackage = new Map();
+const githubChangeInboxByPackage = new Map();
 
 const packageDataModel = {
   identity: ["id", "slug", "name", "type", "status", "version"],
@@ -418,6 +419,10 @@ function notificationPageKey(notification = {}) {
     || notification.metadata?.pageSlug
     || ""
   );
+}
+
+function notificationPackageKey(notification = {}) {
+  return String(notification.metadata?.packageSlug || notification.metadata?.packageId || "");
 }
 
 function notificationTimeLabel(value) {
@@ -4082,6 +4087,7 @@ function githubChangeCount(status = {}) {
 
 function githubLivePanelMarkup(page) {
   const github = page.packageManifest?.github || {};
+  const persistedHealth = github.health || {};
   const status = githubLiveStatusByPackage.get(page.id);
   const storedCommit = status?.storedCommitSha || github.lastSyncedCommitSha || "";
   const currentCommit = status?.currentCommitSha || storedCommit;
@@ -4093,8 +4099,18 @@ function githubLivePanelMarkup(page) {
       ? "Check failed"
       : status?.commitChanged || changeCount
         ? drift.hasStructuralChanges ? "Screen review needed" : "Code changes live"
-        : status ? "In sync" : "Live branch connected";
-  const stateClass = status?.error || drift.hasStructuralChanges ? "warning" : status?.commitChanged || changeCount ? "active" : "ready";
+        : status
+          ? "In sync"
+          : persistedHealth.state === "unhealthy"
+            ? "Source unhealthy"
+            : persistedHealth.state === "review"
+              ? "Screen review needed"
+              : persistedHealth.state === "degraded"
+                ? "Check failed"
+                : "Live branch connected";
+  const stateClass = status?.error || drift.hasStructuralChanges || ["unhealthy", "review", "degraded"].includes(persistedHealth.state)
+    ? "warning"
+    : status?.commitChanged || changeCount ? "active" : "ready";
   const folder = github.folder || status?.folder || "repository root";
   const checkedAt = status?.checkedAt ? resultViewerTime(status.checkedAt) : "Not checked in this session";
   const lastSyncedAt = status?.lastSyncedAt || github.lastSyncedAt;
@@ -4126,10 +4142,142 @@ function githubLivePanelMarkup(page) {
   `;
 }
 
+function safeGithubLink(value = "") {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && ["github.com", "www.github.com"].includes(url.hostname.toLowerCase()) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function githubChangeEventPresentation(event = {}) {
+  if (event.status === "applied") return { label: "Applied", className: "ready", detail: "Accepted into the current screen inventory." };
+  if (event.status === "dismissed") return { label: "Dismissed", className: "muted", detail: "Removed from the action queue." };
+  const classification = event.summary?.classification || event.status;
+  const presentations = {
+    live: { label: "Code live", className: "active", detail: "Code changed without changing the known screen structure." },
+    healthy: { label: "Healthy", className: "ready", detail: "The configured branch and entry screen are healthy." },
+    screen_review: { label: "Review screens", className: "warning", detail: "HTML screens were added, removed, renamed, or restored." },
+    entry_missing: { label: "Entry missing", className: "danger", detail: "The configured entry screen is no longer present." },
+    branch_deleted: { label: "Branch deleted", className: "danger", detail: "The configured GitHub branch was deleted." },
+    check_failed: { label: "Check failed", className: "danger", detail: event.error || "The branch could not be inspected." },
+    processing: { label: "Processing", className: "active", detail: "Inspecting the branch now." },
+    received: { label: "Received", className: "active", detail: "Waiting for source inspection." }
+  };
+  return presentations[classification] || { label: "Change detected", className: "active", detail: "GitHub reported a change to the configured branch." };
+}
+
+function githubChangeInboxMarkup(page) {
+  const inbox = githubChangeInboxByPackage.get(page.id) || {};
+  const events = Array.isArray(inbox.events) ? inbox.events : [];
+  const webhookUrl = `${window.location.origin}${inbox.webhookPath || "/api/webhooks/github"}`;
+  return `
+    <article class="security-panel github-change-inbox" data-github-change-inbox="${escapeHtml(page.id)}">
+      <div class="github-live-heading">
+        <div>
+          <small>github change inbox</small>
+          <h3>Branch activity</h3>
+          <p>${inbox.loading ? "Loading signed push events..." : `${Number(inbox.unresolvedCount || 0)} change${Number(inbox.unresolvedCount || 0) === 1 ? " needs" : "s need"} attention`}</p>
+        </div>
+        <span class="github-live-state ${inbox.webhookConfigured ? "ready" : "warning"}">${inbox.webhookConfigured ? "Webhook ready" : "Secret required"}</span>
+      </div>
+      <div class="github-webhook-setup ${inbox.webhookConfigured ? "is-ready" : "needs-setup"}">
+        <div>
+          <small>Push webhook URL</small>
+          <code>${escapeHtml(webhookUrl)}</code>
+          <span>${inbox.webhookConfigured ? "Signature verification is enabled. Select Push events in GitHub." : "Add GITHUB_WEBHOOK_SECRET in Render before connecting this URL in GitHub."}</span>
+        </div>
+        <button type="button" data-github-webhook-copy="${escapeHtml(webhookUrl)}">Copy URL</button>
+      </div>
+      ${inbox.error ? `<p class="github-live-error">${escapeHtml(inbox.error)}</p>` : ""}
+      ${!inbox.loading && !inbox.error && !events.length ? `
+        <div class="github-inbox-empty">
+          <strong>No GitHub changes received</strong>
+          <span>Signed push events for this repository and branch will appear here.</span>
+        </div>
+      ` : ""}
+      ${events.length ? `<div class="github-change-list">${events.map((event) => {
+        const presentation = githubChangeEventPresentation(event);
+        const summary = event.summary || {};
+        const fileTotal = Number(summary.changedFileCount ?? event.changedFiles?.length ?? 0);
+        const screenTotal = ["added", "missing", "renamed", "restored", "modified"]
+          .reduce((total, key) => total + (Array.isArray(summary.screens?.[key]) ? summary.screens[key].length : 0), 0);
+        const commitLink = safeGithubLink(summary.commitUrl || event.compareUrl);
+        const canDismiss = ["received", "processing", "action_required", "unhealthy", "error"].includes(event.status);
+        return `
+          <div class="github-change-row ${presentation.className}">
+            <div class="github-change-summary">
+              <span class="github-live-state ${presentation.className}">${escapeHtml(presentation.label)}</span>
+              <strong>${escapeHtml(shortCommit(event.afterSha || summary.afterSha))}</strong>
+              <small>${escapeHtml(event.author || "GitHub")} / ${escapeHtml(resultViewerTime(event.processedAt || event.createdAt))}</small>
+            </div>
+            <p>${escapeHtml(presentation.detail)}</p>
+            <div class="github-change-metrics"><span>${fileTotal} file${fileTotal === 1 ? "" : "s"}</span><span>${screenTotal} screen change${screenTotal === 1 ? "" : "s"}</span><span>${escapeHtml(event.branch || "branch")}</span></div>
+            <div class="github-change-actions">
+              ${commitLink ? `<a href="${escapeHtml(commitLink)}" target="_blank" rel="noopener noreferrer">View commit</a>` : ""}
+              ${summary.structural ? `<button type="button" data-github-change-review="${escapeHtml(page.id)}">Review mapping</button>` : ""}
+              ${canDismiss ? `<button type="button" data-github-change-dismiss="${escapeHtml(event.id)}" data-github-change-package="${escapeHtml(page.id)}">Dismiss</button>` : ""}
+            </div>
+          </div>
+        `;
+      }).join("")}</div>` : ""}
+      <div class="admin-actions">
+        <button type="button" data-github-inbox-refresh="${escapeHtml(page.id)}" ${inbox.loading ? "disabled" : ""}>${inbox.loading ? "Refreshing..." : "Refresh inbox"}</button>
+      </div>
+    </article>
+  `;
+}
+
 function refreshGitHubLivePanel(page) {
   const panel = [...preview.querySelectorAll("[data-github-live-panel]")]
     .find((item) => item.dataset.githubLivePanel === page.id);
   if (panel) panel.outerHTML = githubLivePanelMarkup(page);
+}
+
+function refreshGitHubChangeInbox(page) {
+  const panel = [...preview.querySelectorAll("[data-github-change-inbox]")]
+    .find((item) => item.dataset.githubChangeInbox === page.id);
+  if (panel) panel.outerHTML = githubChangeInboxMarkup(page);
+}
+
+async function loadGitHubChangeInbox(page, force = false) {
+  if (!page) throw new Error("Package not found");
+  const current = githubChangeInboxByPackage.get(page.id);
+  if (current?.loading || (!force && current?.loadedAt && Date.now() - current.loadedAt < 30000)) return current;
+  githubChangeInboxByPackage.set(page.id, { ...(current || {}), loading: true, error: "" });
+  refreshGitHubChangeInbox(page);
+  try {
+    const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}/github/changes?limit=20`);
+    const next = { ...result, loading: false, error: "", loadedAt: Date.now() };
+    githubChangeInboxByPackage.set(page.id, next);
+    refreshGitHubChangeInbox(page);
+    return next;
+  } catch (error) {
+    const next = { ...(current || {}), loading: false, error: error.message, loadedAt: Date.now() };
+    githubChangeInboxByPackage.set(page.id, next);
+    refreshGitHubChangeInbox(page);
+    return next;
+  }
+}
+
+async function dismissGitHubChange(page, eventId) {
+  if (!page || !eventId) throw new Error("GitHub change event not found");
+  const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}/github/changes/${encodeURIComponent(eventId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ action: "dismiss" })
+  });
+  const current = githubChangeInboxByPackage.get(page.id) || {};
+  const previous = (current.events || []).find((event) => event.id === result.event.id);
+  const events = (current.events || []).map((event) => event.id === result.event.id ? result.event : event);
+  const unresolvedStatuses = new Set(["received", "processing", "action_required", "unhealthy", "error"]);
+  githubChangeInboxByPackage.set(page.id, {
+    ...current,
+    events,
+    unresolvedCount: Math.max(0, Number(current.unresolvedCount || 0) - (unresolvedStatuses.has(previous?.status) ? 1 : 0)),
+    loadedAt: Date.now()
+  });
+  refreshGitHubChangeInbox(page);
 }
 
 async function checkAdminPackageGitHub(page) {
@@ -4154,6 +4302,7 @@ async function syncAdminPackageGitHub(page) {
   adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
   marketPages = adminPackages.filter((item) => item.status === "published");
   githubLiveStatusByPackage.set(updated.id, { ...result.status, loading: false });
+  githubChangeInboxByPackage.delete(updated.id);
   await renderAdminPackageEditor(updated.slug);
   statusText.textContent = result.status?.packageMovedToReview
     ? "GITHUB SCREENS SYNCED / PACKAGE MOVED TO REVIEW"
@@ -4375,7 +4524,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
       </article>
 
       <div class="package-editor-grid">
-        ${isLiveGithub ? githubLivePanelMarkup(page) : ""}
+        ${isLiveGithub ? `${githubLivePanelMarkup(page)}${githubChangeInboxMarkup(page)}` : ""}
 
         <article class="security-panel package-form">
           <small>package details</small>
@@ -4505,6 +4654,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
   if (isLiveGithub && (!knownGithubStatus || knownGithubStatus.error || githubStatusAge > 30000) && !knownGithubStatus?.loading) {
     void checkAdminPackageGitHub(page);
   }
+  if (isLiveGithub) void loadGitHubChangeInbox(page);
   statusText.textContent = `${page.name.toUpperCase()} PACKAGE EDITOR OPEN`;
   topbarTitle.textContent = `${page.name} Editor`;
 }
@@ -7425,6 +7575,12 @@ notificationCenter?.addEventListener("click", async (event) => {
   }
   if (notificationPanel) notificationPanel.hidden = true;
   notificationToggle?.setAttribute("aria-expanded", "false");
+  const packageKey = notificationPackageKey(notification || {});
+  if (String(notification?.eventType || "").startsWith("github.") && packageKey && isAdmin()) {
+    window.location.hash = `#admin-package-${encodeURIComponent(packageKey)}`;
+    statusText.textContent = "GITHUB CHANGE INBOX OPENED";
+    return;
+  }
   const pageKey = notificationPageKey(notification || { userPageId: item.dataset.notificationPage });
   if (!pageKey) {
     statusText.textContent = "RESULT NOTIFICATION HAS NO PAGE RECORD";
@@ -7709,6 +7865,46 @@ preview.addEventListener("click", async (event) => {
     statusText.textContent = githubLiveStatusByPackage.get(page?.id)?.error
       ? "GITHUB CHECK FAILED"
       : "GITHUB BRANCH CHECKED";
+    return;
+  }
+
+  const githubInboxRefreshButton = event.target.closest("[data-github-inbox-refresh]");
+  if (githubInboxRefreshButton) {
+    const page = getAdminPackage(githubInboxRefreshButton.dataset.githubInboxRefresh);
+    await loadGitHubChangeInbox(page, true);
+    statusText.textContent = githubChangeInboxByPackage.get(page?.id)?.error
+      ? "GITHUB INBOX REFRESH FAILED"
+      : "GITHUB CHANGE INBOX REFRESHED";
+    return;
+  }
+
+  const githubChangeDismissButton = event.target.closest("[data-github-change-dismiss]");
+  if (githubChangeDismissButton) {
+    const page = getAdminPackage(githubChangeDismissButton.dataset.githubChangePackage);
+    try {
+      await withButtonBusy(githubChangeDismissButton, "Dismissing", () => dismissGitHubChange(page, githubChangeDismissButton.dataset.githubChangeDismiss));
+      statusText.textContent = "GITHUB CHANGE DISMISSED";
+    } catch (error) {
+      statusText.textContent = `GITHUB CHANGE DISMISS FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
+  const githubChangeReviewButton = event.target.closest("[data-github-change-review]");
+  if (githubChangeReviewButton) {
+    preview.querySelector(".screen-mapping-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    statusText.textContent = "REVIEW CHANGED SCREEN MAPPINGS";
+    return;
+  }
+
+  const githubWebhookCopyButton = event.target.closest("[data-github-webhook-copy]");
+  if (githubWebhookCopyButton) {
+    try {
+      await navigator.clipboard.writeText(githubWebhookCopyButton.dataset.githubWebhookCopy);
+      statusText.textContent = "GITHUB WEBHOOK URL COPIED";
+    } catch {
+      statusText.textContent = "COPY FAILED / SELECT THE WEBHOOK URL MANUALLY";
+    }
     return;
   }
 

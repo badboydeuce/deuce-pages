@@ -14,6 +14,7 @@ import { importsRouter } from "./routes/imports.js";
 import { previewRouter } from "./routes/preview.js";
 import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
+import { githubWebhooksRouter } from "./routes/githubWebhooks.js";
 import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
 import { configureClientIpTrust } from "./services/clientIp.js";
 import { getUserBySessionToken } from "./repositories/appRepository.js";
@@ -208,7 +209,14 @@ export function createApp() {
   });
   app.use(securityHeaders);
   app.use(corsMiddleware);
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({
+    limit: "1mb",
+    verify: (req, res, buffer) => {
+      if (String(req.originalUrl || "").split("?")[0] === "/api/webhooks/github") {
+        req.rawBody = Buffer.from(buffer);
+      }
+    }
+  }));
   app.use(express.urlencoded({ extended: true, limit: "1mb", parameterLimit: 100 }));
   app.use("/api", (req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
@@ -241,6 +249,7 @@ export function createApp() {
     res.redirect(307, "/api/auth/me");
   });
 
+  app.use("/api/webhooks", githubWebhooksRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/packages", packagesRouter);
   app.use("/api/admin/packages", packagesRouter);

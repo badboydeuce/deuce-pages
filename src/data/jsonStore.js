@@ -17,6 +17,7 @@ function emptyDb() {
     userPages: [],
     walletTransactions: [],
     walletDepositRequests: [],
+    githubChangeEvents: [],
     pageResults: [],
     trafficEvents: [],
     notificationOutbox: []

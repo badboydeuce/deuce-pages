@@ -3504,6 +3504,12 @@ code,
   gap: 14px;
 }
 
+.github-change-inbox {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+}
+
 .github-live-heading {
   display: flex;
   justify-content: space-between;
@@ -3540,6 +3546,18 @@ code,
   border-color: rgb(var(--warning-rgb) / 0.32);
   color: var(--warning);
   background: rgb(var(--warning-rgb) / 0.08);
+}
+
+.github-live-state.danger {
+  border-color: rgb(var(--danger-rgb) / 0.34);
+  color: var(--danger);
+  background: rgb(var(--danger-rgb) / 0.08);
+}
+
+.github-live-state.muted {
+  border-color: var(--line);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .screen-sync-badge.missing {
@@ -3582,6 +3600,134 @@ code,
 .github-live-stats strong {
   color: var(--text);
   font: 900 0.92rem var(--mono);
+}
+
+.github-webhook-setup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 12px;
+  border: 1px solid rgb(var(--success-rgb) / 0.22);
+  border-radius: var(--radius);
+  background: rgb(var(--success-rgb) / 0.045);
+}
+
+.github-webhook-setup.needs-setup {
+  border-color: rgb(var(--warning-rgb) / 0.25);
+  background: rgb(var(--warning-rgb) / 0.045);
+}
+
+.github-webhook-setup > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.github-webhook-setup small,
+.github-webhook-setup span,
+.github-change-metrics {
+  color: var(--muted);
+  font: 750 0.68rem var(--mono);
+}
+
+.github-webhook-setup code {
+  overflow: hidden;
+  color: var(--text);
+  font: 800 0.76rem var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-inbox-empty {
+  display: grid;
+  gap: 4px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-align: center;
+}
+
+.github-inbox-empty strong {
+  color: var(--text);
+}
+
+.github-change-list {
+  display: grid;
+  gap: 8px;
+}
+
+.github-change-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.75fr) minmax(0, 1.25fr);
+  grid-template-areas:
+    "summary detail"
+    "metrics actions";
+  align-items: center;
+  gap: 5px 16px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid rgb(var(--accent-rgb) / 0.55);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.github-change-row.warning { border-left-color: var(--warning); }
+.github-change-row.danger { border-left-color: var(--danger); }
+.github-change-row.ready { border-left-color: var(--success); }
+.github-change-row.muted { border-left-color: var(--line); opacity: 0.72; }
+
+.github-change-summary {
+  grid-area: summary;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 8px;
+  align-items: center;
+}
+
+.github-change-summary strong {
+  font: 900 0.82rem var(--mono);
+}
+
+.github-change-summary small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font: 700 0.65rem var(--mono);
+}
+
+.github-change-row > p {
+  grid-area: detail;
+  margin: 0;
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.github-change-metrics {
+  grid-area: metrics;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+}
+
+.github-change-actions {
+  grid-area: actions;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.github-change-actions a,
+.github-change-actions button {
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--text);
+  background: transparent;
+  font: 800 0.68rem var(--mono);
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 .file-map-list > div {
@@ -6834,6 +6980,26 @@ code {
 
   .github-live-stats {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .github-webhook-setup,
+  .github-change-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .github-change-row {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "summary"
+      "detail"
+      "metrics"
+      "actions";
+  }
+
+  .github-change-actions a,
+  .github-change-actions button {
+    text-align: center;
   }
 
   .file-map-list > .screen-map-row {

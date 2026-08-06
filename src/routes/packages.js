@@ -1,12 +1,16 @@
 import { Router } from "express";
 import {
+  countUnresolvedGitHubChangeEvents,
   createPackagePreviewTicket,
   createPackage,
   deletePackage,
   findPackage,
   listPackages,
+  listGitHubChangeEvents,
   packageSubscriberCount,
   publishPackage,
+  resolveGitHubChangeEvent,
+  resolveGitHubChangeEventsForPackage,
   subscribeToPackage,
   updatePackage
 } from "../repositories/appRepository.js";
@@ -120,6 +124,42 @@ packagesRouter.get("/:id/github/status", requireAdmin, async (req, res) => {
   }
 });
 
+packagesRouter.get("/:id/github/changes", requireAdmin, async (req, res) => {
+  try {
+    const pagePackage = await findPackage(req.params.id);
+    if (!pagePackage) return res.status(404).json({ error: "Package not found" });
+    if (pagePackage.sourceType !== "github" || !pagePackage.packageManifest?.github) {
+      return res.status(409).json({ error: "Package is not connected to GitHub" });
+    }
+    const [events, unresolvedCount] = await Promise.all([
+      listGitHubChangeEvents(pagePackage.id, req.query.limit),
+      countUnresolvedGitHubChangeEvents(pagePackage.id)
+    ]);
+    res.setHeader("Cache-Control", "no-store, private");
+    res.json({
+      events,
+      unresolvedCount,
+      webhookConfigured: String(process.env.GITHUB_WEBHOOK_SECRET || "").length >= 16,
+      webhookPath: "/api/webhooks/github"
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+packagesRouter.patch("/:id/github/changes/:eventId", requireAdmin, async (req, res) => {
+  try {
+    const pagePackage = await findPackage(req.params.id);
+    if (!pagePackage) return res.status(404).json({ error: "Package not found" });
+    if (req.body?.action !== "dismiss") return res.status(400).json({ error: "Unsupported change inbox action" });
+    const event = await resolveGitHubChangeEvent(pagePackage.id, req.params.eventId, "dismissed");
+    if (!event) return res.status(404).json({ error: "GitHub change event not found" });
+    res.json({ event });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 packagesRouter.post("/:id/github/sync", requireAdmin, async (req, res) => {
   try {
     const pagePackage = await findPackage(req.params.id);
@@ -147,7 +187,15 @@ packagesRouter.post("/:id/github/sync", requireAdmin, async (req, res) => {
         lastSyncedTreeSha: status.scan.treeSha,
         lastSyncedAt: syncedAt,
         committedAt: status.scan.committedAt,
-        commitUrl: status.scan.commitUrl
+        commitUrl: status.scan.commitUrl,
+        lastObservedCommitSha: status.scan.commitSha,
+        lastObservedAt: syncedAt,
+        health: {
+          state: reconciled.drift.hasStructuralChanges ? "review" : "healthy",
+          reason: reconciled.drift.hasStructuralChanges ? "Screen mappings synced and require admin review" : "Configured branch is healthy",
+          checkedAt: syncedAt,
+          commitSha: status.scan.commitSha
+        }
       }
     };
     const updated = await updatePackage(pagePackage.id, {
@@ -157,6 +205,7 @@ packagesRouter.post("/:id/github/sync", requireAdmin, async (req, res) => {
       cssFiles: status.scan.cssFiles,
       packageManifest
     });
+    await resolveGitHubChangeEventsForPackage(pagePackage.id, "applied");
     const responseStatus = publicGitHubLiveStatus({
       ...status,
       storedCommitSha: status.scan.commitSha,

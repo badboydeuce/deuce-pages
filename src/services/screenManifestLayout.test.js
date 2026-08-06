@@ -46,3 +46,19 @@ test("GitHub packages expose live branch status and explicit structural sync con
   assert.match(styles, /\.github-live-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(styles, /\.github-live-stats\s*\{/);
 });
+
+test("GitHub packages expose a compact signed change inbox", () => {
+  for (const marker of [
+    "data-github-change-inbox",
+    "data-github-inbox-refresh",
+    "data-github-change-dismiss",
+    "data-github-change-review",
+    "data-github-webhook-copy"
+  ]) {
+    assert.match(script, new RegExp(marker));
+  }
+  assert.match(script, /\/github\/changes\?limit=20/);
+  assert.match(script, /Signature verification is enabled/);
+  assert.match(styles, /\.github-change-inbox\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+  assert.match(styles, /\.github-change-row\s*\{/);
+});

@@ -51,6 +51,36 @@ function toPackage(row) {
   };
 }
 
+function toGitHubChangeEvent(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    packageId: row.package_id,
+    deliveryId: row.delivery_id,
+    repository: row.repository,
+    branch: row.branch,
+    beforeSha: row.before_sha || "",
+    afterSha: row.after_sha || "",
+    compareUrl: row.compare_url || "",
+    author: row.author || "GitHub",
+    eventType: row.event_type || "push",
+    status: row.status || "received",
+    changedFiles: row.changed_files || [],
+    summary: row.summary || {},
+    error: row.error || "",
+    processedAt: row.processed_at || null,
+    resolvedAt: row.resolved_at || null,
+    createdAt: row.created_at
+  };
+}
+
+function cleanGitHubChangedFiles(files = []) {
+  return [...new Set((Array.isArray(files) ? files : [])
+    .map((file) => String(file || "").replace(/\\/g, "/").replace(/^\/+/, "").trim())
+    .filter((file) => file && file.length <= 240 && !file.split("/").some((part) => part === "..")))]
+    .slice(0, 500);
+}
+
 function toUser(row) {
   if (!row) return null;
   return {
@@ -910,6 +940,195 @@ export async function updatePackage(id, data) {
   return toPackage(result.rows[0]);
 }
 
+export async function createGitHubChangeEvent(data = {}) {
+  const deliveryId = String(data.deliveryId || "").trim().slice(0, 180);
+  const packageId = String(data.packageId || "").trim();
+  if (!deliveryId || !packageId) throw new Error("GitHub delivery and package are required");
+  const now = new Date().toISOString();
+  const event = {
+    id: createId("ghchange"),
+    packageId,
+    deliveryId,
+    repository: String(data.repository || "").trim().slice(0, 220),
+    branch: String(data.branch || "").trim().slice(0, 255),
+    beforeSha: String(data.beforeSha || "").trim().slice(0, 80),
+    afterSha: String(data.afterSha || "").trim().slice(0, 80),
+    compareUrl: String(data.compareUrl || "").trim().slice(0, 500),
+    author: String(data.author || "GitHub").trim().slice(0, 180),
+    eventType: String(data.eventType || "push").trim().slice(0, 80),
+    status: "received",
+    changedFiles: cleanGitHubChangedFiles(data.changedFiles),
+    summary: data.summary && typeof data.summary === "object" ? data.summary : {},
+    error: "",
+    processedAt: null,
+    resolvedAt: null,
+    createdAt: now
+  };
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      db.githubChangeEvents ||= [];
+      const existing = db.githubChangeEvents.find((item) => item.packageId === packageId && item.deliveryId === deliveryId);
+      if (existing) return { event: existing, created: false };
+      db.githubChangeEvents.push(event);
+      return { event, created: true };
+    });
+  }
+  const inserted = await query(
+    `INSERT INTO github_change_events
+      (id, package_id, delivery_id, repository, branch, before_sha, after_sha, compare_url, author, event_type, status, changed_files, summary)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'received', $11::jsonb, $12::jsonb)
+     ON CONFLICT (package_id, delivery_id) DO NOTHING
+     RETURNING *`,
+    [event.id, event.packageId, event.deliveryId, event.repository, event.branch, event.beforeSha, event.afterSha, event.compareUrl, event.author, event.eventType, JSON.stringify(event.changedFiles), JSON.stringify(event.summary)]
+  );
+  if (inserted.rows[0]) return { event: toGitHubChangeEvent(inserted.rows[0]), created: true };
+  const existing = await query("SELECT * FROM github_change_events WHERE package_id = $1 AND delivery_id = $2 LIMIT 1", [packageId, deliveryId]);
+  return { event: toGitHubChangeEvent(existing.rows[0]), created: false };
+}
+
+export async function updateGitHubChangeEvent(id, data = {}) {
+  const allowedStatuses = new Set(["received", "processing", "live", "healthy", "action_required", "unhealthy", "error", "applied", "dismissed"]);
+  const status = data.status && allowedStatuses.has(String(data.status)) ? String(data.status) : null;
+  const hasSummary = data.summary && typeof data.summary === "object";
+  const hasError = Object.hasOwn(data, "error");
+  const error = hasError ? String(data.error || "").slice(0, 1000) : null;
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const event = (db.githubChangeEvents || []).find((item) => item.id === id);
+      if (!event) return null;
+      if (status) event.status = status;
+      if (hasSummary) event.summary = data.summary;
+      if (hasError) event.error = error;
+      if (data.processedAt) event.processedAt = data.processedAt;
+      if (data.resolvedAt) event.resolvedAt = data.resolvedAt;
+      return event;
+    });
+  }
+  const result = await query(
+    `UPDATE github_change_events
+     SET status = COALESCE($2, status),
+         summary = CASE WHEN $3::boolean THEN $4::jsonb ELSE summary END,
+         error = CASE WHEN $5::boolean THEN $6 ELSE error END,
+         processed_at = COALESCE($7::timestamptz, processed_at),
+         resolved_at = COALESCE($8::timestamptz, resolved_at)
+     WHERE id = $1
+     RETURNING *`,
+    [id, status, hasSummary, JSON.stringify(hasSummary ? data.summary : {}), hasError, error, data.processedAt || null, data.resolvedAt || null]
+  );
+  return toGitHubChangeEvent(result.rows[0]);
+}
+
+export async function listGitHubChangeEvents(packageId, limit = 30) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 30, 1), 100);
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    return (db.githubChangeEvents || [])
+      .filter((event) => event.packageId === packageId)
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .slice(0, safeLimit);
+  }
+  const result = await query(
+    "SELECT * FROM github_change_events WHERE package_id = $1 ORDER BY created_at DESC LIMIT $2",
+    [packageId, safeLimit]
+  );
+  return result.rows.map(toGitHubChangeEvent);
+}
+
+export async function countUnresolvedGitHubChangeEvents(packageId) {
+  const unresolved = new Set(["received", "processing", "action_required", "unhealthy", "error"]);
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    return (db.githubChangeEvents || []).filter((event) => event.packageId === packageId && unresolved.has(event.status)).length;
+  }
+  const result = await query(
+    "SELECT count(*)::int AS count FROM github_change_events WHERE package_id = $1 AND status = ANY($2::text[])",
+    [packageId, [...unresolved]]
+  );
+  return Number(result.rows[0]?.count || 0);
+}
+
+export async function resolveGitHubChangeEvent(packageId, eventId, resolution = "dismissed") {
+  const nextStatus = resolution === "applied" ? "applied" : "dismissed";
+  const resolvedAt = new Date().toISOString();
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const event = (db.githubChangeEvents || []).find((item) => item.id === eventId && item.packageId === packageId);
+      if (!event) return null;
+      event.status = nextStatus;
+      event.resolvedAt = resolvedAt;
+      return event;
+    });
+  }
+  const result = await query(
+    "UPDATE github_change_events SET status = $3, resolved_at = now() WHERE id = $1 AND package_id = $2 RETURNING *",
+    [eventId, packageId, nextStatus]
+  );
+  return toGitHubChangeEvent(result.rows[0]);
+}
+
+export async function resolveGitHubChangeEventsForPackage(packageId, resolution = "applied") {
+  const nextStatus = resolution === "dismissed" ? "dismissed" : "applied";
+  const unresolved = new Set(["received", "processing", "live", "healthy", "action_required", "unhealthy", "error"]);
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      let updated = 0;
+      for (const event of db.githubChangeEvents || []) {
+        if (event.packageId === packageId && unresolved.has(event.status)) {
+          event.status = nextStatus;
+          event.resolvedAt = new Date().toISOString();
+          updated += 1;
+        }
+      }
+      return updated;
+    });
+  }
+  const result = await query(
+    `UPDATE github_change_events
+     SET status = $2, resolved_at = now()
+     WHERE package_id = $1 AND status = ANY($3::text[])`,
+    [packageId, nextStatus, [...unresolved]]
+  );
+  return result.rowCount;
+}
+
+export async function notifyActiveAdmins({ eventType, title, message, metadata = {} } = {}) {
+  const cleanEventType = String(eventType || "admin.notice").slice(0, 100);
+  const cleanTitle = String(title || "Admin notification").slice(0, 220);
+  const cleanMessage = String(message || "An admin event needs attention.").slice(0, 500);
+  const createdAt = new Date().toISOString();
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      db.notificationOutbox ||= [];
+      const admins = db.users.filter((user) => user.role === "admin" && user.status === "active");
+      for (const admin of admins) {
+        db.notificationOutbox.push({
+          id: createId("notice"),
+          userId: admin.id,
+          userPageId: null,
+          resultId: null,
+          eventType: cleanEventType,
+          title: cleanTitle,
+          message: cleanMessage,
+          metadata,
+          readAt: null,
+          createdAt
+        });
+      }
+      return admins.length;
+    });
+  }
+  const admins = await query("SELECT id FROM users WHERE role = 'admin' AND status = 'active'");
+  for (const admin of admins.rows) {
+    await query(
+      `INSERT INTO notification_outbox
+        (id, user_id, user_page_id, result_id, event_type, title, message, metadata)
+       VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6::jsonb)`,
+      [createId("notice"), admin.id, cleanEventType, cleanTitle, cleanMessage, JSON.stringify(metadata)]
+    );
+  }
+  return admins.rowCount;
+}
+
 export async function packageSubscriberCount(id) {
   const current = await findPackage(id);
   if (!current) return 0;
@@ -929,7 +1148,9 @@ export async function deletePackage(id) {
       if (db.userPages.some((page) => page.packageId === current.id)) throw new Error("Package still has subscriber pages");
       const index = db.packages.findIndex((item) => item.id === current.id);
       if (index === -1) return null;
-      return db.packages.splice(index, 1)[0];
+      const removed = db.packages.splice(index, 1)[0];
+      db.githubChangeEvents = (db.githubChangeEvents || []).filter((event) => event.packageId !== current.id);
+      return removed;
     });
   }
   const result = await query("DELETE FROM page_packages WHERE id = $1 RETURNING *", [current.id]);

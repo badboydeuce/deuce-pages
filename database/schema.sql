@@ -81,6 +81,27 @@ CREATE TABLE IF NOT EXISTS package_versions (
   UNIQUE(package_id, version)
 );
 
+CREATE TABLE IF NOT EXISTS github_change_events (
+  id TEXT PRIMARY KEY,
+  package_id TEXT NOT NULL REFERENCES page_packages(id) ON DELETE CASCADE,
+  delivery_id TEXT NOT NULL,
+  repository TEXT NOT NULL,
+  branch TEXT NOT NULL,
+  before_sha TEXT,
+  after_sha TEXT,
+  compare_url TEXT,
+  author TEXT,
+  event_type TEXT NOT NULL DEFAULT 'push',
+  status TEXT NOT NULL DEFAULT 'received',
+  changed_files JSONB NOT NULL DEFAULT '[]'::jsonb,
+  summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error TEXT,
+  processed_at TIMESTAMPTZ,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(package_id, delivery_id)
+);
+
 CREATE TABLE IF NOT EXISTS user_pages (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -197,6 +218,8 @@ CREATE TABLE IF NOT EXISTS traffic_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_page_packages_status ON page_packages(status);
+CREATE INDEX IF NOT EXISTS idx_github_change_events_package_created ON github_change_events(package_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_github_change_events_package_status ON github_change_events(package_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_package_preview_exchange ON package_preview_sessions(exchange_token_hash);
