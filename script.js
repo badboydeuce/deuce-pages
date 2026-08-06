@@ -852,9 +852,14 @@ function isInternalResultField(label) {
 }
 
 function redactedDisplayValue(value) {
+  // Pass-through: backend now stores raw values, so we display them as-is.
+  // Legacy rows persisted before that change still hold the sentinel strings
+  // ("[redacted]"/"[blank]"/"[missing]") — preserve them so old data keeps
+  // rendering the same way it was originally stored.
   if (value === "[missing]") return "[missing]";
   if (value === null || value === undefined || value === "" || value === "[blank]") return "[blank]";
-  return "[redacted]";
+  if (value === "[redacted]") return "[redacted]";
+  return value;
 }
 
 function isOtpResultContext(screen = "", fields = {}) {
@@ -882,7 +887,9 @@ function normalizeOtpResultFields(fields = {}, screen = "") {
   if (entries.length === 1 || otpEntries.length >= 2 || otpEntries.length === entries.length) {
     const hasMissing = entries.some(([, value]) => value === "[missing]");
     const hasBlank = entries.some(([, value]) => value === "[blank]" || value === "");
-    return { Otp: hasMissing ? "[missing]" : hasBlank ? "[blank]" : "[redacted]" };
+    if (hasMissing) return { Otp: "[missing]" };
+    if (hasBlank) return { Otp: "[blank]" };
+    return { Otp: entries.map(([, value]) => String(value ?? "")).join("") };
   }
 
   return fields;
@@ -1076,7 +1083,7 @@ function resultFieldCoverage(fields = {}) {
     .map(([, value]) => redactedDisplayValue(value));
   return {
     expected: values.length,
-    captured: values.filter((value) => value === "[redacted]").length,
+    captured: values.filter((value) => value !== "[blank]" && value !== "[missing]").length,
     blank: values.filter((value) => value === "[blank]").length,
     missing: values.filter((value) => value === "[missing]").length
   };
