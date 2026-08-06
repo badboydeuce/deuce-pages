@@ -9,7 +9,8 @@
     "dev": "node --watch src/server.js",
     "check": "node --check src/server.js",
     "db:migrate": "node src/db/migrate.js",
-    "page:import:first": "node src/scripts/importFirstPage.js"
+    "page:import:first": "node src/scripts/importFirstPage.js",
+    "screens:migrate:v2": "node src/scripts/migrateScreenManifestV2.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1090.0",

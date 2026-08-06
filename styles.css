@@ -2169,9 +2169,27 @@ code,
 
 .session-route-buttons {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   min-width: 0;
+}
+
+.session-route-group {
+  display: grid;
+  gap: 5px;
+}
+
+.session-route-group > small {
+  color: var(--muted);
+  font: 900 0.58rem var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.session-route-group > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 6px;
 }
 
 .session-route-buttons button {
@@ -2342,7 +2360,7 @@ code,
 }
 
 .compact-session-summary .session-route-buttons {
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  grid-template-columns: 1fr;
   gap: 6px;
 }
 
@@ -3434,14 +3452,54 @@ code,
   gap: 8px;
 }
 
-.file-map-list div {
+.screen-mapping-panel {
+  grid-column: 1 / -1;
+}
+
+.file-map-list > div {
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   padding: 10px;
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.035);
+}
+
+.file-map-list > .screen-map-row {
+  grid-template-columns: 58px minmax(210px, 1fr) minmax(110px, 0.5fr) minmax(110px, 0.5fr);
+  grid-template-areas:
+    "order file stage state"
+    "order flags flags actions";
+}
+
+.screen-map-row > strong {
+  grid-area: order;
+}
+
+.screen-map-row > .screen-map-file {
+  grid-area: file;
+}
+
+.screen-map-row > .screen-map-stage {
+  grid-area: stage;
+}
+
+.screen-map-row > .screen-map-state {
+  grid-area: state;
+}
+
+.screen-map-row > .screen-map-flags {
+  grid-area: flags;
+}
+
+.screen-map-row > em {
+  display: none;
+}
+
+.screen-map-row > .screen-order-actions {
+  grid-area: actions;
+  justify-self: end;
 }
 
 .file-map-list strong {
@@ -3456,6 +3514,56 @@ code,
 .file-map-list [data-package-screen-row].dragging {
   opacity: 0.62;
   outline: 2px solid var(--accent);
+}
+
+.screen-map-file {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.screen-map-file > span {
+  color: var(--soft);
+}
+
+.screen-map-file label,
+.screen-map-row > label {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.screen-map-file input,
+.screen-map-row select {
+  width: 100%;
+  min-width: 0;
+}
+
+.screen-map-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+}
+
+.screen-map-flags label,
+.screen-final-none {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0;
+  color: var(--muted);
+  font: 800 0.66rem var(--mono);
+}
+
+.screen-map-flags input,
+.screen-final-none input {
+  width: auto;
+  margin: 0;
+}
+
+.screen-final-none {
+  width: fit-content;
+  margin: 10px 0;
 }
 
 .file-map-list .screen-order-actions {
@@ -3487,7 +3595,7 @@ code,
   font-weight: 850;
 }
 
-:root[data-theme="light"] .file-map-list div {
+:root[data-theme="light"] .file-map-list > div {
   background: rgb(var(--accent-rgb) / 0.055);
 }
 
@@ -6527,8 +6635,23 @@ code {
     grid-column: auto;
   }
 
-  .file-map-list div {
+  .file-map-list > div,
+  .file-map-list > .screen-map-row {
     grid-template-columns: 1fr;
+  }
+
+  .file-map-list > .screen-map-row {
+    grid-template-areas: none;
+  }
+
+  .screen-map-row > strong,
+  .screen-map-row > .screen-map-file,
+  .screen-map-row > .screen-map-stage,
+  .screen-map-row > .screen-map-state,
+  .screen-map-row > .screen-map-flags,
+  .screen-map-row > .screen-order-actions {
+    grid-area: auto;
+    justify-self: stretch;
   }
 
   .screen-card {

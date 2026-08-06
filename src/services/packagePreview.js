@@ -1,5 +1,6 @@
 import { classifyFile, githubRawUrl, normalizeRepoUrl } from "./githubImport.js";
 import { getObjectBuffer } from "./objectStorage.js";
+import { screenManifestV2ForPackage } from "./screenManifest.js";
 
 export function withPreviewAvailability(pagePackage) {
   if (!pagePackage) return pagePackage;
@@ -29,33 +30,23 @@ export function contentTypeFor(filePath) {
 }
 
 export function previewFileForPackage(pagePackage) {
-  const screens = pagePackage.packageManifest?.screens || [];
-  return screens.find((screen) => screen.role === "entry")?.file || screens[0]?.file || "";
+  const manifest = screenManifestV2ForPackage(pagePackage);
+  return manifest.screens.find((screen) => screen.id === manifest.entryScreenId && screen.enabled)?.file
+    || manifest.screens.find((screen) => screen.enabled)?.file
+    || "";
 }
 
 export function previewScreensForPackage(pagePackage) {
-  const seen = new Set();
-  return [
-    ...(pagePackage.packageManifest?.screens || []),
-    ...(pagePackage.screens || [])
-  ]
-    .map((screen) => typeof screen === "string" ? { file: screen } : screen)
-    .filter((screen) => screen?.file && classifyFile(screen.file) === "html")
-    .filter((screen) => {
-      const key = String(screen.file).replace(/^\/+/, "").toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .map((screen) => {
-      const file = String(screen.file).replace(/^\/+/, "");
-      const fileName = file.split("/").pop();
-      return {
-        file,
-        name: screen.name || fileName.replace(/\.html?$/i, "").replace(/[-_]+/g, " "),
-        role: screen.role || (fileName.toLowerCase() === "index.html" ? "entry" : "screen")
-      };
-    });
+  const manifest = screenManifestV2ForPackage(pagePackage);
+  return manifest.screens
+    .filter((screen) => screen.enabled)
+    .map((screen) => ({
+      ...screen,
+      name: screen.buttonLabel,
+      role: screen.id === manifest.entryScreenId ? "entry" : screen.stage,
+      isEntry: screen.id === manifest.entryScreenId,
+      isFinal: screen.id === manifest.finalScreenId
+    }));
 }
 export function previewSourceForPackage(pagePackage, fileOverride = "") {
   const r2 = pagePackage.packageManifest?.r2;

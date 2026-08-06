@@ -29,7 +29,7 @@ const packageData = {
     biweekly: Number(process.env.FIRST_PAGE_PRICE_BIWEEKLY || 45),
     monthly: Number(process.env.FIRST_PAGE_PRICE_MONTHLY || 80)
   },
-  screens: scan.screens.map((screen) => screen.name),
+  screens: scan.screenManifest.screens.map((screen) => screen.buttonLabel),
   assets: scan.assets,
   cssFiles: scan.cssFiles,
   designTokens: {
@@ -38,6 +38,7 @@ const packageData = {
     radius: process.env.FIRST_PAGE_RADIUS || "8px"
   },
   packageManifest: {
+    ...scan.screenManifest,
     description: process.env.FIRST_PAGE_DESCRIPTION || "Imported GitHub page package.",
     github: {
       owner: scan.owner,
@@ -46,7 +47,6 @@ const packageData = {
       folder: scan.folder
     },
     files: scan.files,
-    screens: scan.screens,
     scripts: scan.scripts,
     importedAt: new Date().toISOString()
   }

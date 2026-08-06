@@ -742,6 +742,13 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
     res.status(404).send("Package asset not found");
     return;
   }
+  const runtimeScreen = !asAsset && /\.html?$/i.test(file)
+    ? runtimeScreenForFile(pagePackage, file)
+    : null;
+  if (!asAsset && /\.html?$/i.test(file) && !runtimeScreen) {
+    res.status(404).send("Package screen not found");
+    return;
+  }
 
   const source = previewSourceForPackage(pagePackage, file);
   const response = await fetchPackageFile(source);
@@ -754,7 +761,6 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   }
 
   const html = await response.text();
-  const runtimeScreen = runtimeScreenForFile(pagePackage, file);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");

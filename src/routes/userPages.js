@@ -23,7 +23,13 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { installCloudflareWorker, verifyCloudflareZone } from "../services/cloudflareDeploy.js";
 import { validateTurnstileConfiguration } from "../services/turnstile.js";
-import { runtimePackageForUserPage, runtimeScreenForFile, runtimeScreensFromPackage, runtimeScreenTargetUrl } from "../services/runtimeScreens.js";
+import {
+  runtimePackageForUserPage,
+  runtimeRedirectScreensFromPackage,
+  runtimeScreenForFile,
+  runtimeScreenForId,
+  runtimeScreenTargetUrl
+} from "../services/runtimeScreens.js";
 
 export const userPagesRouter = Router();
 
@@ -258,8 +264,10 @@ userPagesRouter.get("/:id/sessions", async (req, res) => {
     ]);
     if (!sessions || !userPage) return res.status(404).json({ error: "User page not found" });
     const { currentPackage, runtimePackage } = await runtimePackageState(userPage);
-    const targets = runtimePackage ? runtimeScreensFromPackage(runtimePackage) : [];
+    const targets = runtimePackage ? runtimeRedirectScreensFromPackage(runtimePackage) : [];
     const snapshot = userPage.configs?.runtimePackageSnapshot || null;
+    const snapshotRevision = snapshot?.packageManifest?.screenRevision || "";
+    const currentRevision = currentPackage?.packageManifest?.screenRevision || "";
     res.json({
       sessions,
       targets,
@@ -269,12 +277,18 @@ userPagesRouter.get("/:id/sessions", async (req, res) => {
         syncedAt: userPage.configs?.runtimeScreensSyncedAt || null,
         packageVersion: runtimePackage?.version || userPage.packageVersion || "",
         currentPackageVersion: currentPackage?.version || "",
+        screenRevision: snapshotRevision || runtimePackage?.packageManifest?.screenRevision || "",
+        currentScreenRevision: currentRevision,
         stale: Boolean(
           snapshot
           && currentPackage
-          && snapshot.packageUpdatedAt
-          && currentPackage.updatedAt
-          && snapshot.packageUpdatedAt !== currentPackage.updatedAt
+          && (
+            snapshotRevision && currentRevision
+              ? snapshotRevision !== currentRevision
+              : snapshot.packageUpdatedAt
+                && currentPackage.updatedAt
+                && snapshot.packageUpdatedAt !== currentPackage.updatedAt
+          )
         )
       }
     });
@@ -290,7 +304,7 @@ userPagesRouter.post("/:id/screens/sync", requirePageCapability("syncScreens"), 
     const runtimePackage = userPage.configs?.runtimePackageSnapshot;
     res.json({
       userPage,
-      targets: runtimeScreensFromPackage(runtimePackage),
+      targets: runtimeRedirectScreensFromPackage(runtimePackage),
       syncedAt: userPage.configs?.runtimeScreensSyncedAt || null
     });
   } catch (error) {
@@ -305,12 +319,16 @@ userPagesRouter.post("/:id/sessions/:sessionId/redirect", requirePageCapability(
     const { runtimePackage } = await runtimePackageState(userPage);
     if (!runtimePackage) return res.status(409).json({ error: "Runtime package is unavailable" });
 
+    const requestedScreenId = String(req.body?.targetScreenId || "").trim();
     const requestedFile = String(req.body?.targetFile || "").trim()
       || runtimeFileFromLegacyTarget(req.body?.targetUrl, userPage.id);
-    const targetScreen = runtimeScreenForFile(runtimePackage, requestedFile);
+    const targetScreen = requestedScreenId
+      ? runtimeScreenForId(runtimePackage, requestedScreenId)
+      : runtimeScreenForFile(runtimePackage, requestedFile);
     if (!targetScreen) {
-      return res.status(400).json({ error: "Redirect target is not a mapped HTML screen in this package" });
+      return res.status(400).json({ error: "Redirect target is not an enabled mapped screen in this package" });
     }
+    if (!targetScreen.showInRedirects) return res.status(400).json({ error: "This screen is hidden from redirect controls" });
 
     const targetUrl = runtimeScreenTargetUrl(userPage.id, targetScreen.file);
     const updated = await setSessionCommand(userPage.id, req.params.sessionId, {

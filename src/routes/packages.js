@@ -155,7 +155,8 @@ packagesRouter.post("/:id/publish", requireAdmin, (req, res) => {
       if (current.status === "archived") return { archived: true };
       const validation = validatePackageData({ ...current, status: "published" }, { publishing: true });
       if (!validation.valid) return { validation };
-      return { pagePackage: await publishPackage(req.params.id) };
+      const normalized = await updatePackage(req.params.id, validation.value);
+      return { pagePackage: await publishPackage(normalized.id) };
     })
     .then((result) => {
       if (!result) return res.status(404).json({ error: "Package not found" });

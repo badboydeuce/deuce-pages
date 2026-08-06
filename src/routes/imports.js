@@ -7,6 +7,7 @@ import { withPreviewAvailability } from "../services/packagePreview.js";
 import { injectPreviewTurnstile } from "../services/turnstile.js";
 import { finalizeLocalImport, startLooseImport, startZipImport } from "../services/localImport.js";
 import { objectStorageConfigured } from "../services/objectStorage.js";
+import { validatePackageData } from "../services/packageValidation.js";
 import {
   createGitHubPreviewTicket,
   normalizeGitHubFilePath,
@@ -46,23 +47,28 @@ importsRouter.post("/local/finalize", requireAdmin, async (req, res) => {
       status: publish ? "published" : "draft",
       sourceType: "r2",
       billingPeriods: req.body.billingPeriods || { daily: 5, weekly: 25, biweekly: 45, monthly: 80 },
-      screens: scan.screens.map((screen) => screen.name),
+      screens: scan.screenManifest.screens.map((screen) => screen.buttonLabel),
       assets: scan.assets,
       cssFiles: scan.cssFiles,
       designTokens: req.body.designTokens || { brand: "#7CFFB2", font: "Inter", radius: "8px" },
       packageManifest: {
+        ...scan.screenManifest,
         r2: { prefix: payload.prefix },
         files: scan.files,
-        screens: scan.screens,
         scripts: scan.scripts,
         review: scan.review,
         importedAt: new Date().toISOString()
       }
     };
+    const validation = validatePackageData(packageData, { publishing: publish });
+    if (!validation.valid) {
+      res.status(422).json({ error: "Package validation failed", issues: validation.issues, warnings: validation.warnings, scan });
+      return;
+    }
     const existing = await findPackage(payload.slug);
     const pagePackage = existing
-      ? await updatePackage(existing.id, packageData)
-      : await createPackage(packageData);
+      ? await updatePackage(existing.id, validation.value)
+      : await createPackage(validation.value);
     const finalPackage = publish ? await publishPackage(pagePackage.id) : pagePackage;
     res.status(201).json({ package: withPreviewAvailability(finalPackage), scan, files: files.length });
   } catch (error) {
@@ -327,11 +333,12 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
       sourceType: "github",
       repoUrl: scan.repoUrl,
       billingPeriods: req.body.billingPeriods || { daily: 5, weekly: 25, biweekly: 45, monthly: 80 },
-      screens: scan.screens.map((screen) => screen.name),
+      screens: scan.screenManifest.screens.map((screen) => screen.buttonLabel),
       assets: scan.assets,
       cssFiles: scan.cssFiles,
       designTokens: req.body.designTokens || { brand: "#7CFFB2", font: "Inter", radius: "8px" },
       packageManifest: {
+        ...scan.screenManifest,
         github: {
           owner: scan.owner,
           repo: scan.repo,
@@ -339,17 +346,22 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
           folder: scan.folder
         },
         files: scan.files,
-        screens: scan.screens,
         scripts: scan.scripts,
         review: scan.review,
         importedAt: new Date().toISOString()
       }
     };
 
+    const validation = validatePackageData(packageData, { publishing: Boolean(req.body.publish) });
+    if (!validation.valid) {
+      res.status(422).json({ error: "Package validation failed", issues: validation.issues, warnings: validation.warnings, scan });
+      return;
+    }
+
     const existing = await findPackage(scan.slug);
     const pagePackage = existing
-      ? await updatePackage(existing.id, packageData)
-      : await createPackage(packageData);
+      ? await updatePackage(existing.id, validation.value)
+      : await createPackage(validation.value);
     const finalPackage = req.body.publish ? await publishPackage(pagePackage.id) : pagePackage;
     const responseScan = withGitHubPreviewTickets(scan, req.user.id);
 

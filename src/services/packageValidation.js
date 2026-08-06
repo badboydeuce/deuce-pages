@@ -1,3 +1,5 @@
+import { validateScreenManifestV2 } from "./screenManifest.js";
+
 const allowedStatuses = new Set(["draft", "review", "published", "archived"]);
 const allowedPeriods = ["daily", "weekly", "biweekly", "monthly"];
 
@@ -32,10 +34,25 @@ export function validatePackageData(data = {}, { publishing = false } = {}) {
     issues.push("At least one paid billing period is required before publishing");
   }
 
-  const files = data.packageManifest?.files || [];
-  const screens = data.packageManifest?.screens || data.screens || [];
-  if (publishing && ![...files, ...screens].some((item) => /\.html?$/i.test(String(item?.path || item?.file || item)))) {
-    issues.push("An HTML entry file is required before publishing");
-  }
-  return { valid: issues.length === 0, issues, value: { ...data, name, slug, status, sourceType, billingPeriods } };
+  const screenValidation = validateScreenManifestV2(data, { publishing });
+  issues.push(...screenValidation.issues);
+  const packageManifest = {
+    ...(data.packageManifest || {}),
+    ...screenValidation.manifest
+  };
+  return {
+    valid: issues.length === 0,
+    issues: [...new Set(issues)],
+    warnings: screenValidation.warnings,
+    value: {
+      ...data,
+      name,
+      slug,
+      status,
+      sourceType,
+      billingPeriods,
+      screens: screenValidation.manifest.screens.map((screen) => screen.buttonLabel),
+      packageManifest
+    }
+  };
 }

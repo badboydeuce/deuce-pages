@@ -4,6 +4,7 @@ import unzipper from "unzipper";
 import { classifyFile, inferScreenName, scanReview } from "./githubImport.js";
 import { contentTypeFor } from "./packagePreview.js";
 import { deleteObject, getObjectBuffer, headObject, putObject, signedUploadUrl } from "./objectStorage.js";
+import { createScreenManifestV2 } from "./screenManifest.js";
 
 const maxFiles = Math.min(Math.max(Number(process.env.LOCAL_IMPORT_MAX_FILES) || 500, 1), 2000);
 const maxFileBytes = (Math.min(Math.max(Number(process.env.LOCAL_IMPORT_MAX_FILE_MB) || 20, 1), 100) * 1024 * 1024);
@@ -51,7 +52,7 @@ function validateFiles(files = []) {
     return { path: filePath, size, contentType: contentTypeFor(filePath) };
   });
   if (totalBytes > maxPackageBytes) throw new Error("The package exceeds the configured total size limit");
-  if (!normalized.some((file) => file.path.toLowerCase() === "index.html")) throw new Error("index.html is required at the package root");
+  if (!normalized.some((file) => /\.html?$/i.test(file.path))) throw new Error("At least one .html or .htm screen is required");
   return normalized;
 }
 
@@ -78,10 +79,15 @@ function packageScan(files, packageName, slug) {
   const cssFiles = files.filter((file) => classifyFile(file.path) === "css").map((file) => file.path);
   const assets = files.filter((file) => ["asset", "font"].includes(classifyFile(file.path))).map((file) => file.path);
   const scripts = files.filter((file) => classifyFile(file.path) === "script").map((file) => file.path);
-  const screens = htmlFiles.map((file) => ({
+  const screenCandidates = htmlFiles.map((file) => ({
     file,
-    name: inferScreenName(file),
-    role: file.toLowerCase() === "index.html" ? "entry" : "screen"
+    buttonLabel: inferScreenName(file),
+    role: /^index\.html?$/i.test(file) ? "entry" : "screen"
+  }));
+  const screenManifest = createScreenManifestV2({ packageKey: slug, screens: screenCandidates });
+  const screens = screenManifest.screens.map((screen) => ({
+    ...screen,
+    role: screen.id === screenManifest.entryScreenId ? "entry" : screen.stage
   }));
   return {
     sourceType: "r2",
@@ -92,6 +98,7 @@ function packageScan(files, packageName, slug) {
     cssFiles,
     assets,
     scripts,
+    screenManifest,
     review: scanReview({ htmlFiles, cssFiles, assetFiles: assets, scriptFiles: scripts, screens })
   };
 }

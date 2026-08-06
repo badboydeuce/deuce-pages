@@ -105,21 +105,11 @@ async function getRepositoryTree(owner, repo, branch) {
 }
 
 export function inferScreenName(filePath) {
-  const name = filePath.split("/").pop().replace(/\.[^.]+$/, "").toLowerCase();
-  if (name.includes("otp") || name.includes("verify")) return "OTP";
-  if (name.includes("login") || name.includes("signin")) return "Login";
-  if (name.includes("email")) return "Email";
-  if (name.includes("home")) return "Home";
-  if (name === "c" || name.includes("code") || name.includes("confirm")) return "Code Check";
-  if (name.includes("info") || name.includes("personal") || name.includes("profile")) return "Personal Info";
-  if (name.includes("success") || name.includes("complete") || name.includes("thanks") || name.includes("thnks")) return "Success";
-  if (name.includes("redirect")) return "Redirect";
-  if (name === "index") return "Entry";
-  return name.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return suggestScreenButtonLabel(filePath);
 }
 
 export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens }) {
-  const hasEntry = screens.some((screen) => screen.role === "entry");
+  const hasEntry = screens.some((screen) => screen.role === "entry" || screen.isEntry);
   const issues = [];
   const warnings = [];
   const checks = [
@@ -131,7 +121,7 @@ export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, scree
     {
       label: "Entry screen",
       status: hasEntry ? "pass" : "warn",
-      detail: hasEntry ? "index.html is mapped as the entry screen" : "No index.html entry screen found"
+      detail: hasEntry ? "An HTML file is mapped as the entry screen" : "No entry screen is mapped"
     },
     {
       label: "CSS",
@@ -151,7 +141,7 @@ export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, scree
   ];
 
   if (!htmlFiles.length) issues.push("At least one HTML file is required before publishing.");
-  if (!hasEntry) warnings.push("Add or map an entry screen before using this package in production.");
+  if (!hasEntry) warnings.push("Select an entry screen before using this package in production.");
   if (!cssFiles.length) warnings.push("No external CSS was found. Confirm the page is styled by inline CSS or external assets.");
   if (scriptFiles.length) warnings.push("Review imported JavaScript before publishing.");
 
@@ -211,10 +201,19 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
   const cssFiles = files.filter((file) => classifyFile(file) === "css");
   const assetFiles = files.filter((file) => ["asset", "font"].includes(classifyFile(file)));
   const scriptFiles = files.filter((file) => classifyFile(file) === "script");
-  const screens = htmlFiles.map((file) => ({
+  const expectedEntryFiles = new Set([
+    cleanFolder ? `${cleanFolder}/index.html` : "index.html",
+    cleanFolder ? `${cleanFolder}/index.htm` : "index.htm"
+  ].map((file) => file.toLowerCase()));
+  const screenCandidates = htmlFiles.map((file) => ({
     file,
-    name: inferScreenName(file),
-    role: file.toLowerCase().endsWith("index.html") ? "entry" : "screen"
+    buttonLabel: inferScreenName(file),
+    role: expectedEntryFiles.has(file.toLowerCase()) ? "entry" : "screen"
+  }));
+  const screenManifest = createScreenManifestV2({ packageKey: slug || `${owner}/${repo}`, screens: screenCandidates });
+  const screens = screenManifest.screens.map((screen) => ({
+    ...screen,
+    role: screen.id === screenManifest.entryScreenId ? "entry" : screen.stage
   }));
   const review = scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens });
 
@@ -234,6 +233,7 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     cssFiles,
     assets: assetFiles,
     scripts: scriptFiles,
+    screenManifest,
     summary: {
       totalFiles: files.length,
       html: htmlFiles.length,
@@ -244,3 +244,4 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     review
   };
 }
+import { createScreenManifestV2, suggestScreenButtonLabel } from "./screenManifest.js";

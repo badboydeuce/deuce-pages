@@ -1,71 +1,49 @@
-function cleanRuntimeFile(value = "") {
-  const file = String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
-  if (!file || file.length > 240 || file.includes("\0")) return "";
-  if (file.split("/").some((part) => part === "..")) return "";
-  return /\.html?$/i.test(file) ? file : "";
-}
-
-function screenFile(screen) {
-  if (typeof screen === "string") return cleanRuntimeFile(screen);
-  return cleanRuntimeFile(screen?.file || screen?.path || screen?.href || "");
-}
-
-function screenName(screen, file) {
-  const configured = typeof screen === "string"
-    ? ""
-    : screen?.name || screen?.title || screen?.label || "";
-  if (String(configured || "").trim()) return String(configured).trim();
-  return String(file || "")
-    .split("/")
-    .pop()
-    .replace(/\.html?$/i, "")
-    .replace(/[-_]+/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase())
-    .trim() || "Page";
-}
+import { normalizeScreenFile, screenManifestV2ForPackage } from "./screenManifest.js";
 
 function manifestHtmlFiles(pagePackage = {}) {
   return new Set((pagePackage.packageManifest?.files || [])
-    .map((item) => cleanRuntimeFile(item?.path || item?.file || item))
+    .map((item) => normalizeScreenFile(item?.path || item?.file || item))
     .filter(Boolean)
     .map((file) => file.toLowerCase()));
 }
 
 export function runtimeScreensFromPackage(pagePackage = {}) {
-  const manifestScreens = pagePackage.packageManifest?.screens || [];
-  const fallbackScreens = pagePackage.screens || [];
-  const candidates = manifestScreens.length ? manifestScreens : fallbackScreens;
+  const manifest = screenManifestV2ForPackage(pagePackage);
   const availableFiles = manifestHtmlFiles(pagePackage);
-  const seen = new Set();
+  return manifest.screens
+    .filter((screen) => screen.enabled)
+    .filter((screen) => !availableFiles.size || availableFiles.has(screen.file.toLowerCase()))
+    .map((screen, order) => ({
+      ...screen,
+      name: screen.buttonLabel,
+      label: screen.buttonLabel,
+      role: screen.id === manifest.entryScreenId ? "entry" : screen.stage,
+      isEntry: screen.id === manifest.entryScreenId,
+      isFinal: screen.id === manifest.finalScreenId,
+      order
+    }));
+}
 
-  return candidates.reduce((screens, screen, index) => {
-    const file = screenFile(screen);
-    const key = file.toLowerCase();
-    if (!file || seen.has(key)) return screens;
-    if (availableFiles.size && !availableFiles.has(key)) return screens;
-    seen.add(key);
-    screens.push({
-      id: key,
-      file,
-      name: screenName(screen, file),
-      role: typeof screen === "object" && screen?.role
-        ? String(screen.role)
-        : index === 0 ? "entry" : "screen",
-      order: screens.length
-    });
-    return screens;
-  }, []);
+export function runtimeRedirectScreensFromPackage(pagePackage = {}) {
+  return runtimeScreensFromPackage(pagePackage).filter((screen) => screen.showInRedirects);
 }
 
 export function runtimeScreenForFile(pagePackage, requestedFile) {
-  const cleanFile = cleanRuntimeFile(requestedFile);
+  const cleanFile = normalizeScreenFile(requestedFile);
   if (!cleanFile) return null;
   return runtimeScreensFromPackage(pagePackage)
     .find((screen) => screen.file.toLowerCase() === cleanFile.toLowerCase()) || null;
 }
 
+export function runtimeScreenForId(pagePackage, requestedId) {
+  const cleanId = String(requestedId || "").trim();
+  if (!cleanId) return null;
+  return runtimeScreensFromPackage(pagePackage)
+    .find((screen) => screen.id === cleanId) || null;
+}
+
 export function runtimeScreenTargetUrl(userPageId, file) {
-  const cleanFile = cleanRuntimeFile(file);
+  const cleanFile = normalizeScreenFile(file);
   if (!userPageId || !cleanFile) return "";
   const params = new URLSearchParams({ userPageId: String(userPageId), file: cleanFile });
   return `/api/runtime/source?${params.toString()}`;
@@ -74,6 +52,7 @@ export function runtimeScreenTargetUrl(userPageId, file) {
 export function createRuntimePackageSnapshot(pagePackage = {}) {
   const screens = runtimeScreensFromPackage(pagePackage);
   const manifest = pagePackage.packageManifest || {};
+  const screenManifest = screenManifestV2ForPackage(pagePackage);
   return {
     id: pagePackage.id || "",
     slug: pagePackage.slug || "",
@@ -84,10 +63,14 @@ export function createRuntimePackageSnapshot(pagePackage = {}) {
     packageUpdatedAt: pagePackage.updatedAt || pagePackage.publishedAt || "",
     screens,
     packageManifest: {
+      schemaVersion: screenManifest.schemaVersion,
+      screenRevision: screenManifest.screenRevision,
+      entryScreenId: screenManifest.entryScreenId,
+      finalScreenId: screenManifest.finalScreenId,
       ...(manifest.r2 ? { r2: { prefix: manifest.r2.prefix || "" } } : {}),
       ...(manifest.github ? { github: { ...manifest.github } } : {}),
       files: Array.isArray(manifest.files) ? manifest.files : [],
-      screens
+      screens: screenManifest.screens
     }
   };
 }
