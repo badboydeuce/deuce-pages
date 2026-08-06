@@ -583,9 +583,9 @@ code,
 .topbar-menu summary {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 6px 10px 6px 8px;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 8px 4px 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius);
   color: var(--soft);
@@ -601,8 +601,8 @@ code,
 
 .profile-avatar {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   border-radius: 50%;
   background: rgb(var(--accent-rgb) / 0.12);
@@ -615,12 +615,12 @@ code,
 
 .topbar-menu summary strong {
   color: var(--text);
-  font-size: 0.86rem;
+  font-size: 0.8rem;
 }
 
 .topbar-menu summary small {
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
 }
 
 .topbar-menu summary i {
@@ -634,9 +634,9 @@ code,
   right: 0;
   z-index: 30;
   display: grid;
-  gap: 12px;
-  width: min(320px, calc(100vw - 32px));
-  padding: 14px;
+  gap: 8px;
+  width: min(248px, calc(100vw - 24px));
+  padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius);
   color: var(--soft);
@@ -647,19 +647,20 @@ code,
 
 .dropdown-section {
   display: grid;
-  gap: 7px;
-  padding-bottom: 12px;
+  gap: 4px;
+  padding: 2px 2px 9px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .dropdown-section small {
   color: var(--accent);
-  font-family: var(--mono);
+  font: 800 0.62rem var(--mono);
   text-transform: uppercase;
 }
 
 .dropdown-section strong {
   color: var(--text);
+  font-size: 0.8rem;
 }
 
 .dropdown-section p {
@@ -671,14 +672,14 @@ code,
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 42px;
-  padding: 0 12px;
+  min-height: 38px;
+  padding: 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius);
   color: var(--soft);
   background: rgba(255, 255, 255, 0.045);
   cursor: pointer;
-  font: 800 0.75rem var(--mono);
+  font: 800 0.7rem var(--mono);
 }
 
 .theme-toggle:hover {
@@ -7222,6 +7223,11 @@ body.result-viewer-open {
     margin: 0;
     overflow-y: auto;
     border-radius: 16px;
+  }
+
+  .dropdown-panel {
+    left: auto;
+    width: min(248px, calc(100vw - 24px));
   }
 
   .notification-panel > header {
