@@ -9,6 +9,7 @@ import {
 import { securityDecision } from "../services/securityRules.js";
 import { verifyChallengeProof } from "../services/challengeProof.js";
 import { clientIp } from "../services/clientIp.js";
+import { serverNormalizedFieldManifest } from "../services/resultCapture.js";
 
 export const eventsRouter = Router();
 const pageExpiredMessage = "Page Expired Renew to continue using";
@@ -116,13 +117,16 @@ eventsRouter.post("/page-results", async (req, res) => {
       res.status(403).json({ error: "ACCESS DENIED" });
       return;
     }
+    const fieldManifest = req.body?.capture
+      ? serverNormalizedFieldManifest(req.body.capture, { screenFile: req.body.screenFile || req.body.pageId })
+      : null;
     const result = await savePageResult({
       ...req.body,
       userPageId: context.page.id,
       pageId: context.page.slug,
       pageName: context.page.name,
       hostname: context.host || req.body?.hostname
-    }, ip, req.headers["user-agent"]);
+    }, ip, req.headers["user-agent"], { fieldManifest });
     res.status(201).json({ result });
   } catch (error) {
     res.status(400).json({ error: error.message });

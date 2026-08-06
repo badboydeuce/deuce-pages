@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isAllowedGithubRuntimeFile } from "./githubImport.js";
+import { isAllowedGithubRuntimeFile, scanGitHubRepository } from "./githubImport.js";
+import { createPersistentFieldManifest } from "./resultCapture.js";
 import {
   checkGitHubLivePackage,
   diffGitHubFileInventory,
@@ -82,6 +83,43 @@ test("reconciles structural drift without losing custom screen identity", () => 
   assert.equal(manifest.entryScreenId, "scr_entry");
 });
 
+test("detects and reconciles field-level drift on an existing screen", () => {
+  const previousFields = createPersistentFieldManifest(
+    '<form><input name="email" aria-label="Email"></form>',
+    { screenFile: "index.html", screenId: "scr_entry" }
+  );
+  previousFields.fields[0].label = "Account email";
+  const currentFields = createPersistentFieldManifest(
+    '<form><input name="email" aria-label="Email"><select name="country" aria-label="Country"></select></form>',
+    { screenFile: "index.html", screenId: "scr_entry" }
+  );
+  const currentPackage = {
+    ...pagePackage,
+    packageManifest: {
+      ...pagePackage.packageManifest,
+      screens: pagePackage.packageManifest.screens.map((screen) => (
+        screen.id === "scr_entry" ? { ...screen, fieldManifest: previousFields } : screen
+      ))
+    }
+  };
+  const currentScan = {
+    ...scan,
+    screenManifest: {
+      screens: [{ id: "scr_entry", file: "index.html", fieldManifest: currentFields }]
+    }
+  };
+  const diff = diffGitHubFileInventory(currentPackage.packageManifest.files, currentScan.files);
+  const drift = githubScreenDrift(currentPackage, currentScan, diff);
+  const reconciled = reconcileGitHubScreenManifest(currentPackage, currentScan, diff);
+  assert.equal(drift.hasFieldChanges, true);
+  assert.equal(drift.requiresReview, true);
+  assert.equal(drift.fieldChanges[0].added.length, 1);
+  const entry = reconciled.manifest.screens.find((screen) => screen.id === "scr_entry");
+  assert.equal(entry.fieldManifest.fields[0].label, "Account email");
+  assert.equal(entry.fieldManifest.fields.length, 2);
+  assert.equal(entry.needsReview, true);
+});
+
 test("GitHub runtime inventory excludes repository and secret files", () => {
   assert.equal(isAllowedGithubRuntimeFile("public/index.html"), true);
   assert.equal(isAllowedGithubRuntimeFile("public/app.js"), true);
@@ -89,6 +127,37 @@ test("GitHub runtime inventory excludes repository and secret files", () => {
   assert.equal(isAllowedGithubRuntimeFile("public/credentials.json"), false);
   assert.equal(isAllowedGithubRuntimeFile(".github/workflows/deploy.yml"), false);
   assert.equal(isAllowedGithubRuntimeFile("server.js.map"), false);
+});
+
+test("GitHub import maps result fields from HTML blobs", async () => {
+  const originalFetch = global.fetch;
+  const html = '<form><input name="full_name" aria-label="Full name"><select name="country" aria-label="Country"></select></form>';
+  global.fetch = async (url) => {
+    const href = String(url);
+    if (href.endsWith("/repos/example/field-page")) return Response.json({ default_branch: "main" });
+    if (href.includes("/git/trees/main")) {
+      return Response.json({
+        sha: "tree-fields",
+        truncated: false,
+        tree: [{ path: "index.html", type: "blob", size: Buffer.byteLength(html), sha: "sha-fields" }]
+      });
+    }
+    if (href.includes("/git/blobs/sha-fields")) {
+      return Response.json({ encoding: "base64", content: Buffer.from(html).toString("base64") });
+    }
+    if (href.includes("/commits/main")) {
+      return Response.json({ sha: "commit-fields", commit: { committer: { date: "2026-08-06T10:00:00.000Z" } } });
+    }
+    return Response.json({ message: "not found" }, { status: 404 });
+  };
+  try {
+    const imported = await scanGitHubRepository({ repoUrl: "https://github.com/example/field-page", branch: "main" });
+    assert.equal(imported.screenManifest.screens[0].fieldManifest.fields.length, 2);
+    assert.equal(imported.summary.fields, 2);
+    assert.equal(imported.screenManifest.screens[0].fieldManifest.fields[1].type, "select");
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("admin status responses omit the internal scan payload", () => {

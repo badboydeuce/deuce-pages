@@ -91,7 +91,14 @@ function screenDriftSummary(screenDrift = {}) {
     missing: screenDrift.missingScreens || [],
     renamed: screenDrift.renamedScreens || [],
     restored: screenDrift.restoredScreens || [],
-    modified: screenDrift.modifiedScreens || []
+    modified: screenDrift.modifiedScreens || [],
+    fieldChanges: (screenDrift.fieldChanges || []).map((change) => ({
+      screenId: change.screenId,
+      file: change.file,
+      added: change.added?.length || 0,
+      removed: change.removed?.length || 0,
+      changed: change.changed?.length || 0
+    }))
   };
 }
 
@@ -183,7 +190,7 @@ async function processMatchedPackage(pagePackage, delivery) {
     const entryFile = manifest.screens.find((screen) => screen.id === manifest.entryScreenId)?.file || "";
     const missingSet = new Set((status.screenDrift.missingScreens || []).map((file) => String(file).toLowerCase()));
     const entryMissing = Boolean(entryFile && missingSet.has(entryFile.toLowerCase()));
-    const structural = Boolean(status.screenDrift.hasStructuralChanges);
+    const structural = Boolean(status.screenDrift.requiresReview);
     const classification = entryMissing ? "entry_missing" : structural ? "screen_review" : status.fileDiff.changed ? "live" : "healthy";
     const eventStatus = entryMissing ? "unhealthy" : structural ? "action_required" : classification;
     const summary = {
@@ -202,7 +209,7 @@ async function processMatchedPackage(pagePackage, delivery) {
     };
     await recordPackageHealth(pagePackage, delivery, {
       state: entryMissing ? "unhealthy" : structural ? "review" : "healthy",
-      reason: entryMissing ? "Entry screen is missing from the live branch" : structural ? "Screen mapping review required" : "Configured branch is healthy",
+      reason: entryMissing ? "Entry screen is missing from the live branch" : structural ? "Screen or result-field mapping review required" : "Configured branch is healthy",
       checkedAt: processedAt,
       deliveryId: delivery.deliveryId,
       commitSha: status.currentCommitSha || delivery.afterSha

@@ -16,13 +16,21 @@ test("package editor exposes the complete Screen Manifest v2 mapping controls", 
     "data-package-screen-entry",
     "data-package-screen-final",
     "data-package-screen-enabled",
-    "data-package-screen-redirect"
+    "data-package-screen-redirect",
+    "data-package-field-row",
+    "data-package-field-label",
+    "data-package-field-type",
+    "data-package-field-sensitivity",
+    "data-package-field-required",
+    "data-package-field-enabled"
   ]) {
     assert.match(script, new RegExp(marker));
   }
   assert.match(script, /targetScreenId, targetFile, forceReload/);
   assert.match(styles, /\.screen-mapping-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(styles, /\.file-map-list\s*>\s*\.screen-map-row/);
+  assert.match(script, /Backend redact/);
+  assert.match(styles, /\.screen-field-editor\s*\{/);
 });
 
 test("import workflow requires screen mapping before UI publishing", () => {
@@ -43,6 +51,8 @@ test("GitHub packages expose live branch status and explicit structural sync con
     assert.match(script, new RegExp(marker));
   }
   assert.match(script, /Page code is read from this mutable branch at runtime/);
+  assert.match(script, /Apply manifest sync/);
+  assert.match(script, /fieldChanges/);
   assert.match(styles, /\.github-live-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(styles, /\.github-live-stats\s*\{/);
 });

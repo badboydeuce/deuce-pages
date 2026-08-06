@@ -27,6 +27,11 @@ test("secure result viewer is a session-aware command center", async () => {
   assert.match(viewerSource, /pageCapabilityAllowed\(page, "editSecurity"\)/);
   assert.doesNotMatch(viewerSource, /configured journey/i);
   assert.doesNotMatch(viewerSource, /Expected page flow/i);
+  assert.match(portalScript, /function resultFieldCoverage/);
+  assert.match(portalScript, /Expected<\/span>/);
+  assert.match(portalScript, /Captured<\/span>/);
+  assert.match(portalScript, /Missing<\/span>/);
+  assert.match(portalStyles, /\.result-field-coverage\s*\{/);
 
   assert.match(portalStyles, /@media \(max-width: 600px\)[\s\S]*\.result-viewer-command-center\s*\{[\s\S]*position:\s*absolute/);
   assert.match(portalStyles, /\.result-viewer-layout\s*\{[\s\S]*overflow-y:\s*auto/);

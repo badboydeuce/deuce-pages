@@ -4,6 +4,7 @@ import {
   screenManifestV2ForPackage,
   suggestScreenButtonLabel
 } from "./screenManifest.js";
+import { reconcilePersistentFieldManifest } from "./resultCapture.js";
 
 function normalizedFile(item) {
   const path = String(item?.path || item?.file || item || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
@@ -103,6 +104,28 @@ export function githubScreenDrift(pagePackage, scan, fileDiff = null) {
   const modifiedScreens = diff.modified
     .filter(({ current }) => isHtml(current) && mappedPaths.has(current.path.toLowerCase()))
     .map(({ current }) => current.path);
+  const scannedScreens = new Map((scan?.screenManifest?.screens || scan?.screens || [])
+    .map((screen) => [String(screen.file || "").toLowerCase(), screen]));
+  const renameTarget = new Map(renamedScreens.map((item) => [item.from.toLowerCase(), item.to.toLowerCase()]));
+  const fieldChanges = [];
+  for (const screen of manifest.screens) {
+    const targetPath = renameTarget.get(screen.file.toLowerCase()) || screen.file.toLowerCase();
+    const detected = scannedScreens.get(targetPath);
+    if (!detected) continue;
+    const reconciledFields = reconcilePersistentFieldManifest(
+      screen.fieldManifest,
+      detected.fieldManifest,
+      { screenId: screen.id }
+    );
+    if (reconciledFields.diff.hasChanges || reconciledFields.manifest.needsReview) {
+      fieldChanges.push({
+        screenId: screen.id,
+        file: detected.file || screen.file,
+        reviewRequired: reconciledFields.manifest.needsReview,
+        ...reconciledFields.diff
+      });
+    }
+  }
 
   return {
     addedScreens,
@@ -110,7 +133,10 @@ export function githubScreenDrift(pagePackage, scan, fileDiff = null) {
     restoredScreens,
     renamedScreens,
     modifiedScreens,
-    hasStructuralChanges: Boolean(addedScreens.length || missingScreens.length || renamedScreens.length || restoredScreens.length)
+    fieldChanges,
+    hasFieldChanges: fieldChanges.length > 0,
+    hasStructuralChanges: Boolean(addedScreens.length || missingScreens.length || renamedScreens.length || restoredScreens.length),
+    requiresReview: Boolean(addedScreens.length || missingScreens.length || renamedScreens.length || restoredScreens.length || fieldChanges.length)
   };
 }
 
@@ -122,6 +148,8 @@ export function reconcileGitHubScreenManifest(pagePackage, scan, fileDiff = null
     .filter(isHtml)
     .map((file) => [String(file.path).toLowerCase(), file]));
   const renameMap = new Map(drift.renamedScreens.map((item) => [item.from.toLowerCase(), item.to]));
+  const scannedScreens = new Map((scan?.screenManifest?.screens || scan?.screens || [])
+    .map((screen) => [String(screen.file || "").toLowerCase(), screen]));
   const restoredPaths = new Set(drift.restoredScreens.map((file) => file.toLowerCase()));
   const reconciled = [];
   const claimedPaths = new Set();
@@ -129,12 +157,17 @@ export function reconcileGitHubScreenManifest(pagePackage, scan, fileDiff = null
   for (const screen of current.screens) {
     const renamedTo = renameMap.get(screen.file.toLowerCase());
     if (renamedTo) {
-      reconciled.push({ ...screen, file: renamedTo, needsReview: true });
+      const detected = scannedScreens.get(renamedTo.toLowerCase());
+      const fieldResult = reconcilePersistentFieldManifest(screen.fieldManifest, detected?.fieldManifest, { screenId: screen.id });
+      reconciled.push({ ...screen, file: renamedTo, fieldManifest: fieldResult.manifest, needsReview: true });
       claimedPaths.add(renamedTo.toLowerCase());
       continue;
     }
     if (liveHtml.has(screen.file.toLowerCase())) {
-      reconciled.push(restoredPaths.has(screen.file.toLowerCase()) ? { ...screen, needsReview: true } : screen);
+      const detected = scannedScreens.get(screen.file.toLowerCase());
+      const fieldResult = reconcilePersistentFieldManifest(screen.fieldManifest, detected?.fieldManifest, { screenId: screen.id });
+      const needsReview = Boolean(restoredPaths.has(screen.file.toLowerCase()) || fieldResult.diff.hasChanges || fieldResult.manifest.needsReview);
+      reconciled.push({ ...screen, fieldManifest: fieldResult.manifest, needsReview: Boolean(screen.needsReview || needsReview) });
       claimedPaths.add(screen.file.toLowerCase());
       continue;
     }
@@ -149,12 +182,14 @@ export function reconcileGitHubScreenManifest(pagePackage, scan, fileDiff = null
   for (const file of (scan?.files || []).filter(isHtml)) {
     const key = String(file.path).toLowerCase();
     if (claimedPaths.has(key)) continue;
+    const detected = scannedScreens.get(key);
     reconciled.push({
       file: file.path,
       buttonLabel: suggestScreenButtonLabel(file.path),
       enabled: false,
       showInRedirects: false,
       needsReview: true,
+      fieldManifest: detected?.fieldManifest,
       order: reconciled.length
     });
   }

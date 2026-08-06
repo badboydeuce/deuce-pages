@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { normalizePersistentFieldManifest } from "./resultCapture.js";
 
 export const screenManifestVersion = 2;
 export const screenStages = ["form", "verification", "success", "other"];
@@ -82,7 +83,8 @@ function screenRevision({ entryScreenId, finalScreenId, screens }) {
       enabled: screen.enabled,
       showInRedirects: screen.showInRedirects,
       needsReview: screen.needsReview,
-      order: screen.order
+      order: screen.order,
+      fieldManifest: screen.fieldManifest
     }))
   });
   return `sha256:${crypto.createHash("sha256").update(canonical).digest("hex")}`;
@@ -118,6 +120,10 @@ export function createScreenManifestV2({
       ? screen?.buttonLabel || screen?.label || screen?.name || screen?.title || ""
       : "";
     const buttonLabel = String(configuredLabel || suggestScreenButtonLabel(file)).trim().slice(0, 80) || "Page";
+    const fieldManifest = normalizePersistentFieldManifest(
+      typeof screen === "object" ? screen?.fieldManifest : {},
+      { screenId: id }
+    );
     normalizedScreens.push({
       id,
       file,
@@ -128,6 +134,7 @@ export function createScreenManifestV2({
       showInRedirects: normalizedBoolean(typeof screen === "object" ? screen?.showInRedirects : undefined, true),
       needsReview: normalizedBoolean(typeof screen === "object" ? screen?.needsReview : undefined, false),
       order: normalizedScreens.length,
+      fieldManifest,
       legacyRole: typeof screen === "object" ? String(screen?.role || "").toLowerCase() : ""
     });
   }
@@ -221,6 +228,10 @@ export function validateScreenManifestV2(pagePackage = {}, { publishing = false 
     if (!stageSet.has(screen.stage)) issues.push(`Unsupported screen stage: ${screen.stage}`);
     if (!stateSet.has(screen.state)) issues.push(`Unsupported screen state: ${screen.state}`);
     if (publishing && screen.needsReview) issues.push(`Review the GitHub screen change before publishing: ${screen.file}`);
+    for (const warning of screen.fieldManifest?.warnings || []) {
+      warnings.push(`${screen.file}: ${warning}`);
+    }
+    if (publishing && screen.fieldManifest?.needsReview) issues.push(`Review the detected fields before publishing: ${screen.file}`);
     if (screen.enabled && screen.showInRedirects) {
       const labelKey = screen.buttonLabel.toLowerCase();
       if (visibleLabels.has(labelKey)) {

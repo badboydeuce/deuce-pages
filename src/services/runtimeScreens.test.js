@@ -30,7 +30,30 @@ const importedPackage = {
     ],
     screens: [
       { id: "scr_verify", file: "steps/verify-code.html", buttonLabel: "Verify code", stage: "verification", state: "default", enabled: true, showInRedirects: true, order: 0 },
-      { id: "scr_login", file: "index.html", buttonLabel: "Sign in", stage: "form", state: "default", enabled: true, showInRedirects: true, order: 1 },
+      {
+        id: "scr_login",
+        file: "index.html",
+        buttonLabel: "Sign in",
+        stage: "form",
+        state: "default",
+        enabled: true,
+        showInRedirects: true,
+        order: 1,
+        fieldManifest: {
+          schemaVersion: 1,
+          fields: [
+            {
+              id: "fld_email",
+              label: "Email address",
+              type: "email",
+              required: true,
+              enabled: true,
+              sensitivity: "personal",
+              policy: "redact"
+            }
+          ]
+        }
+      },
       { id: "scr_complete", file: "complete.htm", buttonLabel: "Complete", stage: "success", state: "default", enabled: true, showInRedirects: false, order: 2 }
     ]
   }
@@ -73,6 +96,14 @@ test("creates a stable subscription snapshot and server runtime URL", () => {
   const selected = runtimePackageForUserPage(userPage, { ...importedPackage, version: "v3" });
   assert.equal(selected.version, "v2");
   assert.equal(selected.packageManifest.r2.prefix, "packages/local-page/v2/import-1");
+  assert.deepEqual(
+    selected.packageManifest.screens.find((screen) => screen.id === "scr_login")?.fieldManifest?.fields?.map((field) => ({
+      id: field.id,
+      label: field.label,
+      policy: field.policy
+    })),
+    [{ id: "fld_email", label: "Email address", policy: "redact" }]
+  );
   assert.equal(
     runtimeScreenTargetUrl("user_page_1", "steps/verify-code.html"),
     "/api/runtime/source?userPageId=user_page_1&file=steps%2Fverify-code.html"

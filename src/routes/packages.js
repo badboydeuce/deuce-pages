@@ -167,7 +167,7 @@ packagesRouter.post("/:id/github/sync", requireAdmin, async (req, res) => {
     const status = await checkGitHubLivePackage(pagePackage);
     const reconciled = reconcileGitHubScreenManifest(pagePackage, status.scan, status.fileDiff);
     const syncedAt = new Date().toISOString();
-    const nextStatus = pagePackage.status === "published" && reconciled.drift.hasStructuralChanges
+    const nextStatus = pagePackage.status === "published" && reconciled.drift.requiresReview
       ? "review"
       : pagePackage.status;
     const packageManifest = {
@@ -191,8 +191,8 @@ packagesRouter.post("/:id/github/sync", requireAdmin, async (req, res) => {
         lastObservedCommitSha: status.scan.commitSha,
         lastObservedAt: syncedAt,
         health: {
-          state: reconciled.drift.hasStructuralChanges ? "review" : "healthy",
-          reason: reconciled.drift.hasStructuralChanges ? "Screen mappings synced and require admin review" : "Configured branch is healthy",
+          state: reconciled.drift.requiresReview ? "review" : "healthy",
+          reason: reconciled.drift.requiresReview ? "Screen and field mappings synced and require admin review" : "Configured branch is healthy",
           checkedAt: syncedAt,
           commitSha: status.scan.commitSha
         }

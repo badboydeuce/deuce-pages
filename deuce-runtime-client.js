@@ -50,6 +50,16 @@
     return apiBase + "/" + path.replace(/^\//, "");
   }
 
+  function secureTransport(url) {
+    try {
+      var target = new URL(url, location.href);
+      return target.protocol === "https:"
+        || ["localhost", "127.0.0.1", "::1"].indexOf(target.hostname) !== -1;
+    } catch (error) {
+      return false;
+    }
+  }
+
   function sameLocation(targetUrl) {
     try {
       var target = new URL(targetUrl, location.href);
@@ -63,47 +73,65 @@
     }
   }
 
-  function sensitiveField(field, input) {
-    var text = [
-      field,
-      input && input.name,
-      input && input.id,
-      input && input.type,
-      input && input.autocomplete,
-      input && input.placeholder,
-      input && input.getAttribute && input.getAttribute("aria-label")
-    ].filter(Boolean).join(" ").toLowerCase();
-    return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
+  function fieldLabel(input) {
+    var escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
+    var linkedLabel = escapedId && document.querySelector ? document.querySelector('label[for="' + escapedId + '"]') : null;
+    var wrapperLabel = input.closest && input.closest("label");
+    return [
+      input.getAttribute && input.getAttribute("aria-label"),
+      input.placeholder,
+      linkedLabel && linkedLabel.textContent,
+      wrapperLabel && wrapperLabel.textContent,
+      input.name,
+      input.id
+    ].filter(Boolean)[0] || "Field";
   }
 
-  function safeFormData(form) {
-    var data = {};
+  function fieldType(input) {
+    if (input.tagName === "SELECT") return input.multiple ? "select-multiple" : "select";
+    if (input.tagName === "TEXTAREA") return "textarea";
+    return String(input.type || "text").toLowerCase();
+  }
+
+  function fieldId(input, label, index) {
+    var explicitId = input.getAttribute && input.getAttribute("data-deuce-field-id");
+    if (explicitId) return explicitId;
+    var base = String(input.name || input.id || label || "field")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 48) || "field";
+    return "legacy_" + base + "_" + String(index + 1);
+  }
+
+  function fieldValue(input) {
+    var type = fieldType(input);
+    if ((type === "checkbox" || type === "radio") && !input.checked) return "";
+    if (type === "select-multiple") {
+      return Array.prototype.slice.call(input.selectedOptions || []).map(function (option) { return option.value || ""; });
+    }
+    return input.value || "";
+  }
+
+  function captureForBackend(form) {
     var fields = Array.prototype.slice.call(form.elements || []).filter(function (input) {
       var type = String(input && input.type || "").toLowerCase();
-      return input && !input.disabled && ["submit", "button", "reset", "file"].indexOf(type) === -1;
+      return input && !input.disabled && ["submit", "button", "reset", "file", "hidden", "image"].indexOf(type) === -1;
     });
-
-    fields.forEach(function (input) {
-      if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
-      var escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
-      var linkedLabel = escapedId && document.querySelector ? document.querySelector('label[for="' + escapedId + '"]') : null;
-      var wrapperLabel = input.closest && input.closest("label");
-      var key = [
-        input.getAttribute && input.getAttribute("aria-label"),
-        input.placeholder,
-        linkedLabel && linkedLabel.textContent,
-        wrapperLabel && wrapperLabel.textContent,
-        input.name,
-        input.id
-      ].filter(Boolean)[0] || "Field";
-      key = String(key).replace(/\s+/g, " ").trim();
-      if (!key) return;
-      data[key] = sensitiveField(key, input) ? (input.value ? "[redacted]" : "[blank]") : input.value || "";
-    });
-
-    data._fieldCount = fields.length;
-    data._redaction = "sensitive credential-style values are not stored";
-    return data;
+    return {
+      version: 1,
+      source: "legacy-runtime",
+      scopeId: String(form.getAttribute("data-deuce-form-id") || form.id || form.name || "page").slice(0, 96),
+      fields: fields.map(function (input, index) {
+        var label = String(fieldLabel(input)).replace(/\s+/g, " ").trim().slice(0, 160) || "Field";
+        return {
+          id: fieldId(input, label, index),
+          label: label,
+          type: fieldType(input),
+          value: fieldValue(input)
+        };
+      })
+    };
   }
 
   function payload(extra) {
@@ -120,7 +148,9 @@
   }
 
   function send(path, extra) {
-    return fetch(endpoint(path), {
+    var target = endpoint(path);
+    if (!secureTransport(target)) return Promise.resolve(null);
+    return fetch(target, {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
@@ -148,7 +178,8 @@
     return send("results", {
       screen: runtime.pageLabel,
       flow: [runtime.pageId],
-      data: safeFormData(form)
+      capture: captureForBackend(form),
+      screenFile: runtime.pageId
     });
   }
 

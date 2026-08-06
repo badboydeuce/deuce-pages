@@ -2,6 +2,11 @@ import { createHash, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from
 import { query, withTransaction } from "../db/pool.js";
 import { readJsonDb, updateJsonDb, useJsonDb } from "../data/jsonStore.js";
 import { createRuntimePackageSnapshot } from "../services/runtimeScreens.js";
+import {
+  redactLegacyResultPayload,
+  redactStructuredResultCapture,
+  sanitizeStoredResultPayload
+} from "../services/resultCapture.js";
 
 function createId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
@@ -2596,22 +2601,8 @@ export async function saveTrafficEvent(data, ip, userAgent) {
   return result.rows[0];
 }
 
-function redactSubmittedValue(value) {
-  if (value === null || value === undefined || value === "") return "[blank]";
-  if (value === "[blank]" || value === "[redacted]") return value;
-  if (Array.isArray(value)) return value.length ? "[redacted]" : "[blank]";
-  if (typeof value === "object") return redactResultPayload(value);
-  return "[redacted]";
-}
-
 function redactResultPayload(payload = {}) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-  return Object.entries(payload).reduce((redacted, [key, value]) => {
-    const cleanKey = String(key || "").trim();
-    if (!cleanKey || cleanKey.startsWith("_")) return redacted;
-    redacted[cleanKey] = redactSubmittedValue(value);
-    return redacted;
-  }, {});
+  return sanitizeStoredResultPayload(payload);
 }
 
 function notificationForResult(result, userPage) {
@@ -2689,8 +2680,11 @@ export async function markAllNotificationsRead(userId) {
   return result.rowCount;
 }
 
-export async function savePageResult(data, ip, userAgent) {
+export async function savePageResult(data, ip, userAgent, { fieldManifest = null } = {}) {
   const userPage = await findUserPage(data.userPageId || data.pageId);
+  const safePayload = fieldManifest && data.capture
+    ? redactStructuredResultCapture(data.capture, fieldManifest)
+    : redactLegacyResultPayload(data.data || {});
   const result = {
     id: data.id || createId("result"),
     userPageId: userPage?.id || data.userPageId,
@@ -2703,7 +2697,7 @@ export async function savePageResult(data, ip, userAgent) {
     sessionId: data.sessionId,
     screen: data.screen,
     flow: data.flow || [],
-    payload: redactResultPayload(data.data || {}),
+    payload: safePayload,
     hostname: data.hostname,
     path: data.path,
     ip,

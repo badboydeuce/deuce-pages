@@ -5,6 +5,7 @@ import { classifyFile, inferScreenName, scanReview } from "./githubImport.js";
 import { contentTypeFor } from "./packagePreview.js";
 import { deleteObject, getObjectBuffer, headObject, putObject, signedUploadUrl } from "./objectStorage.js";
 import { createScreenManifestV2 } from "./screenManifest.js";
+import { createPersistentFieldManifest, normalizePersistentFieldManifest } from "./resultCapture.js";
 
 const maxFiles = Math.min(Math.max(Number(process.env.LOCAL_IMPORT_MAX_FILES) || 500, 1), 2000);
 const maxFileBytes = (Math.min(Math.max(Number(process.env.LOCAL_IMPORT_MAX_FILE_MB) || 20, 1), 100) * 1024 * 1024);
@@ -74,7 +75,7 @@ function verifyPayload(token, userId) {
   return payload;
 }
 
-function packageScan(files, packageName, slug) {
+async function packageScan(files, packageName, slug, prefix) {
   const htmlFiles = files.filter((file) => classifyFile(file.path) === "html").map((file) => file.path);
   const cssFiles = files.filter((file) => classifyFile(file.path) === "css").map((file) => file.path);
   const assets = files.filter((file) => ["asset", "font"].includes(classifyFile(file.path))).map((file) => file.path);
@@ -84,11 +85,43 @@ function packageScan(files, packageName, slug) {
     buttonLabel: inferScreenName(file),
     role: /^index\.html?$/i.test(file) ? "entry" : "screen"
   }));
-  const screenManifest = createScreenManifestV2({ packageKey: slug, screens: screenCandidates });
+  const baseScreenManifest = createScreenManifestV2({ packageKey: slug, screens: screenCandidates });
+  const mappedScreens = await Promise.all(baseScreenManifest.screens.map(async (screen) => {
+    try {
+      const html = (await getObjectBuffer(`${prefix}/${screen.file}`)).toString("utf8");
+      const fieldManifest = createPersistentFieldManifest(html, { screenFile: screen.file, screenId: screen.id });
+      return { ...screen, fieldManifest, needsReview: Boolean(screen.needsReview || fieldManifest.needsReview) };
+    } catch {
+      return {
+        ...screen,
+        fieldManifest: normalizePersistentFieldManifest({
+          warnings: ["Field detection could not read this HTML file; review it before publishing"],
+          needsReview: true
+        }, { screenId: screen.id }),
+        needsReview: true
+      };
+    }
+  }));
+  const screenManifest = createScreenManifestV2({
+    packageKey: slug,
+    screens: mappedScreens,
+    entryScreenId: baseScreenManifest.entryScreenId,
+    finalScreenId: baseScreenManifest.finalScreenId
+  });
   const screens = screenManifest.screens.map((screen) => ({
     ...screen,
     role: screen.id === screenManifest.entryScreenId ? "entry" : screen.stage
   }));
+  const detectedFieldCount = screens.reduce((count, screen) => count + (screen.fieldManifest?.fields?.length || 0), 0);
+  const fieldWarnings = screens.flatMap((screen) => screen.fieldManifest?.warnings || []);
+  const review = scanReview({ htmlFiles, cssFiles, assetFiles: assets, scriptFiles: scripts, screens });
+  review.checks.push({
+    label: "Result fields",
+    status: fieldWarnings.length ? "warn" : "pass",
+    detail: `${detectedFieldCount} field${detectedFieldCount === 1 ? "" : "s"} mapped across ${screens.length} screen${screens.length === 1 ? "" : "s"}`
+  });
+  if (fieldWarnings.length) review.warnings.push(`${fieldWarnings.length} field mapping warning${fieldWarnings.length === 1 ? " requires" : "s require"} review.`);
+  if (fieldWarnings.length && review.status === "ready") review.status = "review";
   return {
     sourceType: "r2",
     packageName,
@@ -99,7 +132,8 @@ function packageScan(files, packageName, slug) {
     assets,
     scripts,
     screenManifest,
-    review: scanReview({ htmlFiles, cssFiles, assetFiles: assets, scriptFiles: scripts, screens })
+    summary: { fields: detectedFieldCount },
+    review
   };
 }
 
@@ -170,6 +204,6 @@ export async function finalizeLocalImport({ token, userId }) {
   return {
     payload,
     files,
-    scan: packageScan(files, payload.packageName, payload.slug)
+    scan: await packageScan(files, payload.packageName, payload.slug, payload.prefix)
   };
 }

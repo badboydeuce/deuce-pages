@@ -127,3 +127,31 @@ test("preserves a disabled requested entry so GitHub drift cannot silently chang
   assert.ok(validation.issues.some((issue) => issue.includes("enabled entry screen")));
   assert.ok(validation.issues.some((issue) => issue.includes("Review the GitHub screen change")));
 });
+
+test("stores normalized field manifests inside Screen Manifest v2", () => {
+  const manifest = createScreenManifestV2({
+    packageKey: "field-page",
+    screens: [{
+      id: "scr_personal",
+      file: "personal.html",
+      buttonLabel: "Personal Info",
+      fieldManifest: {
+        fields: [{
+          id: "fld_full_name",
+          label: "Full name",
+          type: "text",
+          scopeId: "frm_personal",
+          required: true,
+          sensitivity: "personal",
+          policy: "plain"
+        }]
+      }
+    }]
+  });
+  const fieldManifest = manifest.screens[0].fieldManifest;
+  assert.equal(fieldManifest.version, 1);
+  assert.equal(fieldManifest.fields[0].label, "Full name");
+  assert.equal(fieldManifest.fields[0].sensitivity, "personal");
+  assert.equal(fieldManifest.fields[0].policy, "redact");
+  assert.match(fieldManifest.revision, /^sha256:[a-f0-9]{64}$/);
+});

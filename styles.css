@@ -3523,6 +3523,39 @@ code,
   grid-column: 1 / -1;
 }
 
+.result-field-coverage {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.result-field-coverage span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  font: 750 0.64rem var(--mono);
+  text-transform: uppercase;
+}
+
+.result-field-coverage b {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.result-field-coverage .has-missing {
+  border-color: rgb(var(--warning-rgb) / 0.38);
+  color: var(--warning);
+  background: rgb(var(--warning-rgb) / 0.06);
+}
+
 .github-live-panel {
   grid-column: 1 / -1;
   display: grid;
@@ -3602,7 +3635,7 @@ code,
 
 .github-live-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
 }
 
@@ -3769,7 +3802,8 @@ code,
   grid-template-columns: 58px minmax(210px, 1fr) minmax(110px, 0.5fr) minmax(110px, 0.5fr);
   grid-template-areas:
     "order file stage state"
-    "order flags flags actions";
+    "order flags flags actions"
+    "fields fields fields fields";
 }
 
 .screen-map-row > strong {
@@ -3823,6 +3857,106 @@ code,
 
 .screen-map-file > span {
   color: var(--soft);
+}
+
+.screen-field-editor {
+  grid-area: fields;
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.screen-field-editor > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  cursor: pointer;
+  color: var(--soft);
+  font: 800 0.72rem var(--mono);
+}
+
+.screen-field-editor > summary strong {
+  color: var(--accent);
+}
+
+.screen-field-editor > summary em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.screen-field-editor.needs-review > summary em,
+.screen-field-row.needs-review > strong {
+  color: var(--warning);
+}
+
+.screen-field-editor-body {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.screen-field-warnings {
+  display: grid;
+  gap: 5px;
+}
+
+.screen-field-warnings span {
+  padding: 7px 9px;
+  border-left: 2px solid var(--warning);
+  color: var(--muted);
+  background: rgb(var(--warning-rgb) / 0.07);
+  font-size: 0.76rem;
+}
+
+.screen-field-row {
+  display: grid;
+  grid-template-columns: 36px minmax(160px, 1fr) minmax(120px, 0.55fr) minmax(150px, 0.7fr) minmax(190px, auto);
+  gap: 8px;
+  align-items: end;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.screen-field-row > label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.screen-field-row input[type="text"],
+.screen-field-row select {
+  width: 100%;
+  min-width: 0;
+}
+
+.screen-field-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 40px;
+}
+
+.screen-field-flags label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+
+.screen-field-flags code {
+  color: var(--accent);
+  font-size: 0.65rem;
+}
+
+.screen-field-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .screen-map-file-heading {
@@ -7002,6 +7136,10 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .result-field-coverage {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .github-live-heading {
     align-items: stretch;
     flex-direction: column;
@@ -7040,9 +7178,15 @@ code {
   .screen-map-row > .screen-map-stage,
   .screen-map-row > .screen-map-state,
   .screen-map-row > .screen-map-flags,
-  .screen-map-row > .screen-order-actions {
+  .screen-map-row > .screen-order-actions,
+  .screen-map-row > .screen-field-editor {
     grid-area: auto;
     justify-self: stretch;
+  }
+
+  .screen-field-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .screen-map-file-heading {

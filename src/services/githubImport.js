@@ -1,8 +1,11 @@
 import { createScreenManifestV2, suggestScreenButtonLabel } from "./screenManifest.js";
+import { createPersistentFieldManifest, normalizePersistentFieldManifest } from "./resultCapture.js";
 
 const githubMaxFiles = Math.min(Math.max(Number(process.env.GITHUB_IMPORT_MAX_FILES) || 1000, 1), 5000);
 const githubMaxFileBytes = Math.min(Math.max(Number(process.env.GITHUB_IMPORT_MAX_FILE_MB) || 20, 1), 100) * 1024 * 1024;
 const githubMaxPackageBytes = Math.min(Math.max(Number(process.env.GITHUB_IMPORT_MAX_PACKAGE_MB) || 100, 1), 500) * 1024 * 1024;
+const githubMaxFieldScanFiles = Math.min(Math.max(Number(process.env.GITHUB_FIELD_SCAN_MAX_FILES) || 40, 1), 200);
+const githubMaxFieldScanBytes = Math.min(Math.max(Number(process.env.GITHUB_FIELD_SCAN_MAX_MB) || 2, 1), 10) * 1024 * 1024;
 const githubRuntimeExtensions = new Set([
   ".html", ".htm", ".css", ".js", ".mjs", ".json", ".txt", ".xml", ".svg",
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico",
@@ -143,6 +146,59 @@ async function getRepositoryCommit(owner, repo, branch) {
   return githubJson(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`, `GitHub commit lookup for branch ${branch}`);
 }
 
+async function getRepositoryBlobText(owner, repo, file) {
+  if (!file?.sha || Number(file.size || 0) > githubMaxFieldScanBytes) {
+    throw new Error("HTML field scan limit exceeded");
+  }
+  const blob = await githubJson(
+    `https://api.github.com/repos/${owner}/${repo}/git/blobs/${encodeURIComponent(file.sha)}`,
+    `GitHub field scan for ${file.path}`
+  );
+  if (blob.encoding !== "base64" || typeof blob.content !== "string") throw new Error("GitHub HTML blob is unavailable");
+  const buffer = Buffer.from(blob.content.replace(/\s+/g, ""), "base64");
+  if (buffer.length > githubMaxFieldScanBytes) throw new Error("HTML field scan limit exceeded");
+  return buffer.toString("utf8");
+}
+
+async function scanGitHubScreenFields({ owner, repo, files, screenManifest }) {
+  const filesByPath = new Map(files.map((file) => [file.path.toLowerCase(), file]));
+  let scanned = 0;
+  const screens = await Promise.all(screenManifest.screens.map(async (screen) => {
+    const file = filesByPath.get(screen.file.toLowerCase());
+    if (!file || scanned >= githubMaxFieldScanFiles) {
+      return {
+        ...screen,
+        fieldManifest: normalizePersistentFieldManifest({
+          warnings: [file ? "Field scan limit reached; review this screen manually" : "HTML source is unavailable for field detection"],
+          needsReview: true
+        }, { screenId: screen.id }),
+        needsReview: true
+      };
+    }
+    scanned += 1;
+    try {
+      const html = await getRepositoryBlobText(owner, repo, file);
+      const fieldManifest = createPersistentFieldManifest(html, { screenFile: screen.file, screenId: screen.id });
+      return { ...screen, fieldManifest, needsReview: Boolean(screen.needsReview || fieldManifest.needsReview) };
+    } catch {
+      return {
+        ...screen,
+        fieldManifest: normalizePersistentFieldManifest({
+          warnings: ["Field detection could not read this HTML file; review it before publishing"],
+          needsReview: true
+        }, { screenId: screen.id }),
+        needsReview: true
+      };
+    }
+  }));
+  return createScreenManifestV2({
+    packageKey: `${owner}/${repo}`,
+    screens,
+    entryScreenId: screenManifest.entryScreenId,
+    finalScreenId: screenManifest.finalScreenId
+  });
+}
+
 export function inferScreenName(filePath) {
   return suggestScreenButtonLabel(filePath);
 }
@@ -273,12 +329,22 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     buttonLabel: inferScreenName(file),
     role: expectedEntryFiles.has(file.toLowerCase()) ? "entry" : "screen"
   }));
-  const screenManifest = createScreenManifestV2({ packageKey: slug || `${owner}/${repo}`, screens: screenCandidates });
+  const baseScreenManifest = createScreenManifestV2({ packageKey: slug || `${owner}/${repo}`, screens: screenCandidates });
+  const screenManifest = await scanGitHubScreenFields({ owner, repo, files, screenManifest: baseScreenManifest });
   const screens = screenManifest.screens.map((screen) => ({
     ...screen,
     role: screen.id === screenManifest.entryScreenId ? "entry" : screen.stage
   }));
   const review = scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens, excludedFiles });
+  const detectedFieldCount = screens.reduce((count, screen) => count + (screen.fieldManifest?.fields?.length || 0), 0);
+  const fieldWarnings = screens.flatMap((screen) => screen.fieldManifest?.warnings || []);
+  review.checks.push({
+    label: "Result fields",
+    status: fieldWarnings.length ? "warn" : "pass",
+    detail: `${detectedFieldCount} field${detectedFieldCount === 1 ? "" : "s"} mapped across ${screens.length} screen${screens.length === 1 ? "" : "s"}`
+  });
+  if (fieldWarnings.length) review.warnings.push(`${fieldWarnings.length} field mapping warning${fieldWarnings.length === 1 ? " requires" : "s require"} review.`);
+  if (fieldWarnings.length && review.status === "ready") review.status = "review";
   const commit = await getRepositoryCommit(owner, repo, resolvedBranch);
 
   return {
@@ -311,7 +377,8 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
       html: htmlFiles.length,
       css: cssFiles.length,
       assets: assetFiles.length,
-      scripts: scriptFiles.length
+      scripts: scriptFiles.length,
+      fields: detectedFieldCount
     },
     review
   };

