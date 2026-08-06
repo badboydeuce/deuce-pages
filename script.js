@@ -1042,11 +1042,6 @@ function resultViewerTime(value) {
   return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
 }
 
-function resultViewerFlowLabel(item) {
-  if (typeof item === "string") return item;
-  return item?.name || item?.label || item?.file || "";
-}
-
 function resultViewerTimelineMarkup(results = [], selectedId = "") {
   return results.map((result, index) => `
     <button type="button" class="result-viewer-step ${result.id === selectedId ? "is-active" : ""}" data-result-viewer-step="${escapeHtml(result.id)}" aria-current="${result.id === selectedId ? "step" : "false"}">
@@ -1060,6 +1055,141 @@ function resultViewerTimelineMarkup(results = [], selectedId = "") {
   `).join("");
 }
 
+function resultViewerContext() {
+  if (!activeResultViewer) return null;
+  const { page, results = [], selectedId } = activeResultViewer;
+  const result = results.find((item) => item.id === selectedId) || results[0] || null;
+  if (!page || !result) return null;
+  const sessionId = result.sessionId || "";
+  const activeSession = sessionId
+    ? (page.activeSessions || []).find((session) => session.sessionId === sessionId) || null
+    : null;
+  const command = sessionId
+    ? latestSessionCommand(sessionId, page.configs?.sessionCommands || {}, page.configs?.sessionCommandHistory || {})
+    : null;
+  const targets = sessionPageTargets(page);
+  const currentLabel = sessionCurrentFlowLabel(activeSession, result, command);
+  const currentFile = sessionCurrentFlowFile(activeSession, result, command);
+  const currentLabelKey = normalizeFlowLabel(currentLabel);
+  const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
+  const currentTarget = targets.find((target) => (
+    currentFileKey
+      ? normalizedRuntimeScreenFile(target.file).toLowerCase() === currentFileKey
+      : Boolean(currentLabelKey && normalizeFlowLabel(target.label) === currentLabelKey)
+  )) || null;
+  const bannedIps = page.securityConfig?.bannedIps || [];
+  const whitelistIps = page.securityConfig?.whitelistIps || [];
+  const ipStatus = bannedIps.includes(result.ip)
+    ? "banned"
+    : whitelistIps.includes(result.ip)
+      ? "whitelisted"
+      : "unlisted";
+  return {
+    page,
+    result,
+    sessionId,
+    activeSession,
+    command,
+    targets,
+    currentTarget,
+    currentLabel,
+    currentFile,
+    ipStatus,
+    sessionStatusKnown: !activeResultViewer.sessionStateError
+  };
+}
+
+function resultViewerRouteButtonsMarkup(context) {
+  const { page, sessionId, activeSession, targets, currentTarget } = context;
+  const liveControlsDisabled = !activeSession || !sessionId || !pageCapabilityAllowed(page, "controlSessions");
+  if (!targets.length) return '<span class="result-viewer-route-empty">No mapped redirect pages are available.</span>';
+  return targets.map((target) => {
+    const isCurrent = currentTarget?.file === target.file;
+    const classes = [
+      isCurrent ? "is-current" : "",
+      target.state === "error" ? "is-error" : "",
+      target.stage === "success" ? "is-success" : ""
+    ].filter(Boolean).join(" ");
+    const disabled = liveControlsDisabled || isCurrent;
+    return `
+      <button type="button" class="${classes}" data-result-viewer-redirect data-session-id="${escapeHtml(sessionId)}" data-target-screen-id="${escapeHtml(target.id || "")}" data-target-file="${escapeHtml(target.file)}" aria-pressed="${isCurrent ? "true" : "false"}"${isCurrent ? ' aria-current="page"' : ""}${disabled ? ' disabled aria-disabled="true"' : ""}>
+        ${escapeHtml(target.label)}
+      </button>
+    `;
+  }).join("");
+}
+
+function resultViewerCommandCenterMarkup(context) {
+  const { page, result, sessionId, activeSession, command, currentTarget, ipStatus, sessionStatusKnown } = context;
+  const controlsOpen = Boolean(activeResultViewer?.controlsOpen);
+  const liveState = activeSession ? "live" : sessionStatusKnown ? "offline" : "unknown";
+  const liveLabel = activeSession ? "Active now" : sessionStatusKnown ? "Offline" : "Status unavailable";
+  const lastSeen = activeSession?.lastSeenAt ? resultViewerTime(activeSession.lastSeenAt) : "No live heartbeat";
+  const routeDisabled = !activeSession || !sessionId || !pageCapabilityAllowed(page, "controlSessions");
+  const clearDisabled = !sessionId || !command?.targetUrl || !pageCapabilityAllowed(page, "controlSessions");
+  const securityDisabled = !result.ip || !pageCapabilityAllowed(page, "editSecurity");
+  const reloadDisabled = routeDisabled || !currentTarget;
+
+  return `
+    <button type="button" class="result-viewer-control-scrim" data-close-result-controls aria-label="Close controls"${controlsOpen ? "" : " hidden"}></button>
+    <section id="resultViewerControls" class="result-viewer-command-center ${controlsOpen ? "is-open" : ""}" data-result-viewer-controls aria-labelledby="resultViewerControlsTitle" tabindex="-1"${controlsOpen ? "" : " hidden"}>
+      <div class="result-viewer-command-head">
+        <div>
+          <small>session command center</small>
+          <h3 id="resultViewerControlsTitle">Live controls</h3>
+        </div>
+        <button type="button" data-close-result-controls aria-label="Close controls">&times;</button>
+      </div>
+      <div class="result-viewer-live-state is-${liveState}">
+        <span class="result-viewer-live-dot" aria-hidden="true"></span>
+        <div>
+          <strong>${escapeHtml(liveLabel)}</strong>
+          <small>${escapeHtml(activeSession?.screen || result.screen || "Unknown screen")} / ${escapeHtml(lastSeen)}</small>
+        </div>
+        <button type="button" data-refresh-result-session>Refresh</button>
+      </div>
+      <div class="result-viewer-command-block is-routing">
+        <div class="result-viewer-command-label">
+          <strong>Redirect active user</strong>
+          <small>${escapeHtml(commandStatusLabel(command))}</small>
+        </div>
+        <div class="result-viewer-route-grid">
+          ${resultViewerRouteButtonsMarkup(context)}
+        </div>
+        <div class="result-viewer-inline-actions">
+          <button type="button" data-result-viewer-reload data-session-id="${escapeHtml(sessionId)}" data-target-screen-id="${escapeHtml(currentTarget?.id || "")}" data-target-file="${escapeHtml(currentTarget?.file || "")}"${reloadDisabled ? ' disabled aria-disabled="true"' : ""}>Reload current</button>
+          <button type="button" data-result-viewer-clear-command data-session-id="${escapeHtml(sessionId)}"${clearDisabled ? ' disabled aria-disabled="true"' : ""}>Clear command</button>
+        </div>
+        ${!activeSession ? `<p class="result-viewer-command-note">Live redirects unlock when this session sends a current heartbeat.</p>` : ""}
+      </div>
+      <div class="result-viewer-command-block is-workflow">
+        <div class="result-viewer-command-label"><strong>Result workflow</strong><small>${escapeHtml(resultWorkflowLabel(result.status))}</small></div>
+        <div class="result-viewer-workflow-actions">
+          ${[
+            ["review", "Reviewed", "reviewed"],
+            ["flag", "Flag", "flagged"],
+            ["resolve", "Resolve", "resolved"]
+          ].map(([action, label, status]) => `<button type="button" data-result-viewer-workflow="${action}"${result.status === status ? ' disabled aria-disabled="true"' : ""}>${label}</button>`).join("")}
+        </div>
+      </div>
+      <div class="result-viewer-command-block is-security">
+        <div class="result-viewer-command-label"><strong>IP security</strong><small>${escapeHtml(ipStatus)}</small></div>
+        <div class="result-viewer-security-actions">
+          <button type="button" data-result-viewer-ip-action="ban"${securityDisabled || ipStatus === "banned" ? ' disabled aria-disabled="true"' : ""}>Ban IP</button>
+          <button type="button" data-result-viewer-ip-action="whitelist"${securityDisabled || ipStatus === "whitelisted" ? ' disabled aria-disabled="true"' : ""}>Whitelist</button>
+        </div>
+      </div>
+      <div class="result-viewer-command-block is-record">
+        <div class="result-viewer-command-label"><strong>Record</strong><small>Safe metadata only</small></div>
+        <div class="result-viewer-record-actions">
+          <button type="button" data-result-viewer-export>Export metadata</button>
+          <button type="button" class="danger" data-result-viewer-delete>Delete result</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function closeResultViewer(options = {}) {
   const restoreFocus = options.restoreFocus !== false;
   const returnFocus = activeResultViewer?.returnFocus;
@@ -1069,18 +1199,19 @@ function closeResultViewer(options = {}) {
   if (restoreFocus && returnFocus?.isConnected) returnFocus.focus();
 }
 
-function renderResultViewer() {
+function renderResultViewer(options = {}) {
   if (!activeResultViewer?.viewer?.isConnected) return;
   const { viewer, page, results, selectedId } = activeResultViewer;
   const result = results.find((item) => item.id === selectedId) || results[0];
   if (!result) return;
+  const previousLayoutScroll = viewer.querySelector(".result-viewer-layout")?.scrollTop || 0;
+  const previousTimelineScroll = viewer.querySelector(".result-viewer-timeline")?.scrollTop || 0;
+  const previousContentScroll = viewer.querySelector(".result-viewer-content")?.scrollTop || 0;
   activeResultViewer.selectedId = result.id;
   const stepIndex = Math.max(results.findIndex((item) => item.id === result.id), 0);
   const fields = resultFieldMarkup(result.fields || {}, result.screen);
-  const flow = (Array.isArray(result.flow) ? result.flow : [])
-    .map(resultViewerFlowLabel)
-    .filter(Boolean);
   const sourcePath = [result.hostname, result.path].filter(Boolean).join("");
+  const context = resultViewerContext();
 
   viewer.innerHTML = `
     <section class="result-viewer-panel" role="dialog" aria-modal="true" aria-labelledby="resultViewerTitle" tabindex="-1">
@@ -1091,8 +1222,10 @@ function renderResultViewer() {
           <p>${escapeHtml(page.name || result.pageName || "Page")} / received ${escapeHtml(resultViewerTime(result.createdAt))}</p>
         </div>
         <div class="result-viewer-head-actions">
+          <span class="result-viewer-live-badge is-${context.activeSession ? "live" : context.sessionStatusKnown ? "offline" : "unknown"}">${context.activeSession ? "Active" : context.sessionStatusKnown ? "Offline" : "Unknown"}</span>
           <span class="result-workflow-status is-${escapeHtml(result.status || "new")}">${escapeHtml(resultWorkflowLabel(result.status))}</span>
-          <button type="button" data-close-result-viewer aria-label="Close result viewer">&times;</button>
+          <button type="button" class="result-viewer-controls-toggle" data-toggle-result-controls aria-expanded="${activeResultViewer.controlsOpen ? "true" : "false"}" aria-controls="resultViewerControls">Controls</button>
+          <button type="button" class="result-viewer-close" data-close-result-viewer aria-label="Close result viewer">&times;</button>
         </div>
       </header>
       <div class="result-viewer-layout">
@@ -1104,6 +1237,7 @@ function renderResultViewer() {
           <div class="result-viewer-steps">${resultViewerTimelineMarkup(results, result.id)}</div>
         </aside>
         <main class="result-viewer-content">
+          ${resultViewerCommandCenterMarkup(context)}
           <section class="result-viewer-summary">
             <article><small>IP address</small><strong>${escapeHtml(result.ip || "Unknown")}</strong></article>
             <article><small>Page file</small><strong>${escapeHtml(result.pageId || result.screen || "Unknown")}</strong></article>
@@ -1120,8 +1254,8 @@ function renderResultViewer() {
               ${fields || `<div><span>Status</span><strong>No form fields saved for this result</strong></div>`}
             </div>
           </section>
-          <section class="result-viewer-section">
-            <div class="result-viewer-section-head"><div><small>request context</small><h3>Source and record metadata</h3></div></div>
+          <details class="result-viewer-section result-viewer-metadata-section"${window.matchMedia("(max-width: 600px)").matches ? "" : " open"}>
+            <summary class="result-viewer-section-head"><div><small>request context</small><h3>Source and record metadata</h3></div><span>Details</span></summary>
             <dl class="result-viewer-metadata">
               <div><dt>Result ID</dt><dd>${escapeHtml(result.id)}</dd></div>
               <div><dt>Session ID</dt><dd>${escapeHtml(result.sessionId || "No session")}</dd></div>
@@ -1130,17 +1264,156 @@ function renderResultViewer() {
               <div><dt>User agent</dt><dd>${escapeHtml(result.userAgent || "Unknown")}</dd></div>
               <div><dt>Reviewed</dt><dd>${escapeHtml(result.reviewedAt ? resultViewerTime(result.reviewedAt) : "Not reviewed")}</dd></div>
             </dl>
-          </section>
-          <section class="result-viewer-section">
-            <div class="result-viewer-section-head"><div><small>configured journey</small><h3>Expected page flow</h3></div></div>
-            <div class="result-viewer-flow">
-              ${flow.length ? flow.map((label, index) => `<span class="${index === stepIndex ? "is-current" : ""}">${index + 1}. ${escapeHtml(label)}</span>`).join("") : "<span>No configured flow metadata</span>"}
-            </div>
-          </section>
+          </details>
         </main>
       </div>
     </section>
   `;
+  if (options.preserveScroll) {
+    const layout = viewer.querySelector(".result-viewer-layout");
+    const timeline = viewer.querySelector(".result-viewer-timeline");
+    const content = viewer.querySelector(".result-viewer-content");
+    if (layout) layout.scrollTop = previousLayoutScroll;
+    if (timeline) timeline.scrollTop = previousTimelineScroll;
+    if (content) content.scrollTop = previousContentScroll;
+  }
+}
+
+function setResultViewerControlsOpen(open, options = {}) {
+  if (!activeResultViewer?.viewer?.isConnected) return;
+  const shouldOpen = Boolean(open);
+  activeResultViewer.controlsOpen = shouldOpen;
+  const controls = activeResultViewer.viewer.querySelector("[data-result-viewer-controls]");
+  const scrim = activeResultViewer.viewer.querySelector(".result-viewer-control-scrim");
+  const toggle = activeResultViewer.viewer.querySelector("[data-toggle-result-controls]");
+  if (controls) {
+    controls.hidden = !shouldOpen;
+    controls.classList.toggle("is-open", shouldOpen);
+  }
+  if (scrim) scrim.hidden = !shouldOpen;
+  if (toggle) toggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+  if (options.focus === false) return;
+  if (shouldOpen) controls?.focus();
+  else toggle?.focus();
+}
+
+function mergeResultViewerPageState(userPage = {}) {
+  const page = activeResultViewer?.page;
+  if (!page) return null;
+  const preserved = {
+    results: page.results || [],
+    activeSessions: page.activeSessions || [],
+    runtimeTargets: page.runtimeTargets || [],
+    screenSync: page.screenSync || {}
+  };
+  const updated = normalizeUserPage({ ...page, ...userPage, results: preserved.results });
+  Object.assign(page, updated, preserved);
+  ownedPages = ownedPages.map((item) => item.id === page.id ? page : item);
+  return page;
+}
+
+async function refreshResultViewerSessionState(options = {}) {
+  const context = resultViewerContext();
+  if (!context) throw new Error("Result viewer is not ready");
+  try {
+    const response = await requestApi(`/api/user-pages/${encodeURIComponent(context.page.id)}/sessions`);
+    if (!activeResultViewer || activeResultViewer.page.id !== context.page.id) return;
+    context.page.activeSessions = response.sessions || [];
+    context.page.runtimeTargets = response.targets || [];
+    context.page.screenSync = response.screenSync || {};
+    activeResultViewer.sessionStateError = "";
+    ownedPages = ownedPages.map((item) => item.id === context.page.id ? context.page : item);
+    renderResultViewer({ preserveScroll: true });
+    if (options.announce !== false) statusText.textContent = "LIVE SESSION STATUS REFRESHED";
+  } catch (error) {
+    if (activeResultViewer) {
+      activeResultViewer.sessionStateError = error.message || "Live status unavailable";
+      renderResultViewer({ preserveScroll: true });
+    }
+    throw error;
+  }
+}
+
+async function sendResultViewerRedirect(button, forceReload = false) {
+  const context = resultViewerContext();
+  if (!context?.activeSession || !context.sessionId) throw new Error("This session is no longer active");
+  if (button.dataset.sessionId !== context.sessionId) throw new Error("Session selection changed");
+  const targetScreenId = String(button.dataset.targetScreenId || "").trim();
+  const targetFile = normalizedRuntimeScreenFile(button.dataset.targetFile);
+  if (!targetFile) throw new Error("Mapped package page required");
+  const response = await requestApi(`/api/user-pages/${encodeURIComponent(context.page.id)}/sessions/${encodeURIComponent(context.sessionId)}/redirect`, {
+    method: "POST",
+    body: JSON.stringify({ targetScreenId, targetFile, forceReload })
+  });
+  mergeResultViewerPageState(response.userPage);
+  renderResultViewer({ preserveScroll: true });
+  statusText.textContent = forceReload ? "LIVE USER RELOAD QUEUED" : "LIVE USER REDIRECT QUEUED";
+}
+
+async function clearResultViewerCommand(button) {
+  const context = resultViewerContext();
+  if (!context?.sessionId || button.dataset.sessionId !== context.sessionId) throw new Error("Session selection changed");
+  const response = await requestApi(`/api/user-pages/${encodeURIComponent(context.page.id)}/sessions/${encodeURIComponent(context.sessionId)}/command`, {
+    method: "DELETE"
+  });
+  mergeResultViewerPageState(response.userPage);
+  renderResultViewer({ preserveScroll: true });
+  statusText.textContent = "LIVE USER COMMAND CLEARED";
+}
+
+async function applyResultViewerWorkflow(action) {
+  const context = resultViewerContext();
+  if (!context) throw new Error("Result viewer is not ready");
+  const nextStatus = ({ review: "reviewed", flag: "flagged", resolve: "resolved" })[action];
+  if (!nextStatus) throw new Error("Unsupported result action");
+  await requestApi(`/api/user-pages/${encodeURIComponent(context.page.id)}/results/bulk`, {
+    method: "POST",
+    body: JSON.stringify({ action, resultIds: [context.result.id] })
+  });
+  const reviewedAt = new Date().toISOString();
+  activeResultViewer.results = activeResultViewer.results.map((result) => (
+    result.id === context.result.id ? { ...result, status: nextStatus, reviewedAt } : result
+  ));
+  context.page.results = (context.page.results || []).map((result) => (
+    result.id === context.result.id ? { ...result, status: nextStatus, reviewedAt } : result
+  ));
+  renderResultViewer({ preserveScroll: true });
+  statusText.textContent = `RESULT ${resultWorkflowLabel(nextStatus).toUpperCase()}`;
+}
+
+async function applyResultViewerIpAction(action) {
+  const context = resultViewerContext();
+  if (!context?.result.ip) throw new Error("This result has no IP address");
+  if (action === "ban" && !window.confirm(`Ban ${context.result.ip} from this page?`)) return false;
+  const endpoint = action === "whitelist" ? "whitelist-ip" : "ban-ip";
+  const response = await requestApi(`/api/user-pages/${encodeURIComponent(context.page.id)}/${endpoint}`, {
+    method: "POST",
+    body: JSON.stringify({ ip: context.result.ip })
+  });
+  applyPageSecurityConfig(context.page, response.securityConfig || context.page.securityConfig);
+  renderResultViewer({ preserveScroll: true });
+  statusText.textContent = action === "whitelist" ? `${context.result.ip} WHITELISTED` : `${context.result.ip} BANNED`;
+  return true;
+}
+
+async function deleteResultViewerResult() {
+  const context = resultViewerContext();
+  if (!context) throw new Error("Result viewer is not ready");
+  if (!window.confirm(`Delete the ${context.result.screen || "selected"} result? This cannot be undone.`)) return false;
+  await requestApi(`/api/user-pages/${encodeURIComponent(context.page.id)}/results/${encodeURIComponent(context.result.id)}`, { method: "DELETE" });
+  const selectedIndex = activeResultViewer.results.findIndex((result) => result.id === context.result.id);
+  activeResultViewer.results = activeResultViewer.results.filter((result) => result.id !== context.result.id);
+  context.page.results = (context.page.results || []).filter((result) => result.id !== context.result.id);
+  const nextResult = activeResultViewer.results[Math.min(Math.max(selectedIndex, 0), activeResultViewer.results.length - 1)];
+  if (!nextResult) {
+    closeResultViewer({ restoreFocus: false });
+    if (isResultsRoute(pageRouteKey(context.page))) await renderResultsCenter(pageRouteKey(context.page));
+  } else {
+    activeResultViewer.selectedId = nextResult.id;
+    renderResultViewer();
+  }
+  statusText.textContent = "RESULT DELETED";
+  return true;
 }
 
 async function openResultViewer(page, resultId, trigger = null) {
@@ -1155,10 +1428,23 @@ async function openResultViewer(page, resultId, trigger = null) {
   `;
   document.body.appendChild(viewer);
   document.body.classList.add("result-viewer-open");
-  activeResultViewer = { viewer, page, results: [], selectedId: resultId, returnFocus: trigger || document.activeElement };
+  activeResultViewer = {
+    viewer,
+    page,
+    results: [],
+    selectedId: resultId,
+    returnFocus: trigger || document.activeElement,
+    controlsOpen: false,
+    sessionStateError: ""
+  };
 
   try {
-    const response = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/results/${encodeURIComponent(resultId)}`);
+    const [response, sessionSnapshot] = await Promise.all([
+      requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/results/${encodeURIComponent(resultId)}`),
+      requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/sessions`)
+        .then((data) => ({ data, error: null }))
+        .catch((error) => ({ data: null, error }))
+    ]);
     if (!activeResultViewer || activeResultViewer.viewer !== viewer) return;
     const selected = normalizePageResult(response.result);
     const results = (response.sessionResults || [response.result])
@@ -1169,6 +1455,15 @@ async function openResultViewer(page, resultId, trigger = null) {
     else results[selectedIndex] = selected;
     activeResultViewer.results = results;
     activeResultViewer.selectedId = selected.id;
+    if (sessionSnapshot.data) {
+      page.activeSessions = sessionSnapshot.data.sessions || [];
+      page.runtimeTargets = sessionSnapshot.data.targets || [];
+      page.screenSync = sessionSnapshot.data.screenSync || {};
+    } else {
+      activeResultViewer.sessionStateError = sessionSnapshot.error?.message || "Live status unavailable";
+    }
+    const selectedSessionIsActive = (page.activeSessions || []).some((session) => session.sessionId === selected.sessionId);
+    activeResultViewer.controlsOpen = selectedSessionIsActive && !window.matchMedia("(max-width: 600px)").matches;
     renderResultViewer();
     viewer.querySelector(".result-viewer-panel")?.focus();
     statusText.textContent = `${page.name.toUpperCase()} RESULT VIEWER OPEN`;
@@ -8453,7 +8748,7 @@ preview.addEventListener("dragend", () => {
   refreshImportedScreenOrder();
 });
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const viewer = event.target.closest?.("[data-result-viewer]");
   if (!viewer) return;
   const closeButton = event.target.closest?.("[data-close-result-viewer]");
@@ -8461,10 +8756,81 @@ document.addEventListener("click", (event) => {
     closeResultViewer();
     return;
   }
+  const controlsToggle = event.target.closest?.("[data-toggle-result-controls]");
+  if (controlsToggle) {
+    setResultViewerControlsOpen(!activeResultViewer?.controlsOpen);
+    return;
+  }
+  const closeControls = event.target.closest?.("[data-close-result-controls]");
+  if (closeControls) {
+    setResultViewerControlsOpen(false);
+    return;
+  }
   const stepButton = event.target.closest?.("[data-result-viewer-step]");
-  if (stepButton) selectResultViewerResult(stepButton.dataset.resultViewerStep);
+  if (stepButton) {
+    selectResultViewerResult(stepButton.dataset.resultViewerStep);
+    return;
+  }
+  const refreshSessionButton = event.target.closest?.("[data-refresh-result-session]");
+  if (refreshSessionButton) {
+    await withButtonBusy(refreshSessionButton, "Refreshing", () => refreshResultViewerSessionState()).catch((error) => {
+      statusText.textContent = `SESSION REFRESH FAILED: ${error.message}`.toUpperCase();
+    });
+    return;
+  }
+  const redirectButton = event.target.closest?.("[data-result-viewer-redirect]");
+  if (redirectButton) {
+    await withButtonBusy(redirectButton, "Queuing", () => runResultsMutation(() => sendResultViewerRedirect(redirectButton))).catch((error) => {
+      statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
+    });
+    return;
+  }
+  const reloadButton = event.target.closest?.("[data-result-viewer-reload]");
+  if (reloadButton) {
+    await withButtonBusy(reloadButton, "Queuing", () => runResultsMutation(() => sendResultViewerRedirect(reloadButton, true))).catch((error) => {
+      statusText.textContent = `RELOAD FAILED: ${error.message}`.toUpperCase();
+    });
+    return;
+  }
+  const clearCommandButton = event.target.closest?.("[data-result-viewer-clear-command]");
+  if (clearCommandButton) {
+    await withButtonBusy(clearCommandButton, "Clearing", () => runResultsMutation(() => clearResultViewerCommand(clearCommandButton))).catch((error) => {
+      statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
+    });
+    return;
+  }
+  const workflowButton = event.target.closest?.("[data-result-viewer-workflow]");
+  if (workflowButton) {
+    await withButtonBusy(workflowButton, "Saving", () => runResultsMutation(() => applyResultViewerWorkflow(workflowButton.dataset.resultViewerWorkflow))).catch((error) => {
+      statusText.textContent = `RESULT UPDATE FAILED: ${error.message}`.toUpperCase();
+    });
+    return;
+  }
+  const ipActionButton = event.target.closest?.("[data-result-viewer-ip-action]");
+  if (ipActionButton) {
+    await withButtonBusy(ipActionButton, "Saving", () => runResultsMutation(() => applyResultViewerIpAction(ipActionButton.dataset.resultViewerIpAction))).catch((error) => {
+      statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
+    });
+    return;
+  }
+  const exportButton = event.target.closest?.("[data-result-viewer-export]");
+  if (exportButton) {
+    const context = resultViewerContext();
+    if (!context) return;
+    const exported = exportSelectedResultMetadata({ ...context.page, results: [context.result] }, [context.result.id]);
+    statusText.textContent = `${exported} SAFE RESULT METADATA ROW EXPORTED`;
+    return;
+  }
+  const deleteButton = event.target.closest?.("[data-result-viewer-delete]");
+  if (deleteButton) {
+    await withButtonBusy(deleteButton, "Deleting", () => runResultsMutation(() => deleteResultViewerResult())).catch((error) => {
+      statusText.textContent = `DELETE FAILED: ${error.message}`.toUpperCase();
+    });
+  }
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && activeResultViewer) closeResultViewer();
+  if (event.key !== "Escape" || !activeResultViewer) return;
+  if (activeResultViewer.controlsOpen) setResultViewerControlsOpen(false);
+  else closeResultViewer();
 });
