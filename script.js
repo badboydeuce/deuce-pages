@@ -4674,13 +4674,44 @@ function pageRiskSignal(page) {
   };
 }
 
-function ownedPageCard(page, index) {
+function myPagePrimaryAction(page, renewal, risk, readiness) {
+  const routeKey = pageRouteKey(page);
+  if (renewal.paymentFailed) return { type: "renew", target: routeKey, label: "Fund and renew", tone: "danger" };
+  if (renewal.expired) return { type: "renew", target: routeKey, label: "Restore page", tone: "danger" };
+  if (renewal.dueSoon) return { type: "renew", target: routeKey, label: "Renew now", tone: "warning" };
+  if (risk.status === "red") {
+    return {
+      type: "route",
+      target: risk.fix || `#security-${routeKey}:security`,
+      label: risk.action || "Fix issue",
+      tone: "danger"
+    };
+  }
+  if (risk.status === "yellow" || readiness.percent < 100 || !page.hostingConfig?.verified) {
+    return {
+      type: "route",
+      target: risk.fix || `#go-live-${routeKey}`,
+      label: "Continue setup",
+      tone: "warning"
+    };
+  }
+  return { type: "results", target: routeKey, label: "View results", tone: "success" };
+}
+
+function myPagePrimaryActionAttribute(action) {
+  if (action.type === "renew") return `data-renew-page="${escapeHtml(action.target)}"`;
+  if (action.type === "results") return `data-results="${escapeHtml(action.target)}"`;
+  return `data-route="${escapeHtml(action.target)}"`;
+}
+
+function ownedPageCard(page) {
   const routeKey = pageRouteKey(page);
   const readiness = pageLaunchReadiness(page);
   const risk = pageRiskSignal(page);
   const hosting = page.hostingConfig || {};
   const liveStatus = hosting.liveStatus || (hosting.verified ? "Live" : hosting.serverIp ? "Ready to verify" : "Setup needed");
-  const domain = hosting.domain || page.domain || "No domain connected";
+  const liveHost = normalizeAllowedHost(hosting.domain || page.domain || "");
+  const liveUrl = liveHost ? `https://${liveHost}/` : "";
   const billing = page.subscription?.billingPeriod
     ? `${billingLabel(page.subscription.billingPeriod)} / ${formatMoney(page.subscription.renewalPrice || 0)}`
     : "Billing not set";
@@ -4690,92 +4721,104 @@ function ownedPageCard(page, index) {
   const resultCount = page.results?.length || 0;
   const generatedLabel = page.generatedFile?.lastGeneratedAt ? "Generated" : page.generatedFile?.version || "Not generated";
   const renewButtonLabel = renewal.paymentFailed ? "Fund and renew" : renewal.expired ? "Restore page" : "Renew now";
+  const healthLabel = risk.status === "red" ? "Needs attention" : risk.status === "yellow" ? "Setup needed" : "Healthy";
+  const primaryAction = myPagePrimaryAction(page, renewal, risk, readiness);
   const goLiveDisabled = disabledPageCapabilityAttributes(page, "goLive");
   const configDisabled = disabledPageCapabilityAttributes(page, "editConfig");
   const securityDisabled = disabledPageCapabilityAttributes(page, "editSecurity");
 
   return `
     <article class="owned-page-card my-page-card">
-      <header class="my-page-head">
-        <div class="owned-main">
+      <header class="my-page-overview">
+        <div class="my-page-identity">
           <small>${escapeHtml(page.status || "active")}</small>
           <h3>${escapeHtml(page.name)}</h3>
-          <p>${escapeHtml(domain)}</p>
-          <span class="subscription-chip ${renewal.className}">${escapeHtml(renewal.label)}</span>
-          <span class="risk-chip is-${risk.status}">${escapeHtml(risk.label)} / ${escapeHtml(risk.layer)}</span>
+          <div class="my-page-chips">
+            <span class="subscription-chip ${renewal.className}">${escapeHtml(renewal.label)}</span>
+            <span class="risk-chip is-${risk.status}">${escapeHtml(risk.layer)}</span>
+          </div>
         </div>
-        <div class="my-page-score" aria-label="${readiness.percent}% launch ready">
-          <strong>${readiness.percent}%</strong>
-          <span>${readiness.passed}/${readiness.total} ready</span>
+        <div class="my-page-health is-${risk.status}" aria-label="Page health: ${escapeHtml(healthLabel)}">
+          <small>Page health</small>
+          <strong>${escapeHtml(healthLabel)}</strong>
+          <span>${readiness.percent}% ready</span>
         </div>
+        <div class="my-page-live-url">
+          <small>Live URL</small>
+          ${liveUrl
+            ? `<a href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(liveHost)}</a>`
+            : "<strong>Not connected</strong>"}
+          <span>${escapeHtml(hosting.verified ? "Connected" : liveStatus)}</span>
+        </div>
+        <button type="button" class="my-page-primary-action is-${primaryAction.tone}" ${myPagePrimaryActionAttribute(primaryAction)}>${escapeHtml(primaryAction.label)}</button>
       </header>
 
-      <div class="my-page-status-grid">
-        <div class="risk-status is-${risk.status}"><span>Risk</span><strong>${escapeHtml(risk.code)}</strong></div>
-        <div><span>Launch</span><strong>${escapeHtml(liveStatus)}</strong></div>
-        <div><span>Plan</span><strong>${escapeHtml(billing)}</strong></div>
-        <div><span>Renewal</span><strong>${escapeHtml(renewal.dueLabel)}</strong></div>
-        <div><span>Results</span><strong>${resultCount}</strong></div>
-        <div><span>Traffic</span><strong>${trafficCount}</strong></div>
-      </div>
+      <div class="my-page-folds" aria-label="${escapeHtml(page.name)} management sections">
+        <details class="my-page-fold" data-page-section="hosting">
+          <summary>
+            <span><small>Hosting</small><strong>${escapeHtml(liveStatus)}</strong></span>
+            <em>${escapeHtml(generatedLabel)}</em>
+          </summary>
+          <div class="my-page-fold-body">
+            <div class="my-page-facts">
+              <div><span>Domain</span><strong>${escapeHtml(liveHost || "Not connected")}</strong></div>
+              <div><span>Plan</span><strong>${escapeHtml(billing)}</strong></div>
+              <div><span>Renewal</span><strong>${escapeHtml(renewal.dueLabel)}</strong></div>
+            </div>
+            <div class="my-page-secondary-actions">
+              <button type="button" data-go-live="${escapeHtml(routeKey)}"${goLiveDisabled}>Go Live</button>
+              <button type="button" data-config-page="${escapeHtml(routeKey)}"${configDisabled}>Configuration</button>
+              ${renewal.canRenew ? `<button type="button" data-renew-page="${escapeHtml(routeKey)}">${escapeHtml(renewButtonLabel)}</button>` : ""}
+            </div>
+          </div>
+        </details>
 
-      <details class="my-page-tools" ${index === 0 ? "open" : ""}>
-        <summary>
-          <span>Manage page</span>
-          <strong>${escapeHtml(renewal.dueLabel)} / ${escapeHtml(securityLabel)} / ${escapeHtml(generatedLabel)}</strong>
-        </summary>
-        <div class="my-page-tool-grid" aria-label="${escapeHtml(page.name)} management tools">
-          <section>
-            <h4>Page controls</h4>
-            <button type="button" data-go-live="${escapeHtml(routeKey)}"${goLiveDisabled}>&#128640; Go Live</button>
-            <button type="button" data-config-page="${escapeHtml(routeKey)}"${configDisabled}>&#9881; Config</button>
-            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="security"${securityDisabled}>&#128737; Security</button>
-            <button type="button" data-results="${escapeHtml(routeKey)}">&#128193; Results</button>
-            <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="traffic">&#128200; Traffic</button>
-            <button type="button" data-page-log="${escapeHtml(routeKey)}">&#128220; Log</button>
-            <button type="button" data-renew-page="${escapeHtml(routeKey)}" ${renewal.canRenew ? "" : "disabled"}>&#8635; ${escapeHtml(renewButtonLabel)}</button>
-          </section>
-        </div>
-      </details>
+        <details class="my-page-fold" data-page-section="advanced-security">
+          <summary>
+            <span><small>Advanced security</small><strong>${escapeHtml(securityLabel)}</strong></span>
+            <em>${escapeHtml(risk.code)}</em>
+          </summary>
+          <div class="my-page-fold-body">
+            <p>${escapeHtml(risk.detail)}</p>
+            <div class="my-page-secondary-actions">
+              <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="security"${securityDisabled}>Security settings</button>
+            </div>
+          </div>
+        </details>
+
+        <details class="my-page-fold" data-page-section="results">
+          <summary>
+            <span><small>Result controls</small><strong>${resultCount} saved result${resultCount === 1 ? "" : "s"}</strong></span>
+            <em>${trafficCount} visits</em>
+          </summary>
+          <div class="my-page-fold-body">
+            <div class="my-page-secondary-actions">
+              <button type="button" data-results="${escapeHtml(routeKey)}">Open results</button>
+              <button type="button" data-security="${escapeHtml(routeKey)}" data-security-tab="traffic">Traffic</button>
+              <button type="button" data-page-log="${escapeHtml(routeKey)}">Page log</button>
+            </div>
+          </div>
+        </details>
+      </div>
     </article>
   `;
 }
 
 function renderMyPages() {
   activeFlowSlug = null;
-  const liveCount = ownedPages.filter((page) => page.hostingConfig?.verified || page.hostingConfig?.liveStatus === "Live").length;
-  const resultTotal = ownedPages.reduce((sum, page) => sum + (page.results?.length || 0), 0);
-  const captchaCount = ownedPages.filter((page) => page.securityConfig?.captcha).length;
-  const subscriptionStates = ownedPages.map((page) => ({ page, state: subscriptionState(page) }));
-  const expiredCount = subscriptionStates.filter((item) => item.state.expired).length;
-  const dueSoonCount = subscriptionStates.filter((item) => item.state.dueSoon && !item.state.expired).length;
-
   preview.innerHTML = `
-    <section class="app-view">
-      <div class="view-heading">
-        <small>my pages</small>
-        <h2>Page control room</h2>
-      </div>
-      ${viewNav([
-        routeButton("#dashboard", "&#8592; Dashboard"),
-        routeButton("#pages", "Browse pages")
-      ])}
-
-      <div class="summary-grid my-pages-kpis">
-        <article><small>Owned pages</small><b>${String(ownedPages.length).padStart(2, "0")}</b><span>Active subscriptions</span></article>
-        <article><small>Live pages</small><b>${String(liveCount).padStart(2, "0")}</b><span>Verified hosting</span></article>
-        <article><small>Results</small><b>${String(resultTotal).padStart(2, "0")}</b><span>Saved submissions</span></article>
-        <article><small>Renewals</small><b>${String(expiredCount).padStart(2, "0")}</b><span>${dueSoonCount} due soon</span></article>
-      </div>
-
-      <article class="my-pages-brief">
-        <div class="feature-row">
-          <span>${captchaCount} captcha enabled</span>
-          <span>${ownedPages.filter((page) => page.subscription?.autoRenew).length} auto-renewing</span>
-          <span>${expiredCount} locked</span>
-          <span>${ownedPages.filter((page) => page.generatedFile?.lastGeneratedAt).length} generated files</span>
+    <section class="app-view my-pages-view">
+      <header class="my-pages-header">
+        <div>
+          <small>my pages</small>
+          <h2>Subscribed pages</h2>
+          <p>${ownedPages.length} page${ownedPages.length === 1 ? "" : "s"}</p>
         </div>
-      </article>
+        ${viewNav([
+          routeButton("#dashboard", "Dashboard"),
+          routeButton("#pages", "Browse pages")
+        ])}
+      </header>
 
       <div class="owned-list">
         ${ownedPages.length ? ownedPages.map(ownedPageCard).join("") : emptyState("No subscribed pages yet", "Subscribe to a published page package, then your live page controls will appear here.", "#pages")}
