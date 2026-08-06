@@ -1344,17 +1344,18 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
   const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
   const page = getPageBySlug(pageSlug);
   const controlsDisabled = disabledPageCapabilityAttributes(page, "controlSessions");
-  const stageLabels = { form: "Form", verification: "Verification", success: "Success", other: "Other" };
-  const groupedTargets = ["form", "verification", "success", "other"]
-    .map((stage) => ({ stage, targets: pageTargets.filter((target) => (target.stage || "other") === stage) }))
-    .filter((group) => group.targets.length);
   const targetButton = (target) => {
     const isCurrent = currentFileKey
       ? normalizedRuntimeScreenFile(target.file).toLowerCase() === currentFileKey
       : Boolean(currentKey && normalizeFlowLabel(target.label) === currentKey);
+    const isError = target.state === "error";
+    const isSuccess = target.stage === "success";
+    const className = [isCurrent ? "is-current" : "", isError ? "is-error" : "", isSuccess ? "is-success" : ""]
+      .filter(Boolean)
+      .join(" ");
     return `
-      <button type="button" class="${isCurrent ? "is-current" : ""}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-id="${escapeHtml(target.id || "")}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
-        ${escapeHtml(target.label)}
+      <button type="button" class="${className}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-id="${escapeHtml(target.id || "")}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${isCurrent ? ' aria-current="page"' : ""}${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
+        <span>${escapeHtml(target.label)}</span>
       </button>
     `;
   };
@@ -1362,12 +1363,7 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
     <div class="session-command result-live-command">
       <strong class="flow-command-title">One-click flow</strong>
       <div class="session-route-buttons" aria-label="Redirect active user">
-        ${groupedTargets.length ? groupedTargets.map((group) => `
-          <div class="session-route-group" data-session-route-stage="${group.stage}">
-            <small>${stageLabels[group.stage]}</small>
-            <div>${group.targets.map(targetButton).join("")}</div>
-          </div>
-        `).join("") : "<span>No mapped pages found</span>"}
+        ${pageTargets.length ? pageTargets.map(targetButton).join("") : '<span class="session-route-empty">No mapped pages found</span>'}
       </div>
       <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${controlsDisabled}>Clear</button>
       <small class="${command?.status === "delivered" ? "is-delivered" : command?.targetUrl ? "is-queued" : ""}">${escapeHtml(commandStatusLabel(command))}</small>

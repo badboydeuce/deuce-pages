@@ -2211,39 +2211,59 @@ code,
 
 .session-route-buttons {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-  min-width: 0;
-}
-
-.session-route-group {
-  display: grid;
-  gap: 5px;
-}
-
-.session-route-group > small {
-  color: var(--muted);
-  font: 900 0.58rem var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.session-route-group > div {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+  min-width: 0;
 }
 
 .session-route-buttons button {
+  display: grid;
+  place-items: center;
   min-width: 0;
-  height: auto;
-  min-height: 38px;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  height: 48px;
+  min-height: 48px;
+  padding: 7px 10px;
+  border-color: rgb(var(--accent-rgb) / 0.16);
+  background: rgba(255, 255, 255, 0.028);
   line-height: 1.15;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
 }
 
-.session-route-buttons span {
+.session-route-buttons button > span {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  color: inherit;
+  overflow-wrap: break-word;
+  text-align: center;
+  text-transform: none;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.session-route-buttons button:not(:disabled):hover {
+  border-color: rgb(var(--accent-rgb) / 0.5);
+  background: rgb(var(--accent-rgb) / 0.08);
+  transform: translateY(-1px);
+}
+
+.session-route-buttons button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.session-route-buttons button.is-error:not(.is-current) {
+  border-color: rgb(var(--danger-rgb) / 0.38);
+  background: rgb(var(--danger-rgb) / 0.06);
+}
+
+.session-route-buttons button.is-success:not(.is-current) {
+  border-color: rgb(var(--success-rgb) / 0.34);
+  background: rgb(var(--success-rgb) / 0.055);
+}
+
+.session-route-empty {
+  grid-column: 1 / -1;
   color: var(--muted);
   font: 800 0.7rem var(--mono);
   text-transform: uppercase;
@@ -2255,21 +2275,25 @@ code,
   background: var(--accent);
   cursor: default;
   opacity: 1;
+  filter: none;
 }
 
-.session-route-buttons button.is-current::after {
-  content: " now";
-  font: 900 0.58rem var(--mono);
-  text-transform: uppercase;
-}
-.session-command button:disabled,
-.session-route-buttons button.is-current:disabled {
+.session-command button:disabled:not(.is-current) {
   color: var(--soft);
   border-color: rgba(128, 128, 128, 0.18);
   background: rgba(128, 128, 128, 0.1);
   opacity: 0.38;
   filter: grayscale(1) saturate(0);
   cursor: not-allowed;
+}
+
+.session-route-buttons button.is-current:disabled {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
+  opacity: 1;
+  filter: none;
+  cursor: default;
 }
 
 .empty-session {
@@ -2304,7 +2328,7 @@ code,
 
 .compact-session-summary {
   display: grid;
-  grid-template-columns: 14px minmax(140px, 0.8fr) minmax(180px, 0.75fr) minmax(280px, 1.35fr);
+  grid-template-columns: 14px minmax(160px, 0.7fr) minmax(0, 1.3fr);
   gap: 10px;
   align-items: center;
   padding: 10px;
@@ -2392,6 +2416,8 @@ code,
 }
 
 .compact-session-summary .result-live-command {
+  grid-column: 1 / -1;
+  width: 100%;
   padding: 8px;
   gap: 6px;
   align-items: center;
@@ -2402,7 +2428,6 @@ code,
 }
 
 .compact-session-summary .session-route-buttons {
-  grid-template-columns: 1fr;
   gap: 6px;
 }
 
@@ -6532,6 +6557,10 @@ code {
     grid-column: 1 / -1;
     justify-content: start;
   }
+
+  .session-route-buttons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -6690,10 +6719,6 @@ code {
 
   .session-command {
     grid-template-columns: 1fr;
-  }
-
-  .session-route-buttons button {
-    flex: 1 1 110px;
   }
 
   .traffic-dashboard {
@@ -6856,6 +6881,10 @@ code {
 
   .view-heading p {
     line-height: 1.55;
+  }
+
+  .session-route-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .dashboard-pulse-card,
@@ -8114,6 +8143,10 @@ body.result-viewer-open {
 }
 
 @media (max-width: 360px) {
+  .session-route-buttons {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-minimal-header {
     align-items: stretch;
     flex-direction: column;
