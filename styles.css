@@ -1983,29 +1983,34 @@ code,
   background: rgba(255, 255, 255, 0.78);
 }
 
-.compact-session-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  justify-content: flex-end;
+.compact-session-filter {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 190px);
+  gap: 8px;
+  align-items: center;
+  justify-content: end;
 }
 
-.compact-session-filters button {
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius);
+.compact-session-filter span {
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.035);
-  cursor: pointer;
-  font: 900 0.68rem var(--mono);
+  font: 800 0.64rem var(--mono);
   text-transform: uppercase;
 }
 
-.compact-session-filters button.is-active {
-  color: var(--bg-deep);
-  border-color: var(--accent);
-  background: var(--accent);
+.compact-session-filter select {
+  min-height: 40px;
+  padding: 0 34px 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--soft);
+  background: var(--panel);
+  cursor: pointer;
+  font: 800 0.72rem var(--mono);
+}
+
+:root[data-theme="light"] .compact-session-filter select {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.78);
 }
 
 .bulk-results-toolbar {
@@ -6225,8 +6230,8 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .compact-session-filters {
-    justify-content: flex-start;
+  .compact-session-filter {
+    justify-content: start;
   }
 
   .session-dot {

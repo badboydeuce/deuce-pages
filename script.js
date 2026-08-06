@@ -5701,7 +5701,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
   }
   const routeKey = pageRouteKey(page);
   const previousSearch = options.autoRefresh ? preview.querySelector("[data-session-search-input]")?.value || "" : "";
-  const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "live" : "live";
+  const previousFilter = options.autoRefresh ? preview.querySelector("[data-session-filter-select]")?.value || "all" : "all";
   const previouslySelectedResultIds = options.autoRefresh
     ? [...preview.querySelectorAll("[data-result-select]:checked")].map((input) => input.dataset.resultSelect).filter(Boolean)
     : [];
@@ -5777,20 +5777,16 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
         </div>
         <div class="compact-session-toolbar">
           <input type="search" data-session-search-input placeholder="Search session, IP, page, command">
-          <div class="compact-session-filters" aria-label="Filter result sessions">
-            ${[
-              ["all", "all"],
-              ["live", "live"],
-              ["queued", "queued"],
-              ["delivered", "delivered"],
-              ["blocked", "blocked"],
-              ["offline", "offline"],
-              ["has-results", "has results"],
-              ["idle", "idle"]
-            ].map(([filter, label]) => `
-              <button type="button" class="${filter === previousFilter ? "is-active" : ""}" data-session-filter-button="${filter}">${label}</button>
-            `).join("")}
-          </div>
+          <label class="compact-session-filter">
+            <span>View</span>
+            <select data-session-filter-select aria-label="Filter result sessions">
+              ${[
+                ["all", "All sessions"],
+                ["live", "Active now"],
+                ["has-results", "With results"]
+              ].map(([filter, label]) => `<option value="${filter}" ${filter === previousFilter ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
         </div>
         ${bulkResultsToolbarMarkup(routeKey)}
         <div class="compact-session-list" data-compact-session-list>
@@ -5845,7 +5841,7 @@ async function renderResultsCenter(pageSlug = "page-a", options = {}) {
 function applyCompactSessionFilters() {
   const list = preview.querySelector("[data-compact-session-list]");
   if (!list) return;
-  const activeFilter = preview.querySelector("[data-session-filter-button].is-active")?.dataset.sessionFilterButton || "all";
+  const activeFilter = preview.querySelector("[data-session-filter-select]")?.value || "all";
   const search = (preview.querySelector("[data-session-search-input]")?.value || "").trim().toLowerCase();
   const rows = [...preview.querySelectorAll("[data-compact-session]")];
   let visibleCount = 0;
@@ -7324,6 +7320,14 @@ preview.addEventListener("change", (event) => {
     return;
   }
 
+  const sessionFilterSelect = event.target.closest("[data-session-filter-select]");
+  if (sessionFilterSelect) {
+    applyCompactSessionFilters();
+    updateResultsAutoRefreshStatus("interaction");
+    statusText.textContent = `SESSION VIEW: ${sessionFilterSelect.options[sessionFilterSelect.selectedIndex]?.text || "ALL SESSIONS"}`.toUpperCase();
+    return;
+  }
+
   const packageFilter = event.target.closest("[data-admin-package-filter]");
   if (packageFilter) {
     adminPackageLibraryState[packageFilter.dataset.adminPackageFilter] = packageFilter.value;
@@ -7933,16 +7937,6 @@ preview.addEventListener("click", async (event) => {
     }).catch((error) => {
       statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
     });
-    return;
-  }
-
-  const sessionFilterButton = event.target.closest("[data-session-filter-button]");
-  if (sessionFilterButton) {
-    event.preventDefault();
-    preview.querySelectorAll("[data-session-filter-button]").forEach((button) => button.classList.remove("is-active"));
-    sessionFilterButton.classList.add("is-active");
-    applyCompactSessionFilters();
-    statusText.textContent = `SESSION FILTER: ${sessionFilterButton.dataset.sessionFilterButton}`.toUpperCase();
     return;
   }
 
