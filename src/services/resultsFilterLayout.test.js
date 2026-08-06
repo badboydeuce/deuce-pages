@@ -6,16 +6,18 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("result sessions use one concise three-view filter", async () => {
+test("result sessions use one concise three-button filter", async () => {
   const portalScript = await fs.readFile(path.join(projectRoot, "script.js"), "utf8");
   const resultsStart = portalScript.indexOf("async function renderResultsCenter(");
   const resultsEnd = portalScript.indexOf("function renderWallet(", resultsStart);
   const resultsCenter = portalScript.slice(resultsStart, resultsEnd);
 
-  assert.match(resultsCenter, /data-session-filter-select/);
-  assert.match(resultsCenter, /\["all", "All sessions"\]/);
-  assert.match(resultsCenter, /\["live", "Active now"\]/);
+  assert.match(resultsCenter, /data-session-filter-button/);
+  assert.match(resultsCenter, /const previousFilter = options\.autoRefresh[\s\S]*\|\| "live" : "live"/);
+  assert.match(resultsCenter, /\["all", "All"\]/);
+  assert.match(resultsCenter, /\["live", "Active"\]/);
   assert.match(resultsCenter, /\["has-results", "With results"\]/);
-  assert.doesNotMatch(resultsCenter, /data-session-filter-button/);
+  assert.doesNotMatch(resultsCenter, /data-session-filter-select/);
+  assert.match(resultsCenter, /aria-pressed=/);
   assert.doesNotMatch(resultsCenter, /\["(?:queued|delivered|blocked|offline|idle)",/);
 });

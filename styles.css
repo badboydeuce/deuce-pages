@@ -1983,34 +1983,38 @@ code,
   background: rgba(255, 255, 255, 0.78);
 }
 
-.compact-session-filter {
-  display: grid;
-  grid-template-columns: auto minmax(140px, 190px);
-  gap: 8px;
-  align-items: center;
+.compact-session-filters {
+  display: inline-grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 4px;
   justify-content: end;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
 }
 
-.compact-session-filter span {
+.compact-session-filters button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 3px);
   color: var(--muted);
-  font: 800 0.64rem var(--mono);
+  background: transparent;
+  cursor: pointer;
+  font: 850 0.66rem var(--mono);
   text-transform: uppercase;
 }
 
-.compact-session-filter select {
-  min-height: 40px;
-  padding: 0 34px 0 11px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius);
-  color: var(--soft);
-  background: var(--panel);
-  cursor: pointer;
-  font: 800 0.72rem var(--mono);
+.compact-session-filters button.is-active {
+  color: var(--bg-deep);
+  border-color: var(--accent);
+  background: var(--accent);
 }
 
-:root[data-theme="light"] .compact-session-filter select {
+:root[data-theme="light"] .compact-session-filters {
   border-color: rgba(16, 32, 24, 0.12);
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.62);
 }
 
 .bulk-results-toolbar {
@@ -6230,8 +6234,13 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .compact-session-filter {
-    justify-content: start;
+  .compact-session-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .compact-session-filters button {
+    padding-inline: 7px;
   }
 
   .session-dot {
