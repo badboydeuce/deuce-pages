@@ -380,6 +380,13 @@ code,
   font-weight: 800;
 }
 
+.nav-icon-svg {
+  display: block;
+  width: 52%;
+  height: 52%;
+  flex: none;
+}
+
 :root[data-theme="light"] .nav-icon {
   border-color: rgb(var(--accent-rgb) / 0.18);
   background: rgb(var(--accent-rgb) / 0.08);
