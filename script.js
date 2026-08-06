@@ -33,8 +33,6 @@ const notificationBadge = document.querySelector("#notificationBadge");
 const notificationPanel = document.querySelector("#notificationPanel");
 const notificationList = document.querySelector("#notificationList");
 const appShell = document.querySelector(".app-shell");
-const matrix = document.querySelector("#matrix");
-const context = matrix.getContext("2d");
 let activeTemplate = templates[0];
 
 let marketPages = [];
@@ -7364,48 +7362,6 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
   }
 }
 
-function sizeMatrix() {
-  matrix.width = window.innerWidth * window.devicePixelRatio;
-  matrix.height = window.innerHeight * window.devicePixelRatio;
-  context.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
-}
-
-const glyphs = "0123456789ABCDEFx:/[]{}";
-let streams = [];
-
-function resetStreams() {
-  const columns = Math.ceil(window.innerWidth / 22);
-  streams = Array.from({ length: columns }, () => ({
-    y: Math.random() * -120,
-    speed: 0.35 + Math.random() * 0.9,
-    opacity: 0.18 + Math.random() * 0.38
-  }));
-}
-
-function drawMatrix() {
-  context.fillStyle = "rgba(2, 3, 3, 0.18)";
-  context.fillRect(0, 0, window.innerWidth, window.innerHeight);
-  context.font = "12px Consolas, monospace";
-
-  streams.forEach((stream, index) => {
-    const text = glyphs[Math.floor(Math.random() * glyphs.length)];
-    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-    context.fillStyle = `${accent}${Math.round(stream.opacity * 255).toString(16).padStart(2, "0")}`;
-    context.fillText(text, index * 22, stream.y * 18);
-    stream.y = stream.y * 18 > window.innerHeight && Math.random() > 0.965 ? 0 : stream.y + stream.speed;
-  });
-
-  requestAnimationFrame(drawMatrix);
-}
-
-window.addEventListener("resize", () => {
-  sizeMatrix();
-  resetStreams();
-});
-
-sizeMatrix();
-resetStreams();
-drawMatrix();
 renderButtons();
 applyAppearancePreference();
 async function initApp() {
