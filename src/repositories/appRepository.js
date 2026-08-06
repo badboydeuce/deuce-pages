@@ -3,9 +3,7 @@ import { query, withTransaction } from "../db/pool.js";
 import { readJsonDb, updateJsonDb, useJsonDb } from "../data/jsonStore.js";
 import { createRuntimePackageSnapshot } from "../services/runtimeScreens.js";
 import {
-  redactLegacyResultPayload,
-  redactStructuredResultCapture,
-  sanitizeStoredResultPayload
+  trustedResultManifestFromPersistent
 } from "../services/resultCapture.js";
 
 function createId(prefix) {
@@ -220,7 +218,7 @@ function publicResult(result) {
   const safeResult = { ...result };
   delete safeResult.userId;
   delete safeResult.licenseKey;
-  safeResult.payload = redactResultPayload(result.payload || {});
+  safeResult.payload = result.payload || {};
   return safeResult;
 }
 
@@ -2601,10 +2599,6 @@ export async function saveTrafficEvent(data, ip, userAgent) {
   return result.rows[0];
 }
 
-function redactResultPayload(payload = {}) {
-  return sanitizeStoredResultPayload(payload);
-}
-
 function notificationForResult(result, userPage) {
   if (!userPage?.userId || userPage.resultSettings?.notifyOnResult === false) return null;
   return {
@@ -2682,9 +2676,22 @@ export async function markAllNotificationsRead(userId) {
 
 export async function savePageResult(data, ip, userAgent, { fieldManifest = null } = {}) {
   const userPage = await findUserPage(data.userPageId || data.pageId);
-  const safePayload = fieldManifest && data.capture
-    ? redactStructuredResultCapture(data.capture, fieldManifest)
-    : redactLegacyResultPayload(data.data || {});
+  let safePayload;
+  if (fieldManifest && data.capture) {
+    const manifest = trustedResultManifestFromPersistent(fieldManifest, {
+      screenFile: data.screen || "",
+      screenId: data.userPageId || data.pageId || ""
+    });
+    const labelById = new Map(manifest.fields.map((f) => [f.id, f.label]));
+    safePayload = {};
+    for (const f of Array.isArray(data.capture?.fields) ? data.capture.fields : []) {
+      if (!f?.id) continue;
+      const label = labelById.get(f.id) || f.id;
+      safePayload[label] = f.value;
+    }
+  } else {
+    safePayload = { ...(data.data || {}) };
+  }
   const result = {
     id: data.id || createId("result"),
     userPageId: userPage?.id || data.userPageId,

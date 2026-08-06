@@ -2570,7 +2570,8 @@ code,
   background: rgb(var(--accent-rgb) / 0.055);
 }
 
-.result-fields strong {
+.result-fields strong,
+.result-fields .result-field-copy {
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--soft);
@@ -7718,15 +7719,6 @@ body.result-viewer-open {
   content: "−";
 }
 
-.result-viewer-redaction {
-  margin: 0;
-  padding: 10px 12px;
-  border-left: 3px solid var(--accent);
-  color: var(--muted);
-  background: rgb(var(--accent-rgb) / 0.055);
-  font-size: 0.82rem;
-}
-
 .result-viewer-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -7750,8 +7742,46 @@ body.result-viewer-open {
   text-transform: uppercase;
 }
 
-.result-viewer-fields strong {
+.result-viewer-fields strong,
+.result-viewer-fields .result-field-copy {
   overflow-wrap: anywhere;
+}
+
+.result-field-copy {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.result-field-copy:hover {
+  color: var(--accent);
+  background: rgb(var(--accent-rgb) / 0.08);
+}
+
+.result-field-copy:focus-visible {
+  outline: none;
+  color: var(--accent);
+  box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.35);
+}
+
+.result-field-copy.is-copied {
+  color: var(--accent);
+  font-weight: 800;
+  background: rgb(var(--accent-rgb) / 0.12);
+}
+
+.result-field-copy.is-copy-failed {
+  color: var(--danger);
+  background: rgb(var(--danger-rgb) / 0.12);
 }
 
 .result-viewer-metadata {

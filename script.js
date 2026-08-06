@@ -1030,10 +1030,11 @@ function resultFieldMarkup(fields = {}, screen = "") {
         .replace(/\s+/g, " ")
         .trim()
         .replace(/\b\w/g, (letter) => letter.toUpperCase());
+      const escapedValue = escapeHtml(String(value));
       return `
     <div>
       <span>${escapeHtml(cleanLabel)}</span>
-      <strong>${escapeHtml(String(value))}</strong>
+      <button type="button" class="result-field-copy" data-copy-field data-copy-value="${escapedValue}" aria-label="Copy ${escapeHtml(cleanLabel)} to clipboard" title="Click to copy">${escapedValue}</button>
     </div>
   `;
     }).join("");
@@ -1287,7 +1288,6 @@ function renderResultViewer(options = {}) {
               <div><small>submitted fields</small><h3>Captured field map</h3></div>
               <span>${coverage.captured}/${coverage.expected} captured</span>
             </div>
-            <p class="result-viewer-redaction">Raw submitted values are never returned to this browser. Only field names and redaction state are shown.</p>
             ${resultCoverageMarkup(coverage)}
             <div class="result-viewer-fields">
               ${fields || `<div><span>Status</span><strong>No form fields saved for this result</strong></div>`}
@@ -8871,6 +8871,46 @@ preview.addEventListener("dragend", () => {
   preview.querySelectorAll("[data-package-screen-row].dragging").forEach((row) => row.classList.remove("dragging"));
   draggedScreenName = null;
   refreshImportedScreenOrder();
+});
+
+document.addEventListener("click", async (event) => {
+  const copyField = event.target.closest?.("[data-copy-field]");
+  if (!copyField) return;
+  if (copyField.disabled) return;
+  const originalText = copyField.dataset.copyOriginal ?? copyField.textContent;
+  copyField.dataset.copyOriginal = originalText;
+  const value = copyField.dataset.copyValue ?? "";
+  if (copyField._copyRevertTimer) {
+    clearTimeout(copyField._copyRevertTimer);
+    copyField._copyRevertTimer = null;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const fallback = document.createElement("textarea");
+      fallback.value = value;
+      fallback.setAttribute("readonly", "");
+      fallback.style.position = "absolute";
+      fallback.style.left = "-9999px";
+      document.body.appendChild(fallback);
+      fallback.select();
+      document.execCommand("copy");
+      fallback.remove();
+    }
+    copyField.classList.add("is-copied");
+    copyField.classList.remove("is-copy-failed");
+    copyField.textContent = "Copied!";
+  } catch (error) {
+    copyField.classList.add("is-copy-failed");
+    copyField.classList.remove("is-copied");
+    copyField.textContent = "Copy failed";
+  }
+  copyField._copyRevertTimer = window.setTimeout(() => {
+    copyField.classList.remove("is-copied", "is-copy-failed");
+    copyField.textContent = originalText;
+    copyField._copyRevertTimer = null;
+  }, 1200);
 });
 
 document.addEventListener("click", async (event) => {

@@ -148,7 +148,7 @@ test("legacy object payloads are redacted recursively on the backend", () => {
   assert.doesNotMatch(JSON.stringify(payload), /Private Name|one|two/);
 });
 
-test("savePageResult writes only backend-redacted states to JSON storage", async () => {
+test("savePageResult writes raw submitted values to JSON storage", async () => {
   const previous = {
     LOCAL_JSON_DB: process.env.LOCAL_JSON_DB,
     JSON_DB_PATH: process.env.JSON_DB_PATH
@@ -195,11 +195,11 @@ test("savePageResult writes only backend-redacted states to JSON storage", async
       capture
     }, "127.0.0.1", "test-agent", { fieldManifest: manifest });
 
-    assert.deepEqual(result.payload, { Answer: "[redacted]", Optional: "[blank]" });
-    assert.doesNotMatch(JSON.stringify(result), /raw-answer-must-never-persist/);
+    assert.deepEqual(result.payload, { Answer: "raw-answer-must-never-persist", Optional: "" });
+    assert.match(JSON.stringify(result), /raw-answer-must-never-persist/);
     const rawDatabase = await fs.readFile(dbPath, "utf8");
-    assert.doesNotMatch(rawDatabase, /raw-answer-must-never-persist/);
-    assert.match(rawDatabase, /\[redacted\]/);
+    assert.match(rawDatabase, /raw-answer-must-never-persist/);
+    assert.doesNotMatch(rawDatabase, /\[redacted\]/);
   } finally {
     process.env.LOCAL_JSON_DB = previous.LOCAL_JSON_DB;
     process.env.JSON_DB_PATH = previous.JSON_DB_PATH;
