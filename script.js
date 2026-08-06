@@ -260,7 +260,7 @@ async function saveFlowState(page) {
     });
     return result?.userPage || page;
   } catch (error) {
-    statusText.textContent = `SAVE FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `SAVE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     return null;
   }
 }
@@ -540,6 +540,12 @@ function apiBase() {
   return isFile ? "http://localhost:10000" : window.location.origin;
 }
 
+function safeErrorMessage(error, fallback = "") {
+  const sanitizer = window.DeucePublicErrors?.message;
+  if (typeof sanitizer === "function") return sanitizer(error, fallback);
+  return fallback || "Request could not be completed. Please try again.";
+}
+
 async function requestApi(path, options = {}) {
   let response;
   try {
@@ -549,15 +555,19 @@ async function requestApi(path, options = {}) {
       headers: { "Content-Type": "application/json", ...(options.headers || {}) }
     });
   } catch (error) {
-    const apiError = new Error(`API connection failed at ${apiBase()}${path}`);
+    const apiError = new Error("Connection failed. Please try again.");
     apiError.status = 0;
     apiError.cause = error;
     throw apiError;
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const issueDetail = Array.isArray(data.issues) && data.issues.length ? `: ${data.issues.join("; ")}` : "";
-    const error = new Error(`${data.error || `API request failed: ${response.status}`}${issueDetail}`);
+    const safeMainMessage = safeErrorMessage({ message: data.error, status: response.status });
+    const safeIssues = Array.isArray(data.issues)
+      ? data.issues.map((issue) => safeErrorMessage({ message: issue, status: response.status })).filter(Boolean)
+      : [];
+    const issueDetail = safeIssues.length ? `: ${safeIssues.join("; ")}` : "";
+    const error = new Error(`${safeMainMessage}${issueDetail}`);
     error.status = response.status;
     error.data = data;
     throw error;
@@ -574,7 +584,7 @@ async function checkAdminApiConnection() {
       ok: false,
       status: error.status || 0,
       title: "API connection failed",
-      detail: `The app could not reach ${apiBase()}/api/health. Check Render deploy status, API_BASE_URL/CORS_ORIGINS, and that the web service is awake.`
+      detail: "The app could not reach the service. Check the deploy status and confirm that the web service is awake."
     };
   }
 
@@ -596,7 +606,7 @@ async function checkAdminApiConnection() {
       title: error.status === 401 ? "Login required" : "Admin session check failed",
       detail: error.status === 401
         ? "Log in first, then open Admin > Import > GitHub again."
-        : error.message
+        : safeErrorMessage(error)
     };
   }
 }
@@ -1327,7 +1337,7 @@ async function refreshResultViewerSessionState(options = {}) {
     if (options.announce !== false) statusText.textContent = "LIVE SESSION STATUS REFRESHED";
   } catch (error) {
     if (activeResultViewer) {
-      activeResultViewer.sessionStateError = error.message || "Live status unavailable";
+      activeResultViewer.sessionStateError = safeErrorMessage(error, "Live status unavailable");
       renderResultViewer({ preserveScroll: true });
     }
     throw error;
@@ -1460,7 +1470,7 @@ async function openResultViewer(page, resultId, trigger = null) {
       page.runtimeTargets = sessionSnapshot.data.targets || [];
       page.screenSync = sessionSnapshot.data.screenSync || {};
     } else {
-      activeResultViewer.sessionStateError = sessionSnapshot.error?.message || "Live status unavailable";
+      activeResultViewer.sessionStateError = safeErrorMessage(sessionSnapshot.error, "Live status unavailable");
     }
     const selectedSessionIsActive = (page.activeSessions || []).some((session) => session.sessionId === selected.sessionId);
     activeResultViewer.controlsOpen = selectedSessionIsActive && !window.matchMedia("(max-width: 600px)").matches;
@@ -1471,11 +1481,11 @@ async function openResultViewer(page, resultId, trigger = null) {
     if (!activeResultViewer || activeResultViewer.viewer !== viewer) return;
     viewer.innerHTML = `
       <section class="result-viewer-panel is-error" role="alertdialog" aria-modal="true" aria-label="Result viewer error" tabindex="-1">
-        <div class="result-viewer-loading"><strong>Result could not be loaded</strong><small>${escapeHtml(error.message)}</small><button type="button" data-close-result-viewer>Close viewer</button></div>
+        <div class="result-viewer-loading"><strong>Result could not be loaded</strong><small>${escapeHtml(safeErrorMessage(error, "Unable to load this result."))}</small><button type="button" data-close-result-viewer>Close viewer</button></div>
       </section>
     `;
     viewer.querySelector(".result-viewer-panel")?.focus();
-    statusText.textContent = `RESULT VIEWER FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `RESULT VIEWER FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -1806,7 +1816,7 @@ async function loadResultsControlData(page, options = {}) {
     page.screenSync = sessionsData.screenSync || {};
     ownedPages = ownedPages.map((item) => item.id === page.id ? { ...item, results, activeSessions: page.activeSessions, runtimeTargets: page.runtimeTargets, screenSync: page.screenSync } : item);
   } catch (error) {
-    statusText.textContent = `RESULTS LOAD WARNING: ${error.message}`.toUpperCase();
+    statusText.textContent = `RESULTS LOAD WARNING: ${safeErrorMessage(error)}`.toUpperCase();
   }
   return page;
 }
@@ -1857,7 +1867,7 @@ async function uploadPackageThumbnail(input) {
     renderAdminPackageEditor(updated.slug);
     statusText.textContent = `${updated.name.toUpperCase()} THUMBNAIL UPDATED`;
   } catch (error) {
-    statusText.textContent = `THUMBNAIL UPLOAD FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `THUMBNAIL UPLOAD FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   } finally {
     clearAppBusySoon();
   }
@@ -1906,7 +1916,7 @@ async function loadAppData() {
     adminUsers = (adminUsersResult.users || []).map(normalizeAdminUser);
     adminInvitations = adminInvitationsResult.invitations || [];
   } catch (error) {
-    apiLoadError = error.message;
+    apiLoadError = safeErrorMessage(error, "Application data could not be loaded.");
     marketPages = [];
     adminPackages = [];
     ownedPages = [];
@@ -2036,7 +2046,7 @@ async function validateSignupInvitation(token) {
     };
   } catch (error) {
     if (inviteTokenFromHash() !== token) return;
-    signupInviteState = { token, status: "invalid", email: "", expiresAt: "", error: error.message };
+    signupInviteState = { token, status: "invalid", email: "", expiresAt: "", error: safeErrorMessage(error, "Invitation validation failed.") };
   }
 
   renderSignup();
@@ -2826,7 +2836,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
         try {
           await refreshLiveConfig();
         } catch (error) {
-          sendTraffic("config_load_failed", "blocked", error.message);
+          sendTraffic("config_load_failed", "blocked", "Live security configuration unavailable");
           blockPage("SECURITY CONFIGURATION UNAVAILABLE");
           return;
         }
@@ -3436,7 +3446,7 @@ function createGeneratedIndex(page) {
           loadTurnstileScript().then(renderTurnstile).catch((error) => {
             trackTraffic("turnstile_load_failed", {
               result: "blocked",
-              reason: error.message
+              reason: "Turnstile could not load"
             });
             blockPage("ACCESS DENIED", "HUMAN VERIFICATION UNAVAILABLE");
           });
@@ -3618,7 +3628,7 @@ function createGeneratedIndex(page) {
         } catch (error) {
           trackTraffic("config_load_failed", {
             result: "blocked",
-            reason: error.message
+            reason: "Live security configuration unavailable"
           });
           blockPage("ACCESS DENIED", "SECURITY CONFIGURATION UNAVAILABLE");
           return;
@@ -4026,7 +4036,7 @@ async function handleLogin() {
     startNotificationPolling();
     statusText.textContent = "API SESSION OPENED";
   } catch (error) {
-    statusText.textContent = error.message.toUpperCase();
+    statusText.textContent = safeErrorMessage(error).toUpperCase();
     return;
   }
 
@@ -4066,7 +4076,7 @@ async function handleSignup() {
     startNotificationPolling();
     statusText.textContent = "ACCOUNT CREATED / INVITATION CONSUMED";
   } catch (error) {
-    statusText.textContent = error.message.toUpperCase();
+    statusText.textContent = safeErrorMessage(error).toUpperCase();
     return;
   }
 
@@ -4545,7 +4555,7 @@ async function loadGitHubChangeInbox(page, force = false) {
     refreshGitHubChangeInbox(page);
     return next;
   } catch (error) {
-    const next = { ...(current || {}), loading: false, error: error.message, loadedAt: Date.now() };
+    const next = { ...(current || {}), loading: false, error: safeErrorMessage(error), loadedAt: Date.now() };
     githubChangeInboxByPackage.set(page.id, next);
     refreshGitHubChangeInbox(page);
     return next;
@@ -4581,7 +4591,7 @@ async function checkAdminPackageGitHub(page) {
     const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}/github/status`);
     githubLiveStatusByPackage.set(page.id, { ...result.status, loading: false });
   } catch (error) {
-    githubLiveStatusByPackage.set(page.id, { ...(current || {}), loading: false, error: error.message });
+    githubLiveStatusByPackage.set(page.id, { ...(current || {}), loading: false, error: safeErrorMessage(error) });
   }
   refreshGitHubLivePanel(page);
 }
@@ -4723,7 +4733,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
   if (!page && isAdmin()) {
     preview.innerHTML = `<section class="app-view"><div class="view-heading"><small>package editor</small><h2>Loading package…</h2><p>Resolving the package record from the admin API.</p></div></section>`;
     try { page = await fetchAdminPackage(packageSlug); }
-    catch (error) { loadError = error.message; }
+    catch (error) { loadError = safeErrorMessage(error); }
   }
   if (!page) {
     preview.innerHTML = `
@@ -6111,7 +6121,7 @@ async function fetchPageTraffic(page) {
     const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/traffic?limit=100`);
     return result.trafficEvents || [];
   } catch (error) {
-    statusText.textContent = `TRAFFIC LOAD FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `TRAFFIC LOAD FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     return page.securityConfig?.trafficLog || [];
   }
 }
@@ -6553,7 +6563,7 @@ async function updateWalletFundingQuote() {
     if (amountLabel) amountLabel.textContent = `Send ${quote.cryptoAmount} ${quote.cryptoType} for ${formatMoney(quote.usdAmount)} wallet credit.`;
     if (rateLabel) rateLabel.textContent = `Rate: ${formatMoney(quote.rate)} per ${quote.cryptoType} / ${quote.source || "rate provider"}`;
   } catch (error) {
-    setWalletQuoteState("error", `Quote unavailable: ${error.message}`);
+    setWalletQuoteState("error", `Quote unavailable: ${safeErrorMessage(error)}`);
   }
 }
 
@@ -6914,7 +6924,8 @@ async function validateTurnstileForPage(page) {
     if (output) output.textContent = result.validation?.note || "Cloudflare accepted the Turnstile configuration.";
     statusText.textContent = "TURNSTILE CONFIGURATION VALID";
   } catch (error) {
-    const remoteIssues = error.data?.validation?.issues || [error.message];
+    const remoteIssues = (error.data?.validation?.issues || [safeErrorMessage(error)])
+      .map((issue) => safeErrorMessage({ message: issue, status: error.status }));
     if (output) output.textContent = `Invalid: ${remoteIssues.join("; ")}`;
     statusText.textContent = "TURNSTILE VALIDATION FAILED";
   }
@@ -7121,7 +7132,7 @@ async function verifyCloudflareForPage(page) {
     if (installStatus) installStatus.textContent = "Status: Zone verified - click Install Worker route";
     statusText.textContent = "CLOUDFLARE ZONE VERIFIED / TOKEN KEPT FOR INSTALL";
   } catch (error) {
-    statusText.textContent = `CLOUDFLARE VERIFY FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `CLOUDFLARE VERIFY FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -7147,7 +7158,7 @@ async function installCloudflareForPage(page) {
     renderGoLiveCenter(pageRouteKey(updated));
     statusText.textContent = "CLOUDFLARE WORKER INSTALLED";
   } catch (error) {
-    statusText.textContent = `CLOUDFLARE INSTALL FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `CLOUDFLARE INSTALL FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -7241,7 +7252,7 @@ async function uploadLocalPackage(mode = "draft") {
     await loadAppData();
     statusText.textContent = mode === "publish" ? "LOCAL R2 PACKAGE PUBLISHED" : "LOCAL R2 PACKAGE DRAFT CREATED";
   } catch (error) {
-    if (resultPanel) resultPanel.innerHTML = `<code>Local import failed</code><code>${escapeHtml(error.message)}</code>`;
+    if (resultPanel) resultPanel.innerHTML = `<code>Local import failed</code><code>${escapeHtml(safeErrorMessage(error))}</code>`;
     statusText.textContent = "LOCAL IMPORT FAILED";
   }
 }
@@ -7395,7 +7406,7 @@ async function subscribeToMarketPackage(button) {
         : `PAGE ALREADY SUBSCRIBED. ${action}`;
       return;
     }
-    statusText.textContent = `SUBSCRIPTION FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `SUBSCRIPTION FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -7433,7 +7444,7 @@ async function renewPageFromWallet(page) {
       statusText.textContent = "LOGIN REQUIRED TO RENEW";
       return;
     }
-    statusText.textContent = `RENEWAL FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `RENEWAL FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -7473,7 +7484,7 @@ async function submitWalletFundRequest() {
       window.location.hash = "#login";
       return;
     }
-    statusText.textContent = `FUNDING FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `FUNDING FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -7490,7 +7501,7 @@ async function approveWalletFundRequest(button) {
     renderAdminUsers();
     statusText.textContent = "WALLET CREDIT APPROVED";
   } catch (error) {
-    statusText.textContent = `APPROVAL FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `APPROVAL FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -7507,7 +7518,7 @@ async function updateWalletFundReview(button, action) {
     renderAdminUsers();
     statusText.textContent = action === "reject" ? "FUNDING REQUEST REJECTED" : "FUNDING REQUEST MARKED REVIEWING";
   } catch (error) {
-    statusText.textContent = `FUNDING UPDATE FAILED: ${error.message}`.toUpperCase();
+    statusText.textContent = `FUNDING UPDATE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
   }
 }
 
@@ -7730,7 +7741,7 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
   if (resultPanel) {
     resultPanel.innerHTML = `
       <code>Checking API connection...</code>
-      <code>${escapeHtml(apiBase())}/api/health</code>
+      <code>Checking service availability and session access.</code>
     `;
   }
   if (triggerButton) {
@@ -7778,12 +7789,12 @@ async function scanGithubImport(mode = "scan", triggerButton = null) {
       if (error.data?.scan) {
         renderGithubImportResult(error.data.scan, null);
         resultPanel.insertAdjacentHTML("afterbegin", `
-          <code>GitHub import stopped: ${escapeHtml(error.message)}</code>
+          <code>GitHub import stopped: ${escapeHtml(safeErrorMessage(error))}</code>
         `);
       } else {
         resultPanel.innerHTML = `
           <code>GitHub import failed</code>
-          <code>${escapeHtml(error.message)}</code>
+          <code>${escapeHtml(safeErrorMessage(error))}</code>
           <code>Private repos need valid GitHub access. Public repos need the correct branch and folder.</code>
         `;
       }
@@ -7884,7 +7895,7 @@ notificationCenter?.addEventListener("click", async (event) => {
       resultPage = normalizeUserPage(response.userPage);
       ownedPages = [...ownedPages.filter((page) => page.id !== resultPage.id), resultPage];
     } catch (error) {
-      statusText.textContent = `RESULT PAGE LOAD FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `RESULT PAGE LOAD FAILED: ${safeErrorMessage(error)}`.toUpperCase();
       return;
     }
   }
@@ -7995,7 +8006,7 @@ preview.addEventListener("click", async (event) => {
     try {
       await withButtonBusy(createInviteButton, "Creating", createAdminInvitation);
     } catch (error) {
-      statusText.textContent = `INVITATION FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `INVITATION FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8005,7 +8016,7 @@ preview.addEventListener("click", async (event) => {
     try {
       await withButtonBusy(copyInviteButton, "Copying", copyLatestInvitation);
     } catch (error) {
-      statusText.textContent = `COPY FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `COPY FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8016,7 +8027,7 @@ preview.addEventListener("click", async (event) => {
       emailLatestInvitation();
       statusText.textContent = "INVITATION EMAIL DRAFT OPENED";
     } catch (error) {
-      statusText.textContent = `EMAIL DRAFT FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `EMAIL DRAFT FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8027,7 +8038,7 @@ preview.addEventListener("click", async (event) => {
     try {
       await withButtonBusy(revokeInviteButton, "Revoking", () => revokeAdminInvitation(revokeInviteButton.dataset.revokeAdminInvite));
     } catch (error) {
-      statusText.textContent = `REVOKE FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `REVOKE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8064,7 +8075,7 @@ preview.addEventListener("click", async (event) => {
       await openPackagePreview(pagePackage);
       statusText.textContent = `${pagePackage.name.toUpperCase()} PREVIEW OPENED`;
     } catch (error) {
-      statusText.textContent = `PREVIEW FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `PREVIEW FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8176,7 +8187,7 @@ preview.addEventListener("click", async (event) => {
       await withButtonBusy(githubChangeDismissButton, "Dismissing", () => dismissGitHubChange(page, githubChangeDismissButton.dataset.githubChangeDismiss));
       statusText.textContent = "GITHUB CHANGE DISMISSED";
     } catch (error) {
-      statusText.textContent = `GITHUB CHANGE DISMISS FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `GITHUB CHANGE DISMISS FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8205,7 +8216,7 @@ preview.addEventListener("click", async (event) => {
     try {
       await withButtonBusy(githubLiveSyncButton, "Syncing", () => syncAdminPackageGitHub(page));
     } catch (error) {
-      statusText.textContent = `GITHUB SYNC FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `GITHUB SYNC FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8215,7 +8226,7 @@ preview.addEventListener("click", async (event) => {
     try {
       await withButtonBusy(saveAdminPackageButton, "Saving", () => saveAdminPackage(getAdminPackage(saveAdminPackageButton.dataset.saveAdminPackage)));
     } catch (error) {
-      statusText.textContent = `PACKAGE SAVE FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `PACKAGE SAVE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8223,7 +8234,7 @@ preview.addEventListener("click", async (event) => {
   const previewAdminPackageButton = event.target.closest("[data-admin-package-preview]");
   if (previewAdminPackageButton) {
     try { await openAdminPackagePreview(getAdminPackage(previewAdminPackageButton.dataset.adminPackagePreview)); }
-    catch (error) { statusText.textContent = `PREVIEW FAILED: ${error.message}`.toUpperCase(); }
+    catch (error) { statusText.textContent = `PREVIEW FAILED: ${safeErrorMessage(error)}`.toUpperCase(); }
     return;
   }
 
@@ -8232,7 +8243,7 @@ preview.addEventListener("click", async (event) => {
     try {
       await withButtonBusy(publishAdminPackageButton, "Publishing", () => publishAdminPackage(getAdminPackage(publishAdminPackageButton.dataset.adminPackagePublish)));
     } catch (error) {
-      statusText.textContent = `PACKAGE PUBLISH FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `PACKAGE PUBLISH FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8421,7 +8432,7 @@ preview.addEventListener("click", async (event) => {
     try {
       await withButtonBusy(applyBulkResultsButton, "Applying", () => runResultsMutation(() => applyBulkResults(page, action, resultIds)));
     } catch (error) {
-      statusText.textContent = `BULK ACTION FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `BULK ACTION FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8467,7 +8478,7 @@ preview.addEventListener("click", async (event) => {
       }));
       statusText.textContent = "PACKAGE SCREEN ORDER SYNCED";
     } catch (error) {
-      statusText.textContent = `SCREEN SYNC FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `SCREEN SYNC FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8487,7 +8498,7 @@ preview.addEventListener("click", async (event) => {
       }
     } catch (error) {
       console.error("Final index download failed", error);
-      statusText.textContent = `INDEX DOWNLOAD FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `INDEX DOWNLOAD FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
@@ -8566,7 +8577,7 @@ preview.addEventListener("click", async (event) => {
       await renderSecurityCenter(pageRouteKey(resultPage), "ips");
       statusText.textContent = `${ip} REMOVED FROM IP RULES`;
     }).catch((error) => {
-      statusText.textContent = `IP REMOVE FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `IP REMOVE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
@@ -8589,7 +8600,7 @@ preview.addEventListener("click", async (event) => {
       await renderSecurityCenter(pageRouteKey(resultPage), "traffic");
       statusText.textContent = isBan ? `${ip} BANNED` : `${ip} WHITELISTED`;
     }).catch((error) => {
-      statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `IP ACTION FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
@@ -8629,7 +8640,7 @@ preview.addEventListener("click", async (event) => {
       await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER REDIRECT QUEUED";
     })).catch((error) => {
-      statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `REDIRECT FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
@@ -8649,7 +8660,7 @@ preview.addEventListener("click", async (event) => {
       await renderResultsCenter(pageRouteKey(updated));
       statusText.textContent = "LIVE USER COMMAND CLEARED";
     })).catch((error) => {
-      statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `CLEAR FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
@@ -8664,7 +8675,7 @@ preview.addEventListener("click", async (event) => {
 
     if (resultAction.dataset.viewResult) {
       await withButtonBusy(resultAction, "Opening", () => openResultViewer(resultPage, result.id, resultAction)).catch((error) => {
-        statusText.textContent = `RESULT VIEWER FAILED: ${error.message}`.toUpperCase();
+        statusText.textContent = `RESULT VIEWER FAILED: ${safeErrorMessage(error)}`.toUpperCase();
       });
       return;
     }
@@ -8774,42 +8785,42 @@ document.addEventListener("click", async (event) => {
   const refreshSessionButton = event.target.closest?.("[data-refresh-result-session]");
   if (refreshSessionButton) {
     await withButtonBusy(refreshSessionButton, "Refreshing", () => refreshResultViewerSessionState()).catch((error) => {
-      statusText.textContent = `SESSION REFRESH FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `SESSION REFRESH FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
   const redirectButton = event.target.closest?.("[data-result-viewer-redirect]");
   if (redirectButton) {
     await withButtonBusy(redirectButton, "Queuing", () => runResultsMutation(() => sendResultViewerRedirect(redirectButton))).catch((error) => {
-      statusText.textContent = `REDIRECT FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `REDIRECT FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
   const reloadButton = event.target.closest?.("[data-result-viewer-reload]");
   if (reloadButton) {
     await withButtonBusy(reloadButton, "Queuing", () => runResultsMutation(() => sendResultViewerRedirect(reloadButton, true))).catch((error) => {
-      statusText.textContent = `RELOAD FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `RELOAD FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
   const clearCommandButton = event.target.closest?.("[data-result-viewer-clear-command]");
   if (clearCommandButton) {
     await withButtonBusy(clearCommandButton, "Clearing", () => runResultsMutation(() => clearResultViewerCommand(clearCommandButton))).catch((error) => {
-      statusText.textContent = `CLEAR FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `CLEAR FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
   const workflowButton = event.target.closest?.("[data-result-viewer-workflow]");
   if (workflowButton) {
     await withButtonBusy(workflowButton, "Saving", () => runResultsMutation(() => applyResultViewerWorkflow(workflowButton.dataset.resultViewerWorkflow))).catch((error) => {
-      statusText.textContent = `RESULT UPDATE FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `RESULT UPDATE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
   const ipActionButton = event.target.closest?.("[data-result-viewer-ip-action]");
   if (ipActionButton) {
     await withButtonBusy(ipActionButton, "Saving", () => runResultsMutation(() => applyResultViewerIpAction(ipActionButton.dataset.resultViewerIpAction))).catch((error) => {
-      statusText.textContent = `IP ACTION FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `IP ACTION FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }
@@ -8824,7 +8835,7 @@ document.addEventListener("click", async (event) => {
   const deleteButton = event.target.closest?.("[data-result-viewer-delete]");
   if (deleteButton) {
     await withButtonBusy(deleteButton, "Deleting", () => runResultsMutation(() => deleteResultViewerResult())).catch((error) => {
-      statusText.textContent = `DELETE FAILED: ${error.message}`.toUpperCase();
+      statusText.textContent = `DELETE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
   }
 });

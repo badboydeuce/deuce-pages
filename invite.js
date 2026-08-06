@@ -4,18 +4,29 @@ const inviteEmail = document.querySelector("#inviteEmail");
 const formError = document.querySelector("#formError");
 let activeInviteToken = "";
 
+function safeErrorMessage(error, fallback = "") {
+  return window.DeucePublicErrors?.message?.(error, fallback) || fallback || "Request could not be completed. Please try again.";
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+  } catch {
+    const error = new Error("Connection failed. Please try again.");
+    error.status = 0;
+    throw error;
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data.error || "Request failed. Try again.");
+    const error = new Error(safeErrorMessage({ message: data.error, status: response.status }));
     error.status = response.status;
     throw error;
   }
@@ -80,7 +91,7 @@ inviteForm.addEventListener("submit", async (event) => {
     window.history.replaceState(null, "", "/invite");
     window.location.replace("/portal#dashboard");
   } catch (error) {
-    showError(error.message);
+    showError(safeErrorMessage(error));
     setBusy(false);
   }
 });

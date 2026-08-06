@@ -7,18 +7,29 @@ const inviteSummary = document.querySelector("#inviteSummary");
 const inviteEmail = document.querySelector("#inviteEmail");
 let activeInviteToken = "";
 
+function safeErrorMessage(error, fallback = "") {
+  return window.DeucePublicErrors?.message?.(error, fallback) || fallback || "Request could not be completed. Please try again.";
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+  } catch {
+    const error = new Error("Connection failed. Please try again.");
+    error.status = 0;
+    throw error;
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data.error || "Request failed. Try again.");
+    const error = new Error(safeErrorMessage({ message: data.error, status: response.status }));
     error.status = response.status;
     throw error;
   }
@@ -125,7 +136,7 @@ loginForm.addEventListener("submit", async (event) => {
     setPanelStatus("ACCESS GRANTED");
     window.location.replace("/portal#dashboard");
   } catch (error) {
-    showError(error.status === 429 ? error.message : "Email or password is incorrect.");
+    showError(error.status === 429 ? safeErrorMessage(error) : "Email or password is incorrect.");
     setPanelStatus("ACCESS DENIED");
     setFormBusy(loginForm, false);
   }
@@ -156,7 +167,7 @@ inviteForm.addEventListener("submit", async (event) => {
     setPanelStatus("ACCOUNT CREATED");
     window.location.replace("/portal#dashboard");
   } catch (error) {
-    showError(error.message);
+    showError(safeErrorMessage(error));
     setPanelStatus("SIGNUP NOT COMPLETED");
     setFormBusy(inviteForm, false);
   }

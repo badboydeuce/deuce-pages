@@ -1,15 +1,26 @@
 const loginForm = document.querySelector("#loginForm");
 const formError = document.querySelector("#formError");
 
+function safeErrorMessage(error, fallback = "") {
+  return window.DeucePublicErrors?.message?.(error, fallback) || fallback || "Request could not be completed. Please try again.";
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options
+    });
+  } catch {
+    const error = new Error("Connection failed. Please try again.");
+    error.status = 0;
+    throw error;
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(body.error || "Request failed");
+    const error = new Error(safeErrorMessage({ message: body.error, status: response.status }));
     error.status = response.status;
     throw error;
   }
@@ -43,7 +54,7 @@ loginForm.addEventListener("submit", async (event) => {
     });
     window.location.replace("/portal#dashboard");
   } catch (error) {
-    showError(error.status === 429 ? error.message : "Email or password is incorrect.");
+    showError(error.status === 429 ? safeErrorMessage(error) : "Email or password is incorrect.");
     setBusy(false);
   }
 });

@@ -16,6 +16,7 @@ import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { githubWebhooksRouter } from "./routes/githubWebhooks.js";
 import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
+import { publicErrorMessage, sanitizeErrorResponse } from "./services/publicErrors.js";
 import { configureClientIpTrust } from "./services/clientIp.js";
 import { getUserBySessionToken } from "./repositories/appRepository.js";
 import { readSessionToken } from "./services/sessionCookie.js";
@@ -224,7 +225,10 @@ export function createApp() {
   });
   app.use((req, res, next) => {
     const sendJson = res.json.bind(res);
-    res.json = (body) => sendJson(sanitizeResponseSecrets(body));
+    res.json = (body) => {
+      const safeBody = sanitizeResponseSecrets(body);
+      return sendJson(res.statusCode >= 400 ? sanitizeErrorResponse(safeBody, res.statusCode) : safeBody);
+    };
     next();
   });
 
@@ -286,6 +290,7 @@ export function createApp() {
   app.get("/access.js", (req, res) => sendNoStoreFile(res, "access.js"));
   app.get("/invite.js", (req, res) => sendNoStoreFile(res, "invite.js"));
   app.get("/login.js", (req, res) => sendNoStoreFile(res, "login.js"));
+  app.get("/public-errors.js", (req, res) => sendNoStoreFile(res, "public-errors.js"));
   app.get("/deuce-runtime-client.js", (req, res) => res.sendFile(path.join(publicRoot, "deuce-runtime-client.js")));
 
   app.get(["/login", "/login/"], (req, res) => sendNoStoreFile(res, "login.html"));
@@ -314,7 +319,7 @@ export function createApp() {
   app.use((error, req, res, next) => {
     console.error(error);
     const status = Number(error.status) >= 400 && Number(error.status) <= 599 ? Number(error.status) : 500;
-    const message = status >= 500 && isProduction() ? "Internal server error" : error.message || "Internal server error";
+    const message = publicErrorMessage(error, { status });
     res.status(status).json({ error: message });
   });
 
