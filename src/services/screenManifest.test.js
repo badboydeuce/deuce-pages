@@ -104,3 +104,26 @@ test("screen revision ignores unrelated package metadata", () => {
   const second = screenManifestV2ForPackage({ ...base, name: "Package B", billingPeriods: { weekly: 40 } });
   assert.equal(first.screenRevision, second.screenRevision);
 });
+
+test("preserves a disabled requested entry so GitHub drift cannot silently change it", () => {
+  const manifest = createScreenManifestV2({
+    packageKey: "live-page",
+    entryScreenId: "scr_missing",
+    screens: [
+      { id: "scr_missing", file: "old.html", buttonLabel: "Old", enabled: false, needsReview: true },
+      { id: "scr_live", file: "index.html", buttonLabel: "Login", enabled: true }
+    ]
+  });
+  const validation = validateScreenManifestV2({
+    id: "pkg_live",
+    packageManifest: {
+      ...manifest,
+      files: [{ path: "index.html" }]
+    }
+  }, { publishing: true });
+
+  assert.equal(manifest.entryScreenId, "scr_missing");
+  assert.equal(validation.valid, false);
+  assert.ok(validation.issues.some((issue) => issue.includes("enabled entry screen")));
+  assert.ok(validation.issues.some((issue) => issue.includes("Review the GitHub screen change")));
+});

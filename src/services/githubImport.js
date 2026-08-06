@@ -1,3 +1,18 @@
+import { createScreenManifestV2, suggestScreenButtonLabel } from "./screenManifest.js";
+
+const githubMaxFiles = Math.min(Math.max(Number(process.env.GITHUB_IMPORT_MAX_FILES) || 1000, 1), 5000);
+const githubMaxFileBytes = Math.min(Math.max(Number(process.env.GITHUB_IMPORT_MAX_FILE_MB) || 20, 1), 100) * 1024 * 1024;
+const githubMaxPackageBytes = Math.min(Math.max(Number(process.env.GITHUB_IMPORT_MAX_PACKAGE_MB) || 100, 1), 500) * 1024 * 1024;
+const githubRuntimeExtensions = new Set([
+  ".html", ".htm", ".css", ".js", ".mjs", ".json", ".txt", ".xml", ".svg",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico",
+  ".woff", ".woff2", ".ttf", ".otf", ".eot", ".mp3", ".mp4", ".webm"
+]);
+const blockedRuntimeNames = new Set([
+  "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+  "credentials.json", "secrets.json", "secret.json"
+]);
+
 export function normalizeRepoUrl(repoUrl) {
   const trimmed = String(repoUrl || "").trim();
   const sshMatch = trimmed.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
@@ -47,10 +62,30 @@ export function classifyFile(path) {
   const lower = path.toLowerCase();
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
   if (lower.endsWith(".css")) return "css";
-  if (lower.endsWith(".js")) return "script";
-  if (/\.(png|jpe?g|gif|webp|svg|ico|avif)$/i.test(lower)) return "asset";
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "script";
+  if (/\.(png|jpe?g|gif|webp|svg|ico|avif|mp3|mp4|webm)$/i.test(lower)) return "asset";
   if (/\.(woff2?|ttf|otf|eot)$/i.test(lower)) return "font";
+  if (/\.(json|txt|xml)$/i.test(lower)) return "data";
   return "other";
+}
+
+function normalizedGithubPath(value = "") {
+  const file = String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").trim();
+  if (!file || file.length > 240 || file.includes("\0")) return "";
+  if (file.split("/").some((part) => !part || part === "." || part === "..")) return "";
+  return file;
+}
+
+export function isAllowedGithubRuntimeFile(value = "") {
+  const file = normalizedGithubPath(value);
+  if (!file) return false;
+  const parts = file.split("/");
+  const basename = parts.at(-1).toLowerCase();
+  if (parts.some((part) => part.startsWith("."))) return false;
+  if (blockedRuntimeNames.has(basename) || /^(?:\.env|credentials|secrets?)(?:\.|$)/i.test(basename)) return false;
+  const dot = basename.lastIndexOf(".");
+  const extension = dot >= 0 ? basename.slice(dot) : "";
+  return githubRuntimeExtensions.has(extension);
 }
 
 export function githubRawUrl({ repoUrl, branch = "main", file }) {
@@ -104,11 +139,15 @@ async function getRepositoryTree(owner, repo, branch) {
   return githubJson(`https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, `GitHub scan for branch ${branch}`);
 }
 
+async function getRepositoryCommit(owner, repo, branch) {
+  return githubJson(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`, `GitHub commit lookup for branch ${branch}`);
+}
+
 export function inferScreenName(filePath) {
   return suggestScreenButtonLabel(filePath);
 }
 
-export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens }) {
+export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens, excludedFiles = [] }) {
   const hasEntry = screens.some((screen) => screen.role === "entry" || screen.isEntry);
   const issues = [];
   const warnings = [];
@@ -137,6 +176,11 @@ export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, scree
       label: "Scripts",
       status: scriptFiles.length ? "warn" : "pass",
       detail: scriptFiles.length ? `${scriptFiles.length} script file${scriptFiles.length === 1 ? "" : "s"} need review` : "No script files detected"
+    },
+    {
+      label: "Public file boundary",
+      status: excludedFiles.length ? "warn" : "pass",
+      detail: excludedFiles.length ? `${excludedFiles.length} unsupported or private file${excludedFiles.length === 1 ? "" : "s"} excluded` : "Only approved public page files are mapped"
     }
   ];
 
@@ -144,6 +188,7 @@ export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, scree
   if (!hasEntry) warnings.push("Select an entry screen before using this package in production.");
   if (!cssFiles.length) warnings.push("No external CSS was found. Confirm the page is styled by inline CSS or external assets.");
   if (scriptFiles.length) warnings.push("Review imported JavaScript before publishing.");
+  if (excludedFiles.length) warnings.push(`${excludedFiles.length} repository file${excludedFiles.length === 1 ? " was" : "s were"} excluded from runtime access.`);
 
   return {
     status: issues.length ? "blocked" : warnings.length ? "review" : "ready",
@@ -154,18 +199,15 @@ export function scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, scree
   };
 }
 
-export async function scanGitHubRepository({ repoUrl, branch = "main", folder = "", packageName, slug }) {
+export async function scanGitHubRepository({ repoUrl, branch = "main", folder = "", packageName, slug, allowBranchFallback = true }) {
   const { owner, repo } = normalizeRepoUrl(repoUrl);
   const cleanFolder = String(folder || "").replace(/^\/+|\/+$/g, "");
   const requestedBranch = String(branch || "").trim();
   const repoInfo = await getRepositoryInfo(owner, repo);
   const defaultBranch = repoInfo.default_branch || "main";
-  const branchCandidates = Array.from(new Set([
-    requestedBranch,
-    defaultBranch,
-    "main",
-    "master"
-  ].filter(Boolean)));
+  const branchCandidates = allowBranchFallback
+    ? Array.from(new Set([requestedBranch, defaultBranch, "main", "master"].filter(Boolean)))
+    : [requestedBranch || defaultBranch];
 
   let data = null;
   let resolvedBranch = "";
@@ -186,21 +228,42 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     throw new Error(`GitHub scan failed. Tried branches: ${failures.join(" | ")}`);
   }
 
-  const files = (data.tree || [])
+  if (data.truncated) throw new Error("GitHub returned a truncated repository tree. Select a smaller folder before importing.");
+  const selectedBlobs = (data.tree || [])
     .filter((item) => item.type === "blob")
-    .map((item) => item.path)
-    .filter((item) => !cleanFolder || item === cleanFolder || item.startsWith(`${cleanFolder}/`));
+    .filter((item) => !cleanFolder || item.path === cleanFolder || item.path.startsWith(`${cleanFolder}/`));
 
-  if (!files.length) {
+  if (!selectedBlobs.length) {
     throw new Error(cleanFolder
       ? `No files found in folder "${cleanFolder}" on branch "${resolvedBranch}". Check the folder path.`
       : `No files found on branch "${resolvedBranch}".`);
   }
 
-  const htmlFiles = files.filter((file) => classifyFile(file) === "html");
-  const cssFiles = files.filter((file) => classifyFile(file) === "css");
-  const assetFiles = files.filter((file) => ["asset", "font"].includes(classifyFile(file)));
-  const scriptFiles = files.filter((file) => classifyFile(file) === "script");
+  if (selectedBlobs.length > githubMaxFiles) throw new Error(`The selected GitHub folder contains more than ${githubMaxFiles} files`);
+  const excludedFiles = selectedBlobs
+    .filter((item) => !isAllowedGithubRuntimeFile(item.path))
+    .map((item) => ({ path: item.path, reason: "unsupported-or-private" }));
+  const runtimeBlobs = selectedBlobs.filter((item) => isAllowedGithubRuntimeFile(item.path));
+  if (!runtimeBlobs.length) throw new Error("No supported public page files were found in the selected GitHub folder");
+  let totalBytes = 0;
+  for (const item of runtimeBlobs) {
+    const size = Number(item.size || 0);
+    if (size > githubMaxFileBytes) throw new Error(`GitHub file is too large: ${item.path}`);
+    totalBytes += size;
+  }
+  if (totalBytes > githubMaxPackageBytes) throw new Error("The GitHub page package exceeds the configured total size limit");
+
+  const files = runtimeBlobs.map((item) => ({
+    path: normalizedGithubPath(item.path),
+    type: classifyFile(item.path),
+    size: Number(item.size || 0),
+    sha: String(item.sha || "")
+  }));
+
+  const htmlFiles = files.filter((file) => file.type === "html").map((file) => file.path);
+  const cssFiles = files.filter((file) => file.type === "css").map((file) => file.path);
+  const assetFiles = files.filter((file) => ["asset", "font"].includes(file.type)).map((file) => file.path);
+  const scriptFiles = files.filter((file) => file.type === "script").map((file) => file.path);
   const expectedEntryFiles = new Set([
     cleanFolder ? `${cleanFolder}/index.html` : "index.html",
     cleanFolder ? `${cleanFolder}/index.htm` : "index.htm"
@@ -215,7 +278,8 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     ...screen,
     role: screen.id === screenManifest.entryScreenId ? "entry" : screen.stage
   }));
-  const review = scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens });
+  const review = scanReview({ htmlFiles, cssFiles, assetFiles, scriptFiles, screens, excludedFiles });
+  const commit = await getRepositoryCommit(owner, repo, resolvedBranch);
 
   return {
     sourceType: "github",
@@ -226,16 +290,24 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     requestedBranch,
     defaultBranch,
     folder: cleanFolder,
+    commitSha: String(commit.sha || ""),
+    treeSha: String(data.sha || commit.commit?.tree?.sha || ""),
+    committedAt: commit.commit?.committer?.date || commit.commit?.author?.date || "",
+    commitUrl: commit.html_url || "",
     packageName: packageName || repo.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
     slug: slug || repo.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-    files: files.map((file) => ({ path: file, type: classifyFile(file) })),
+    files,
     screens,
     cssFiles,
     assets: assetFiles,
     scripts: scriptFiles,
     screenManifest,
+    excludedFiles,
     summary: {
       totalFiles: files.length,
+      selectedFiles: selectedBlobs.length,
+      excludedFiles: excludedFiles.length,
+      totalBytes,
       html: htmlFiles.length,
       css: cssFiles.length,
       assets: assetFiles.length,
@@ -244,4 +316,3 @@ export async function scanGitHubRepository({ repoUrl, branch = "main", folder = 
     review
   };
 }
-import { createScreenManifestV2, suggestScreenButtonLabel } from "./screenManifest.js";

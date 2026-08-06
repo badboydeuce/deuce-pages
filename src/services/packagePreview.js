@@ -2,6 +2,37 @@ import { classifyFile, githubRawUrl, normalizeRepoUrl } from "./githubImport.js"
 import { getObjectBuffer } from "./objectStorage.js";
 import { screenManifestV2ForPackage } from "./screenManifest.js";
 
+const githubLiveCacheTtlMs = Math.min(Math.max(Number(process.env.GITHUB_LIVE_CACHE_SECONDS) || 5, 1), 60) * 1000;
+const githubLiveFileMaxBytes = Math.min(Math.max(Number(process.env.GITHUB_IMPORT_MAX_FILE_MB) || 20, 1), 100) * 1024 * 1024;
+const githubLiveCacheMaxEntries = 100;
+const githubLiveFileCache = new Map();
+
+function cachedGitHubResponse(entry) {
+  return new Response(entry.body, {
+    status: 200,
+    headers: { "Content-Type": entry.contentType || "application/octet-stream" }
+  });
+}
+
+async function cacheGitHubResponse(cacheKey, response) {
+  const declaredBytes = Number(response.headers.get("content-length") || 0);
+  if (declaredBytes > githubLiveFileMaxBytes) throw new Error("GitHub source file exceeds the configured preview size limit");
+  const body = Buffer.from(await response.arrayBuffer());
+  if (body.length > githubLiveFileMaxBytes) throw new Error("GitHub source file exceeds the configured preview size limit");
+  const entry = {
+    body,
+    contentType: response.headers.get("content-type") || "application/octet-stream",
+    etag: response.headers.get("etag") || "",
+    storedAt: Date.now()
+  };
+  githubLiveFileCache.delete(cacheKey);
+  githubLiveFileCache.set(cacheKey, entry);
+  while (githubLiveFileCache.size > githubLiveCacheMaxEntries) {
+    githubLiveFileCache.delete(githubLiveFileCache.keys().next().value);
+  }
+  return cachedGitHubResponse(entry);
+}
+
 export function withPreviewAvailability(pagePackage) {
   if (!pagePackage) return pagePackage;
   return {
@@ -17,15 +48,24 @@ export function contentTypeFor(filePath) {
   const lower = String(filePath || "").toLowerCase();
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html; charset=utf-8";
   if (lower.endsWith(".css")) return "text/css; charset=utf-8";
-  if (lower.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "application/javascript; charset=utf-8";
+  if (lower.endsWith(".json")) return "application/json; charset=utf-8";
+  if (lower.endsWith(".txt")) return "text/plain; charset=utf-8";
+  if (lower.endsWith(".xml")) return "application/xml; charset=utf-8";
   if (lower.endsWith(".svg")) return "image/svg+xml";
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   if (lower.endsWith(".gif")) return "image/gif";
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".ico")) return "image/x-icon";
+  if (lower.endsWith(".avif")) return "image/avif";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".webm")) return "video/webm";
   if (lower.endsWith(".woff")) return "font/woff";
   if (lower.endsWith(".woff2")) return "font/woff2";
+  if (lower.endsWith(".ttf")) return "font/ttf";
+  if (lower.endsWith(".otf")) return "font/otf";
   return "application/octet-stream";
 }
 
@@ -88,10 +128,18 @@ export async function fetchGitHubPackageFile(source) {
   if (process.env.GITHUB_TOKEN) {
     headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   }
+  const cacheKey = `${String(source.repoUrl || "").toLowerCase()}|${String(source.branch || "main")}|${String(source.file || "").toLowerCase()}`;
+  const cached = githubLiveFileCache.get(cacheKey);
+  if (cached && Date.now() - cached.storedAt < githubLiveCacheTtlMs) return cachedGitHubResponse(cached);
+  if (cached?.etag) headers["If-None-Match"] = cached.etag;
 
   try {
     const response = await fetch(githubRawUrl(source), { headers });
-    if (response.ok) return response;
+    if (response.status === 304 && cached) {
+      cached.storedAt = Date.now();
+      return cachedGitHubResponse(cached);
+    }
+    if (response.ok) return cacheGitHubResponse(cacheKey, response);
     if (![403, 404, 429].includes(response.status)) {
       throw new Error(`GitHub raw fetch failed: ${response.status} ${response.statusText}`);
     }
@@ -108,10 +156,14 @@ export async function fetchGitHubPackageFile(source) {
       Accept: "application/vnd.github.raw"
     }
   });
+  if (fallbackResponse.status === 304 && cached) {
+    cached.storedAt = Date.now();
+    return cachedGitHubResponse(cached);
+  }
   if (!fallbackResponse.ok) {
     throw new Error(`GitHub source fetch failed: ${fallbackResponse.status} ${fallbackResponse.statusText}. Check the repo visibility, branch, file path, and GITHUB_TOKEN.`);
   }
-  return fallbackResponse;
+  return cacheGitHubResponse(cacheKey, fallbackResponse);
 }
 
 export function resolveRelativePath(fromFile, relativePath) {

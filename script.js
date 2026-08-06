@@ -40,6 +40,7 @@ let activeTemplate = templates[0];
 let marketPages = [];
 let adminPackages = [];
 const adminPackageLibraryState = { search: "", status: "all", source: "all", sort: "updated" };
+const githubLiveStatusByPackage = new Map();
 
 const packageDataModel = {
   identity: ["id", "slug", "name", "type", "status", "version"],
@@ -1943,11 +1944,13 @@ function collectAdminPackagePayload(page) {
       state: row.querySelector("[data-package-screen-state]")?.value || "default",
       enabled: Boolean(row.querySelector("[data-package-screen-enabled]")?.checked),
       showInRedirects: Boolean(row.querySelector("[data-package-screen-redirect]")?.checked),
+      needsReview: false,
       order
     };
   });
   const entryScreenId = rows.find((row) => row.querySelector("[data-package-screen-entry]")?.checked)?.dataset.packageScreenId || "";
   const finalScreenId = rows.find((row) => row.querySelector("[data-package-screen-final]")?.checked)?.dataset.packageScreenId || "";
+  if (mappedScreens.length && !entryScreenId) throw new Error("Select one entry screen before saving");
   const packageManifest = {
     ...(page.packageManifest || {}),
     schemaVersion: 2,
@@ -4069,6 +4072,96 @@ async function fetchAdminPackage(packageSlug) {
   return pagePackage;
 }
 
+function shortCommit(value = "") {
+  const commit = String(value || "").trim();
+  return commit ? commit.slice(0, 8) : "Not recorded";
+}
+
+function githubChangeCount(status = {}) {
+  const diff = status.fileDiff || {};
+  return ["added", "removed", "modified", "renamed"].reduce((total, key) => total + (diff[key]?.length || 0), 0);
+}
+
+function githubLivePanelMarkup(page) {
+  const github = page.packageManifest?.github || {};
+  const status = githubLiveStatusByPackage.get(page.id);
+  const storedCommit = status?.storedCommitSha || github.lastSyncedCommitSha || "";
+  const currentCommit = status?.currentCommitSha || storedCommit;
+  const drift = status?.screenDrift || {};
+  const changeCount = githubChangeCount(status);
+  const stateLabel = status?.loading
+    ? "Checking branch"
+    : status?.error
+      ? "Check failed"
+      : status?.commitChanged || changeCount
+        ? drift.hasStructuralChanges ? "Screen review needed" : "Code changes live"
+        : status ? "In sync" : "Live branch connected";
+  const stateClass = status?.error || drift.hasStructuralChanges ? "warning" : status?.commitChanged || changeCount ? "active" : "ready";
+  const folder = github.folder || status?.folder || "repository root";
+  const checkedAt = status?.checkedAt ? resultViewerTime(status.checkedAt) : "Not checked in this session";
+  const lastSyncedAt = status?.lastSyncedAt || github.lastSyncedAt;
+  const hasChanges = Boolean(status?.commitChanged || changeCount);
+  return `
+    <article class="security-panel github-live-panel" data-github-live-panel="${escapeHtml(page.id)}">
+      <div class="github-live-heading">
+        <div>
+          <small>live github source</small>
+          <h3>${escapeHtml(status?.repo || `${github.owner || ""}/${github.repo || ""}`)}</h3>
+          <p><code>${escapeHtml(status?.branch || github.branch || "main")}</code> / ${escapeHtml(folder)}</p>
+        </div>
+        <span class="github-live-state ${stateClass}">${escapeHtml(stateLabel)}</span>
+      </div>
+      ${status?.error ? `<p class="github-live-error">${escapeHtml(status.error)}</p>` : `
+        <div class="github-live-stats">
+          <div><small>Tracked</small><strong>${escapeHtml(shortCommit(storedCommit))}</strong><span>${lastSyncedAt ? `Synced ${escapeHtml(resultViewerTime(lastSyncedAt))}` : "Baseline from import"}</span></div>
+          <div><small>Latest</small><strong>${escapeHtml(shortCommit(currentCommit))}</strong><span>Checked ${escapeHtml(checkedAt)}</span></div>
+          <div><small>Files</small><strong>${changeCount}</strong><span>${status ? `${status.fileDiff?.added?.length || 0} added / ${status.fileDiff?.removed?.length || 0} removed / ${status.fileDiff?.modified?.length || 0} edited` : "Awaiting branch check"}</span></div>
+          <div><small>Screens</small><strong>${(drift.addedScreens?.length || 0) + (drift.missingScreens?.length || 0) + (drift.renamedScreens?.length || 0) + (drift.restoredScreens?.length || 0)}</strong><span>${drift.addedScreens?.length || 0} new / ${drift.missingScreens?.length || 0} missing / ${drift.renamedScreens?.length || 0} renamed / ${drift.restoredScreens?.length || 0} restored</span></div>
+        </div>
+      `}
+      <p class="github-live-note">Page code is read from this mutable branch at runtime. Apply sync only when you want to accept its current file inventory and review changed screen mappings.</p>
+      <div class="admin-actions">
+        <button type="button" data-github-live-check="${escapeHtml(page.id)}" ${status?.loading ? "disabled" : ""}>${status?.loading ? "Checking..." : "Check GitHub"}</button>
+        <button type="button" class="primary" data-github-live-sync="${escapeHtml(page.id)}" ${!hasChanges || status?.loading || status?.error ? "disabled" : ""}>Apply screen sync</button>
+      </div>
+    </article>
+  `;
+}
+
+function refreshGitHubLivePanel(page) {
+  const panel = [...preview.querySelectorAll("[data-github-live-panel]")]
+    .find((item) => item.dataset.githubLivePanel === page.id);
+  if (panel) panel.outerHTML = githubLivePanelMarkup(page);
+}
+
+async function checkAdminPackageGitHub(page) {
+  if (!page) throw new Error("Package not found");
+  const current = githubLiveStatusByPackage.get(page.id);
+  if (current?.loading) return;
+  githubLiveStatusByPackage.set(page.id, { ...(current || {}), loading: true, error: "" });
+  refreshGitHubLivePanel(page);
+  try {
+    const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}/github/status`);
+    githubLiveStatusByPackage.set(page.id, { ...result.status, loading: false });
+  } catch (error) {
+    githubLiveStatusByPackage.set(page.id, { ...(current || {}), loading: false, error: error.message });
+  }
+  refreshGitHubLivePanel(page);
+}
+
+async function syncAdminPackageGitHub(page) {
+  if (!page) throw new Error("Package not found");
+  const result = await requestApi(`/api/admin/packages/${encodeURIComponent(page.id || page.slug)}/github/sync`, { method: "POST" });
+  const updated = normalizePackage(result.package);
+  adminPackages = adminPackages.map((item) => item.id === updated.id ? updated : item);
+  marketPages = adminPackages.filter((item) => item.status === "published");
+  githubLiveStatusByPackage.set(updated.id, { ...result.status, loading: false });
+  await renderAdminPackageEditor(updated.slug);
+  statusText.textContent = result.status?.packageMovedToReview
+    ? "GITHUB SCREENS SYNCED / PACKAGE MOVED TO REVIEW"
+    : "GITHUB SOURCE SYNCED";
+}
+
 function renderAdminImportWizard(sourceType = "local") {
   activeFlowSlug = null;
   const isGithub = sourceType === "github";
@@ -4217,6 +4310,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
   const htmlFiles = (page.packageManifest?.files || [])
     .map((item) => item?.path || item?.file || item)
     .filter((file) => /\.html?$/i.test(String(file || "")));
+  const availableHtmlFiles = new Set(htmlFiles.map((file) => String(file).toLowerCase()));
   const editorFiles = Array.from(new Set([
     ...configuredScreens.map((item) => item.file || item.path),
     ...htmlFiles
@@ -4240,9 +4334,13 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
       stage,
       state,
       enabled: configured.enabled !== false,
-      showInRedirects: configured.showInRedirects !== false
+      showInRedirects: configured.showInRedirects !== false,
+      needsReview: configured.needsReview === true,
+      missing: !availableHtmlFiles.has(String(file).toLowerCase())
     };
   });
+  const isLiveGithub = page.sourceType === "github" && Boolean(page.packageManifest?.github);
+  const packageSourceSummary = [page.source, page.cssMode, page.repo].filter(Boolean).join(" / ");
   const configuredEntryId = page.packageManifest?.entryScreenId
     || editorScreens.find((screen) => screen.role === "entry")?.id
     || editorScreens.find((screen) => /(^|\/)index\.html?$/i.test(screen.file))?.id
@@ -4269,7 +4367,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
         <div>
           <small>${page.status}</small>
           <h3>${page.name} ${page.version}</h3>
-          <p>${page.source} / ${page.cssMode} / ${page.repo}</p>
+          <p>${escapeHtml(packageSourceSummary)}</p>
         </div>
         <div class="admin-actions">
           <button type="button" data-save-admin-package="${escapeHtml(page.slug)}">Save draft</button>
@@ -4279,6 +4377,8 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
       </article>
 
       <div class="package-editor-grid">
+        ${isLiveGithub ? githubLivePanelMarkup(page) : ""}
+
         <article class="security-panel package-form">
           <small>package details</small>
           <h3>Listing settings</h3>
@@ -4330,10 +4430,13 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
           <label class="screen-final-none"><input type="radio" name="package-final-screen" data-package-screen-final-none ${configuredFinalId ? "" : "checked"}> No final screen</label>
           <div class="file-map-list">
             ${editorScreens.map((screen, index) => `
-              <div class="screen-map-row" draggable="true" data-package-screen-row="${escapeHtml(screen.id)}" data-package-screen-id="${escapeHtml(screen.id)}" data-package-screen-file="${escapeHtml(screen.file)}">
+              <div class="screen-map-row ${screen.needsReview ? "needs-review" : ""} ${screen.missing ? "is-missing" : ""}" draggable="true" data-package-screen-row="${escapeHtml(screen.id)}" data-package-screen-id="${escapeHtml(screen.id)}" data-package-screen-file="${escapeHtml(screen.file)}">
                 <strong title="Drag to reorder">&#8942;&#8942; ${String(index + 1).padStart(2, "0")}</strong>
                 <div class="screen-map-file">
-                  <span>${escapeHtml(screen.file)}</span>
+                  <div class="screen-map-file-heading">
+                    <span>${escapeHtml(screen.file)}</span>
+                    ${screen.missing ? `<b class="screen-sync-badge missing">Missing from branch</b>` : screen.needsReview ? `<b class="screen-sync-badge review">Needs review</b>` : ""}
+                  </div>
                   <label><small>Redirect button name</small><input type="text" maxlength="80" data-package-screen-label value="${escapeHtml(screen.buttonLabel)}"></label>
                 </div>
                 <label class="screen-map-stage"><small>Stage</small><select data-package-screen-stage>${["form", "verification", "success", "other"].map((stage) => `<option value="${stage}" ${screen.stage === stage ? "selected" : ""}>${stage}</option>`).join("")}</select></label>
@@ -4345,7 +4448,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
                   <label><input type="checkbox" data-package-screen-redirect ${screen.showInRedirects ? "checked" : ""}> Redirect</label>
                 </div>
                 <em>${screen.id === configuredEntryId ? "Entry" : screen.id === configuredFinalId ? "Final" : "Screen"}</em>
-                <span class="screen-order-actions"><button type="button" data-package-screen-move="up" aria-label="Move ${escapeHtml(screen.buttonLabel)} up">&#8593;</button><button type="button" data-package-screen-move="down" aria-label="Move ${escapeHtml(screen.buttonLabel)} down">&#8595;</button></span>
+                <span class="screen-order-actions"><button type="button" data-package-screen-move="up" aria-label="Move ${escapeHtml(screen.buttonLabel)} up">&#8593;</button><button type="button" data-package-screen-move="down" aria-label="Move ${escapeHtml(screen.buttonLabel)} down">&#8595;</button>${screen.missing ? `<button type="button" class="danger" data-package-screen-remove aria-label="Remove missing ${escapeHtml(screen.buttonLabel)} mapping">Remove</button>` : ""}</span>
               </div>
             `).join("")}
           </div>
@@ -4399,6 +4502,11 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
   `;
 
   refreshImportedScreenOrder();
+  const knownGithubStatus = githubLiveStatusByPackage.get(page.id);
+  const githubStatusAge = Date.now() - new Date(knownGithubStatus?.checkedAt || 0).getTime();
+  if (isLiveGithub && (!knownGithubStatus || knownGithubStatus.error || githubStatusAge > 30000) && !knownGithubStatus?.loading) {
+    void checkAdminPackageGitHub(page);
+  }
   statusText.textContent = `${page.name.toUpperCase()} PACKAGE EDITOR OPEN`;
   topbarTitle.textContent = `${page.name} Editor`;
 }
@@ -7108,6 +7216,7 @@ function renderGithubImportResult(scan, pagePackage) {
   resultPanel.innerHTML = `
     <code>${pagePackage ? `${pagePackage.status === "published" ? "Published" : "Draft"} package ready: ${pagePackage.name} (${pagePackage.slug})` : `Connected: ${scan.owner}/${scan.repo}`}</code>
     <code>Branch: ${scan.branch}${scan.folder ? ` / folder: ${scan.folder}` : ""}</code>
+    <code>Live source: mutable branch / commit ${escapeHtml(shortCommit(scan.commitSha))} / ${scan.summary.excludedFiles || 0} private or unsupported files excluded</code>
     <code>Files: ${scan.summary.totalFiles} total / ${scan.summary.html} HTML / ${scan.summary.css} CSS / ${scan.summary.assets} assets</code>
     <div class="import-review-list">
       ${(review.checks || []).map((check) => `
@@ -7620,6 +7729,40 @@ preview.addEventListener("click", async (event) => {
       else row.parentElement.insertBefore(sibling, row);
       refreshImportedScreenOrder();
       statusText.textContent = "SCREEN ORDER CHANGED / SAVE DRAFT TO PERSIST";
+    }
+    return;
+  }
+
+  const screenRemoveButton = event.target.closest("[data-package-screen-remove]");
+  if (screenRemoveButton) {
+    const row = screenRemoveButton.closest("[data-package-screen-row]");
+    if (row?.querySelector("[data-package-screen-final]")?.checked) {
+      const noFinal = preview.querySelector("[data-package-screen-final-none]");
+      if (noFinal) noFinal.checked = true;
+    }
+    row?.remove();
+    refreshImportedScreenOrder();
+    statusText.textContent = "MISSING SCREEN MAPPING REMOVED / SAVE DRAFT TO PERSIST";
+    return;
+  }
+
+  const githubLiveCheckButton = event.target.closest("[data-github-live-check]");
+  if (githubLiveCheckButton) {
+    const page = getAdminPackage(githubLiveCheckButton.dataset.githubLiveCheck);
+    await checkAdminPackageGitHub(page);
+    statusText.textContent = githubLiveStatusByPackage.get(page?.id)?.error
+      ? "GITHUB CHECK FAILED"
+      : "GITHUB BRANCH CHECKED";
+    return;
+  }
+
+  const githubLiveSyncButton = event.target.closest("[data-github-live-sync]");
+  if (githubLiveSyncButton) {
+    const page = getAdminPackage(githubLiveSyncButton.dataset.githubLiveSync);
+    try {
+      await withButtonBusy(githubLiveSyncButton, "Syncing", () => syncAdminPackageGitHub(page));
+    } catch (error) {
+      statusText.textContent = `GITHUB SYNC FAILED: ${error.message}`.toUpperCase();
     }
     return;
   }

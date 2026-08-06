@@ -30,3 +30,19 @@ test("import workflow requires screen mapping before UI publishing", () => {
   assert.doesNotMatch(script, /data-local-import="publish">Upload & publish/);
   assert.match(script, /Map screens & publish/);
 });
+
+test("GitHub packages expose live branch status and explicit structural sync controls", () => {
+  for (const marker of [
+    "data-github-live-panel",
+    "data-github-live-check",
+    "data-github-live-sync",
+    "data-package-screen-remove",
+    "Needs review",
+    "Missing from branch"
+  ]) {
+    assert.match(script, new RegExp(marker));
+  }
+  assert.match(script, /Page code is read from this mutable branch at runtime/);
+  assert.match(styles, /\.github-live-panel\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+  assert.match(styles, /\.github-live-stats\s*\{/);
+});

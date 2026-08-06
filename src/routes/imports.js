@@ -343,7 +343,13 @@ importsRouter.post("/github/package", requireAdmin, async (req, res) => {
           owner: scan.owner,
           repo: scan.repo,
           branch: scan.branch,
-          folder: scan.folder
+          folder: scan.folder,
+          mode: "live",
+          lastSyncedCommitSha: scan.commitSha,
+          lastSyncedTreeSha: scan.treeSha,
+          lastSyncedAt: new Date().toISOString(),
+          committedAt: scan.committedAt,
+          commitUrl: scan.commitUrl
         },
         files: scan.files,
         scripts: scan.scripts,

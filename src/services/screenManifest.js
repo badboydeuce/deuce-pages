@@ -81,6 +81,7 @@ function screenRevision({ entryScreenId, finalScreenId, screens }) {
       state: screen.state,
       enabled: screen.enabled,
       showInRedirects: screen.showInRedirects,
+      needsReview: screen.needsReview,
       order: screen.order
     }))
   });
@@ -125,23 +126,24 @@ export function createScreenManifestV2({
       state: inferredState(screen, buttonLabel, file),
       enabled: normalizedBoolean(typeof screen === "object" ? screen?.enabled : undefined, true),
       showInRedirects: normalizedBoolean(typeof screen === "object" ? screen?.showInRedirects : undefined, true),
+      needsReview: normalizedBoolean(typeof screen === "object" ? screen?.needsReview : undefined, false),
       order: normalizedScreens.length,
       legacyRole: typeof screen === "object" ? String(screen?.role || "").toLowerCase() : ""
     });
   }
 
-  const enabledScreens = normalizedScreens.filter((screen) => screen.enabled);
   const requestedEntry = String(entryScreenId || "").trim();
+  const enabledScreens = normalizedScreens.filter((screen) => screen.enabled);
   const legacyEntry = enabledScreens.find((screen) => screen.legacyRole === "entry");
   const conventionalEntry = enabledScreens.find((screen) => /(^|\/)index\.html?$/i.test(screen.file));
-  const entry = enabledScreens.find((screen) => screen.id === requestedEntry)
+  const entry = normalizedScreens.find((screen) => screen.id === requestedEntry)
     || legacyEntry
     || conventionalEntry
     || enabledScreens[0]
     || null;
   const requestedFinal = String(finalScreenId || "").trim();
   const legacyFinal = enabledScreens.find((screen) => screen.stage === "success" || screen.legacyRole === "success");
-  const final = enabledScreens.find((screen) => screen.id === requestedFinal)
+  const final = normalizedScreens.find((screen) => screen.id === requestedFinal)
     || legacyFinal
     || null;
   const cleanScreens = normalizedScreens.map(({ legacyRole, ...screen }) => screen);
@@ -218,6 +220,7 @@ export function validateScreenManifestV2(pagePackage = {}, { publishing = false 
     if (!screen.buttonLabel) issues.push(`Redirect button name is required: ${screen.file}`);
     if (!stageSet.has(screen.stage)) issues.push(`Unsupported screen stage: ${screen.stage}`);
     if (!stateSet.has(screen.state)) issues.push(`Unsupported screen state: ${screen.state}`);
+    if (publishing && screen.needsReview) issues.push(`Review the GitHub screen change before publishing: ${screen.file}`);
     if (screen.enabled && screen.showInRedirects) {
       const labelKey = screen.buttonLabel.toLowerCase();
       if (visibleLabels.has(labelKey)) {

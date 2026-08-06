@@ -21,6 +21,11 @@ import { validatePackageData } from "../services/packageValidation.js";
 import { deleteObjectPrefix } from "../services/objectStorage.js";
 import { previewLaunchUrl } from "../services/appHosts.js";
 import { classifyFile } from "../services/githubImport.js";
+import {
+  checkGitHubLivePackage,
+  publicGitHubLiveStatus,
+  reconcileGitHubScreenManifest
+} from "../services/githubLiveSync.js";
 
 export const packagesRouter = Router();
 
@@ -98,6 +103,80 @@ packagesRouter.post("/:id/preview-session", requireAuth, async (req, res) => {
       previewUrl: previewLaunchUrl(req, session.ticket),
       expiresAt: session.expiresAt
     });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+packagesRouter.get("/:id/github/status", requireAdmin, async (req, res) => {
+  try {
+    const pagePackage = await findPackage(req.params.id);
+    if (!pagePackage) return res.status(404).json({ error: "Package not found" });
+    const status = await checkGitHubLivePackage(pagePackage);
+    res.setHeader("Cache-Control", "no-store, private");
+    res.json({ status: publicGitHubLiveStatus(status) });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+packagesRouter.post("/:id/github/sync", requireAdmin, async (req, res) => {
+  try {
+    const pagePackage = await findPackage(req.params.id);
+    if (!pagePackage) return res.status(404).json({ error: "Package not found" });
+    const status = await checkGitHubLivePackage(pagePackage);
+    const reconciled = reconcileGitHubScreenManifest(pagePackage, status.scan, status.fileDiff);
+    const syncedAt = new Date().toISOString();
+    const nextStatus = pagePackage.status === "published" && reconciled.drift.hasStructuralChanges
+      ? "review"
+      : pagePackage.status;
+    const packageManifest = {
+      ...(pagePackage.packageManifest || {}),
+      ...reconciled.manifest,
+      files: status.scan.files,
+      scripts: status.scan.scripts,
+      review: status.scan.review,
+      github: {
+        ...(pagePackage.packageManifest?.github || {}),
+        owner: status.scan.owner,
+        repo: status.scan.repo,
+        branch: status.scan.branch,
+        folder: status.scan.folder,
+        mode: "live",
+        lastSyncedCommitSha: status.scan.commitSha,
+        lastSyncedTreeSha: status.scan.treeSha,
+        lastSyncedAt: syncedAt,
+        committedAt: status.scan.committedAt,
+        commitUrl: status.scan.commitUrl
+      }
+    };
+    const updated = await updatePackage(pagePackage.id, {
+      status: nextStatus,
+      screens: reconciled.manifest.screens.map((screen) => screen.buttonLabel),
+      assets: status.scan.assets,
+      cssFiles: status.scan.cssFiles,
+      packageManifest
+    });
+    const responseStatus = publicGitHubLiveStatus({
+      ...status,
+      storedCommitSha: status.scan.commitSha,
+      currentCommitSha: status.scan.commitSha,
+      lastSyncedAt: syncedAt,
+      commitChanged: false,
+      fileDiff: {
+        added: [],
+        removed: [],
+        modified: [],
+        renamed: [],
+        unchanged: status.scan.files,
+        changed: false
+      },
+      screenDrift: reconciled.drift,
+      applied: true,
+      packageMovedToReview: nextStatus === "review" && pagePackage.status === "published"
+    });
+    res.setHeader("Cache-Control", "no-store, private");
+    res.json({ package: withPreviewAvailability(updated), status: responseStatus });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
