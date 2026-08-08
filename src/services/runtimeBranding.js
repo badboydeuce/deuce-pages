@@ -40,7 +40,7 @@ export function decodeBrandingDataUrl(value = "") {
 
 function manifestPaths(pagePackage) {
   const manifest = pagePackage?.packageManifest || {};
-  return [...(manifest.files || []), ...(manifest.assets || [])]
+  return [...(manifest.files || []), ...(manifest.assets || []), ...(pagePackage?.assets || [])]
     .map((item) => cleanPath(item?.path || item))
     .filter(Boolean);
 }
@@ -54,7 +54,7 @@ export function packageBrandingPath(pagePackage) {
   const priorities = [
     /(?:^|\/)favicon(?:[-_][^/]*)?\.(?:png|ico|webp)$/i,
     /(?:^|\/)apple-touch-icon(?:[-_][^/]*)?\.png$/i,
-    /(?:^|\/)(?:logo|icon|brand)(?:[-_][^/]*)?\.(?:png|jpe?g|webp|ico)$/i
+    /(?:^|\/)[^/]*(?:logo|icon|brand)[^/]*\.(?:png|jpe?g|webp|ico)$/i
   ];
   for (const pattern of priorities) {
     const matched = paths.find((file) => pattern.test(file));

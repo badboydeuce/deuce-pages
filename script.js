@@ -2634,8 +2634,8 @@ function createPackageRuntimeIndex(page, pagePackage) {
         --success-rgb: 21 128 61;
         --danger: #b91c1c;
         --danger-rgb: 185 28 28;
-        --info: #1d4ed8;
-        --info-rgb: 29 78 216;
+        --info: #52645b;
+        --info-rgb: 82 100 91;
       }
       * { box-sizing: border-box; }
       html, body { width: 100%; min-height: 100%; margin: 0; background: #050607; }
@@ -2647,30 +2647,19 @@ function createPackageRuntimeIndex(page, pagePackage) {
         display: none;
         place-items: center;
         padding: 24px;
-        color: #152033;
-        background:
-          radial-gradient(circle at 50% 0, rgba(37, 99, 235, .08), transparent 36%),
-          #f4f7fb;
+        color: #161b18;
+        background: #f5f5f3;
       }
       #deuceGate.active { display: grid; }
       #deuceGate article {
-        position: relative;
-        width: min(430px, calc(100vw - 32px));
+        width: min(400px, calc(100vw - 32px));
         display: grid;
-        gap: 22px;
-        padding: 28px;
-        overflow: hidden;
-        border: 1px solid #dfe5ee;
-        border-radius: 18px;
-        background: rgba(255, 255, 255, .96);
-        box-shadow: 0 24px 70px rgba(15, 23, 42, .12);
-      }
-      #deuceGate article::before {
-        content: "";
-        position: absolute;
-        inset: 0 0 auto;
-        height: 4px;
-        background: linear-gradient(90deg, #2563eb, #60a5fa);
+        gap: 20px;
+        padding: 26px;
+        border: 1px solid #e1e4e0;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 12px 40px rgba(20, 28, 23, .08);
       }
       #deuceGateHeader {
         display: flex;
@@ -2683,9 +2672,9 @@ function createPackageRuntimeIndex(page, pagePackage) {
         flex: 0 0 52px;
         width: 52px;
         height: 52px;
-        border: 1px solid #dbe3ee;
-        border-radius: 14px;
-        background: #f8fafc;
+        border: 1px solid #e1e4e0;
+        border-radius: 10px;
+        background: #fff;
       }
       #deuceGateLogo {
         display: block;
@@ -2696,7 +2685,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
         display: grid;
         place-items: center;
         color: #fff;
-        background: linear-gradient(135deg, #1d4ed8, #60a5fa);
+        background: #161b18;
         font-size: 1rem;
         font-weight: 850;
         letter-spacing: .04em;
@@ -2705,7 +2694,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
       #deuceGateMeta { min-width: 0; }
       #deuceGateEyebrow {
         margin: 0 0 4px;
-        color: #64748b;
+        color: #68736c;
         font-size: .72rem;
         font-weight: 800;
         letter-spacing: .1em;
@@ -2714,13 +2703,13 @@ function createPackageRuntimeIndex(page, pagePackage) {
       #deuceGateDomain {
         margin: 0;
         overflow-wrap: anywhere;
-        color: #0f172a;
+        color: #161b18;
         font-size: clamp(1.15rem, 4vw, 1.45rem);
         line-height: 1.2;
       }
       #deuceGateStatus {
         margin: 7px 0 0;
-        color: #526176;
+        color: #626c66;
         font-size: .92rem;
         line-height: 1.45;
       }
@@ -2734,7 +2723,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
       }
       #deuceGateFooter {
         margin: -5px 0 0;
-        color: #7b8798;
+        color: #78817c;
         font-size: .74rem;
         text-align: center;
       }

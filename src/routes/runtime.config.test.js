@@ -169,6 +169,8 @@ test("generated launchers refresh live security before booting", async () => {
   assert.match(source, /id="deuceGateLogo"/);
   assert.match(source, /id="captchaBrandImage"/);
   assert.equal((source.match(/Protected by Cloudflare Turnstile/g) || []).length, 2);
+  assert.match(source, /#deuceGate[\s\S]*background: #f5f5f3;/);
+  assert.doesNotMatch(source, /linear-gradient\(90deg, #2563eb, #60a5fa\)/);
   assert.match(source, /Confirming verification\.\.\./);
   assert.match(source, /Verification failed\. Please try again\./);
   assert.match(source, /credentials: "same-origin"/);
