@@ -142,6 +142,8 @@ let resultsAutoRefreshPromise = null;
 let resultsAutoRefreshUserPaused = false;
 let resultsMutationBusy = false;
 let resultNotificationAudioContext = null;
+let lastResultToneAt = 0;
+const resultToneCooldownMs = 1200;
 let activeResultViewer = null;
 
 function setAppBusy(isBusy, label = "Working") {
@@ -389,23 +391,70 @@ function startResultsAutoRefresh(pageSlug) {
 function playNewResultTone() {
   const AudioContextType = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextType) return;
+  const requestedAt = Date.now();
+  if (requestedAt - lastResultToneAt < resultToneCooldownMs) return;
+  lastResultToneAt = requestedAt;
+
   try {
     resultNotificationAudioContext = resultNotificationAudioContext || new AudioContextType();
     const context = resultNotificationAudioContext;
-    if (context.state === "suspended") context.resume().catch(() => {});
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    const now = context.currentTime;
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(720, now);
-    oscillator.frequency.exponentialRampToValueAtTime(540, now + 0.18);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start(now);
-    oscillator.stop(now + 0.26);
+    const scheduleTone = () => {
+      const now = context.currentTime;
+      const master = context.createGain();
+      const compressor = context.createDynamicsCompressor();
+      const voices = [
+        { type: "triangle", frequency: 293.66, delay: 0, duration: 0.38, level: 0.18, pan: -0.18 },
+        { type: "sine", frequency: 587.33, delay: 0.06, duration: 0.58, level: 0.22, pan: -0.08 },
+        { type: "sine", frequency: 739.99, delay: 0.17, duration: 0.64, level: 0.18, pan: 0.1 },
+        { type: "sine", frequency: 880, delay: 0.28, duration: 0.58, level: 0.12, pan: 0.22 }
+      ];
+
+      master.gain.setValueAtTime(0.0001, now);
+      master.gain.exponentialRampToValueAtTime(0.82, now + 0.025);
+      master.gain.setValueAtTime(0.82, now + 0.52);
+      master.gain.exponentialRampToValueAtTime(0.0001, now + 0.94);
+
+      compressor.threshold.setValueAtTime(-16, now);
+      compressor.knee.setValueAtTime(12, now);
+      compressor.ratio.setValueAtTime(4, now);
+      compressor.attack.setValueAtTime(0.004, now);
+      compressor.release.setValueAtTime(0.24, now);
+      master.connect(compressor);
+      compressor.connect(context.destination);
+
+      voices.forEach((voice) => {
+        const oscillator = context.createOscillator();
+        const envelope = context.createGain();
+        const start = now + voice.delay;
+        const end = start + voice.duration;
+        oscillator.type = voice.type;
+        oscillator.frequency.setValueAtTime(voice.frequency, start);
+        oscillator.detune.setValueAtTime(0, start);
+        oscillator.detune.linearRampToValueAtTime(7, end);
+        envelope.gain.setValueAtTime(0.0001, start);
+        envelope.gain.exponentialRampToValueAtTime(voice.level, start + 0.018);
+        envelope.gain.exponentialRampToValueAtTime(0.0001, end);
+        oscillator.connect(envelope);
+
+        if (typeof context.createStereoPanner === "function") {
+          const panner = context.createStereoPanner();
+          panner.pan.setValueAtTime(voice.pan, start);
+          envelope.connect(panner);
+          panner.connect(master);
+        } else {
+          envelope.connect(master);
+        }
+
+        oscillator.start(start);
+        oscillator.stop(end + 0.03);
+      });
+    };
+
+    if (context.state === "suspended") {
+      context.resume().then(scheduleTone).catch(() => {});
+    } else {
+      scheduleTone();
+    }
   } catch (error) {
     console.debug("Result notification tone skipped", error);
   }
