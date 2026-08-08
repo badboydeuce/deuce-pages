@@ -5,7 +5,7 @@ function isRenderWebService(env) {
     && String(env.RENDER_SERVICE_TYPE || "").toLowerCase() === "web";
 }
 
-function normalizeIp(value) {
+export function normalizeIp(value) {
   let ip = String(value || "").trim();
   if (ip.startsWith("::ffff:") && isIP(ip.slice(7)) === 4) {
     ip = ip.slice(7);
@@ -23,4 +23,11 @@ export function clientIp(req) {
   return normalizeIp(req.ip)
     || normalizeIp(req.socket?.remoteAddress)
     || "unknown";
+}
+
+export function trustedRelayClientIp(req) {
+  const relayedIp = req.deuceRelayTrusted
+    ? normalizeIp(req.headers?.["x-deuce-client-ip"])
+    : "";
+  return relayedIp || clientIp(req);
 }

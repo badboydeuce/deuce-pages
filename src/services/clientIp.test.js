@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
 import express from "express";
-import { clientIp, configureClientIpTrust } from "./clientIp.js";
+import { clientIp, configureClientIpTrust, trustedRelayClientIp } from "./clientIp.js";
 
 async function observedClientIp(env, headers = {}) {
   const app = express();
@@ -59,4 +59,19 @@ test("does not enable proxy trust for non-web Render services", async () => {
 
   assert.equal(observed.ip, "127.0.0.1");
   assert.deepEqual(observed.ips, []);
+});
+
+test("uses the Worker visitor IP only after relay authentication", () => {
+  const request = {
+    headers: { "x-deuce-client-ip": "198.51.100.88" },
+    ip: "203.0.113.40",
+    socket: { remoteAddress: "203.0.113.41" }
+  };
+
+  assert.equal(trustedRelayClientIp(request), "203.0.113.40");
+  request.deuceRelayTrusted = true;
+  assert.equal(trustedRelayClientIp(request), "198.51.100.88");
+
+  request.headers["x-deuce-client-ip"] = "spoofed";
+  assert.equal(trustedRelayClientIp(request), "203.0.113.40");
 });

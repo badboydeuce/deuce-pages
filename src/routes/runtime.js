@@ -30,7 +30,7 @@ import {
 } from "../services/challengeProof.js";
 import { clearSourceProofCookie, readSourceProofCookie, setSourceProofCookie } from "../services/sourceProofCookie.js";
 import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/runtimeScreens.js";
-import { clientIp } from "../services/clientIp.js";
+import { trustedRelayClientIp } from "../services/clientIp.js";
 import { brandingImageForPackage } from "../services/runtimeBranding.js";
 import {
   instrumentResultFields,
@@ -230,7 +230,7 @@ async function runtimeContext(req, res, options = {}) {
     return pageExpired(res, 402, options.expiredResponse === "html" ? { html: true } : {});
   }
 
-  return { page, clientHost, ip: clientIp(req) };
+  return { page, clientHost, ip: trustedRelayClientIp(req) };
 }
 
 async function enforceRuntimeSecurity(context, req, res) {

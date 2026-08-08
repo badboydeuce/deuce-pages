@@ -2199,8 +2199,11 @@ async function handleRequest(request) {
 
   const headers = new Headers(request.headers);
   headers.delete("origin");
+  headers.delete("x-deuce-client-ip");
   headers.set("x-deuce-relay-secret", RELAY_SECRET);
   headers.set("x-deuce-client-host", url.hostname);
+  const visitorIp = request.headers.get("cf-connecting-ip") || "";
+  if (visitorIp) headers.set("x-deuce-client-ip", visitorIp);
 
   return fetch(target.toString(), {
     method: request.method,

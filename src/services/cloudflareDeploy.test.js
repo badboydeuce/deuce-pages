@@ -30,7 +30,10 @@ test("managed Worker removes the customer Origin before forwarding runtime reque
       },
       async fetch(target, init) {
         forwardedRequest = { target, init };
-        return new Response("ok", { status: 200 });
+        return new Response("ok", {
+          status: 200,
+          headers: { "Set-Cookie": "deuce_source_proof=proof; Path=/api; HttpOnly; Secure" }
+        });
       }
     });
 
@@ -40,7 +43,9 @@ test("managed Worker removes the customer Origin before forwarding runtime reque
       method: "POST",
       headers: {
         Origin: "https://client.example",
+        "CF-Connecting-IP": "198.51.100.70",
         "Content-Type": "application/json",
+        "X-Deuce-Client-IP": "203.0.113.99",
         "X-Test": "preserved"
       },
       body: "{}"
@@ -59,7 +64,9 @@ test("managed Worker removes the customer Origin before forwarding runtime reque
     assert.equal(forwardedRequest.init.headers.get("origin"), null);
     assert.equal(forwardedRequest.init.headers.get("x-deuce-relay-secret"), "relay-test-secret");
     assert.equal(forwardedRequest.init.headers.get("x-deuce-client-host"), "client.example");
+    assert.equal(forwardedRequest.init.headers.get("x-deuce-client-ip"), "198.51.100.70");
     assert.equal(forwardedRequest.init.headers.get("x-test"), "preserved");
+    assert.match(response.headers.get("set-cookie") || "", /^deuce_source_proof=proof/);
   } finally {
     if (previousRuntimeApiBaseUrl === undefined) delete process.env.RUNTIME_API_BASE_URL;
     else process.env.RUNTIME_API_BASE_URL = previousRuntimeApiBaseUrl;
@@ -75,6 +82,7 @@ test("browser Worker template also removes Origin", async () => {
 
   assert.match(
     browserSource,
-    /const headers = new Headers\(request\.headers\);\s+headers\.delete\("origin"\);/
+    /const headers = new Headers\(request\.headers\);\s+headers\.delete\("origin"\);\s+headers\.delete\("x-deuce-client-ip"\);/
   );
+  assert.match(browserSource, /request\.headers\.get\("cf-connecting-ip"\)/);
 });

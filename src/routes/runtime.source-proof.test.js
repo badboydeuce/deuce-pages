@@ -30,6 +30,8 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
     LOCAL_JSON_DB: process.env.LOCAL_JSON_DB,
     JSON_DB_PATH: process.env.JSON_DB_PATH,
     NODE_ENV: process.env.NODE_ENV,
+    RENDER: process.env.RENDER,
+    RENDER_SERVICE_TYPE: process.env.RENDER_SERVICE_TYPE,
     IP_REPUTATION_DISABLED: process.env.IP_REPUTATION_DISABLED,
     CHALLENGE_PROOF_SECRET: process.env.CHALLENGE_PROOF_SECRET
   };
@@ -43,6 +45,8 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
   process.env.LOCAL_JSON_DB = "true";
   process.env.JSON_DB_PATH = dbPath;
   process.env.NODE_ENV = "development";
+  process.env.RENDER = "true";
+  process.env.RENDER_SERVICE_TYPE = "web";
   process.env.IP_REPUTATION_DISABLED = "true";
   process.env.CHALLENGE_PROOF_SECRET = "source-proof-test-secret";
 
@@ -134,7 +138,8 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
   const baseUrl = "http://127.0.0.1:" + address.port;
   const relayHeaders = {
     "x-deuce-relay-secret": relaySecret,
-    "x-deuce-client-host": "client.example"
+    "x-deuce-client-host": "client.example",
+    "x-deuce-client-ip": "198.51.100.80"
   };
 
   try {
@@ -156,7 +161,7 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
 
     const verification = await originalFetch(baseUrl + "/api/runtime/verify-human", {
       method: "POST",
-      headers: { ...relayHeaders, "Content-Type": "application/json" },
+      headers: { ...relayHeaders, "Content-Type": "application/json", "X-Forwarded-For": "203.0.113.10" },
       body: JSON.stringify({
         userPageId: "page_proof",
         hostname: "client.example",
@@ -176,26 +181,26 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
     const sourceCookie = setCookie.split(";")[0];
 
     const invalidProof = await originalFetch(baseUrl + "/api/runtime/source?userPageId=page_proof", {
-      headers: { ...relayHeaders, Cookie: "deuce_source_proof=tampered" }
+      headers: { ...relayHeaders, Cookie: "deuce_source_proof=tampered", "X-Forwarded-For": "203.0.113.11" }
     });
     assert.equal(invalidProof.status, 403);
     assert.equal(packageFetches, 0);
 
     const verifiedSource = await originalFetch(baseUrl + "/api/runtime/source?userPageId=page_proof", {
-      headers: { ...relayHeaders, Cookie: sourceCookie }
+      headers: { ...relayHeaders, Cookie: sourceCookie, "X-Forwarded-For": "203.0.113.12" }
     });
     assert.equal(verifiedSource.status, 200);
     assert.match(await verifiedSource.text(), /Protected source/);
     assert.equal(packageFetches, 1);
 
     const directAsset = await originalFetch(baseUrl + "/api/runtime/source/asset?userPageId=page_proof&file=assets%2Flogo.png", {
-      headers: relayHeaders
+      headers: { ...relayHeaders, "X-Forwarded-For": "203.0.113.13" }
     });
     assert.equal(directAsset.status, 403);
     assert.equal(packageFetches, 1);
 
     const verifiedAsset = await originalFetch(baseUrl + "/api/runtime/source/asset?userPageId=page_proof&file=assets%2Flogo.png", {
-      headers: { ...relayHeaders, Cookie: sourceCookie }
+      headers: { ...relayHeaders, Cookie: sourceCookie, "X-Forwarded-For": "203.0.113.14" }
     });
     assert.equal(verifiedAsset.status, 200);
     assert.equal(packageFetches, 2);
