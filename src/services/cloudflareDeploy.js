@@ -47,6 +47,7 @@ async function handleRequest(request) {
   target.search = url.search;
 
   const headers = new Headers(request.headers);
+  headers.delete("origin");
   headers.set("x-deuce-relay-secret", RELAY_SECRET);
   headers.set("x-deuce-client-host", url.hostname);
 
