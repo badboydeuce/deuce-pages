@@ -64,6 +64,10 @@ let adminInvitations = [];
 let latestInvitationLink = null;
 let signupInviteState = { token: "", status: "idle", email: "", expiresAt: "", error: "" };
 let ownedPages = [];
+let myPagesVisibilityNotice = null;
+let myPagesVisibilityNoticeTimer = null;
+let hiddenPagesExpanded = false;
+const pageVisibilityBusyIds = new Set();
 let walletData = { balance: 0, currency: "USD", transactions: [] };
 let walletDepositRequests = [];
 let adminDepositRequests = [];
@@ -835,6 +839,11 @@ function normalizeUserPage(page) {
     generatedFile: page.generatedFile || {},
     resultSettings: page.resultSettings || {},
     hostingConfig: page.hostingConfig || {},
+    uiPreferences: {
+      hiddenInMyPages: false,
+      hiddenAt: null,
+      ...(page.uiPreferences || {})
+    },
     securityConfig: page.securityConfig || { domains: [], captcha: false, turnstile: { siteKey: "", secretKey: "" }, bannedIps: [], whitelistIps: [], blockedDevices: [], trafficLog: [] }
   };
 }
@@ -4004,7 +4013,9 @@ function dashboardPageLogoMarkup(page) {
 
 function renderDashboard() {
   activeFlowSlug = null;
-  const pageRows = ownedPages.map((page) => {
+  const dashboardPages = ownedPages.filter((page) => !page.uiPreferences?.hiddenInMyPages);
+  const hiddenPageCount = ownedPages.length - dashboardPages.length;
+  const pageRows = dashboardPages.map((page) => {
     const action = dashboardPageAction(page);
     return `
       <article class="dashboard-subscription-row is-${action.tone}">
@@ -4028,23 +4039,23 @@ function renderDashboard() {
         ${ownedPages.length ? '<button type="button" data-route="#pages">Browse pages</button>' : ""}
       </header>
 
-      ${ownedPages.length ? `
+      ${dashboardPages.length ? `
         <div class="dashboard-subscription-list" aria-label="Subscribed pages">
           ${pageRows}
         </div>
       ` : `
         <article class="dashboard-minimal-empty">
-          <span class="dashboard-page-mark" aria-hidden="true">+</span>
+          <span class="dashboard-page-mark" aria-hidden="true">${hiddenPageCount ? "−" : "+"}</span>
           <div>
-            <h3>${apiLoadError ? "Pages unavailable" : "No subscribed pages"}</h3>
-            <p>${apiLoadError ? "Open My Pages and try again." : "Choose a page package to begin."}</p>
+            <h3>${apiLoadError ? "Pages unavailable" : hiddenPageCount ? "All pages are hidden" : "No subscribed pages"}</h3>
+            <p>${apiLoadError ? "Open My Pages and try again." : hiddenPageCount ? `${hiddenPageCount} hidden page${hiddenPageCount === 1 ? " is" : "s are"} still active and available in My Pages.` : "Choose a page package to begin."}</p>
           </div>
-          <button type="button" class="primary" data-route="${apiLoadError ? "#my-pages" : "#pages"}">${apiLoadError ? "My Pages" : "Browse pages"}</button>
+          <button type="button" class="primary" data-route="${apiLoadError || hiddenPageCount ? "#my-pages" : "#pages"}">${apiLoadError || hiddenPageCount ? "My Pages" : "Browse pages"}</button>
         </article>
       `}
     </section>
   `;
-  statusText.textContent = ownedPages.length ? "SUBSCRIBED PAGES READY" : "NO SUBSCRIBED PAGES";
+  statusText.textContent = dashboardPages.length ? "SUBSCRIBED PAGES READY" : hiddenPageCount ? "SUBSCRIBED PAGES HIDDEN" : "NO SUBSCRIBED PAGES";
   topbarTitle.textContent = "Dashboard";
 }
 
@@ -5582,6 +5593,89 @@ function myPagePrimaryActionAttribute(action) {
   return `data-route="${escapeHtml(action.target)}"`;
 }
 
+function pageHiddenInMyPages(page = {}) {
+  return Boolean(page.uiPreferences?.hiddenInMyPages);
+}
+
+function pageVisibilityBusyAttributes(page = {}) {
+  return pageVisibilityBusyIds.has(page.id) ? ' disabled aria-disabled="true" aria-busy="true"' : "";
+}
+
+function clearMyPagesVisibilityNotice() {
+  window.clearTimeout(myPagesVisibilityNoticeTimer);
+  myPagesVisibilityNoticeTimer = null;
+  myPagesVisibilityNotice = null;
+  preview.querySelector("[data-my-pages-visibility-notice]")?.remove();
+}
+
+function scheduleMyPagesVisibilityNoticeClear(pageId) {
+  window.clearTimeout(myPagesVisibilityNoticeTimer);
+  myPagesVisibilityNoticeTimer = window.setTimeout(() => {
+    if (myPagesVisibilityNotice?.pageId === pageId) clearMyPagesVisibilityNotice();
+  }, 6500);
+}
+
+function myPagesVisibilityNoticeMarkup() {
+  if (!myPagesVisibilityNotice) return "";
+  return `
+    <div class="my-pages-visibility-notice" data-my-pages-visibility-notice role="status">
+      <span><strong>${escapeHtml(myPagesVisibilityNotice.pageName)}</strong> hidden from your page lists.</span>
+      <button type="button" data-page-visibility="show" data-page-id="${escapeHtml(myPagesVisibilityNotice.pageId)}">Undo</button>
+    </div>
+  `;
+}
+
+function hiddenPageRow(page) {
+  const renewal = subscriptionState(page);
+  const liveHost = normalizeAllowedHost(page.hostingConfig?.domain || page.domain || "");
+  return `
+    <article class="hidden-page-row">
+      <div>
+        <small>${escapeHtml(page.status || "active")}</small>
+        <strong>${escapeHtml(page.name)}</strong>
+        <span>${escapeHtml(liveHost || "No live domain")} / ${escapeHtml(renewal.label)}</span>
+      </div>
+      <button type="button" data-page-visibility="show" data-page-id="${escapeHtml(page.id)}"${pageVisibilityBusyAttributes(page)}>Unhide</button>
+    </article>
+  `;
+}
+
+async function setPageVisibilityPreference(page, hiddenInMyPages) {
+  if (!page || pageVisibilityBusyIds.has(page.id)) return;
+  const previousPreferences = { ...(page.uiPreferences || {}) };
+  const optimisticPreferences = {
+    ...previousPreferences,
+    hiddenInMyPages,
+    hiddenAt: hiddenInMyPages ? previousPreferences.hiddenAt || new Date().toISOString() : null
+  };
+  pageVisibilityBusyIds.add(page.id);
+  page.uiPreferences = optimisticPreferences;
+  ownedPages = ownedPages.map((item) => item.id === page.id ? page : item);
+  if (!hiddenInMyPages && myPagesVisibilityNotice?.pageId === page.id) myPagesVisibilityNotice = null;
+  renderMyPages();
+
+  try {
+    const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/ui-preferences`, {
+      method: "PATCH",
+      body: JSON.stringify({ hiddenInMyPages })
+    });
+    const updated = normalizeUserPage({ ...page, ...(result.userPage || {}) });
+    ownedPages = ownedPages.map((item) => item.id === page.id ? updated : item);
+    pageVisibilityBusyIds.delete(page.id);
+    myPagesVisibilityNotice = hiddenInMyPages ? { pageId: page.id, pageName: page.name } : null;
+    renderMyPages();
+    if (hiddenInMyPages) scheduleMyPagesVisibilityNoticeClear(page.id);
+    statusText.textContent = `${page.name.toUpperCase()} ${hiddenInMyPages ? "HIDDEN FROM MY PAGES" : "RESTORED TO MY PAGES"}`;
+  } catch (error) {
+    page.uiPreferences = previousPreferences;
+    ownedPages = ownedPages.map((item) => item.id === page.id ? page : item);
+    pageVisibilityBusyIds.delete(page.id);
+    myPagesVisibilityNotice = null;
+    renderMyPages();
+    statusText.textContent = `PAGE VISIBILITY FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+  }
+}
+
 function ownedPageCard(page) {
   const routeKey = pageRouteKey(page);
   const readiness = pageLaunchReadiness(page);
@@ -5628,7 +5722,10 @@ function ownedPageCard(page) {
             : "<strong>Not connected</strong>"}
           <span>${escapeHtml(hosting.verified ? "Connected" : liveStatus)}</span>
         </div>
-        <button type="button" class="my-page-primary-action is-${primaryAction.tone}" ${myPagePrimaryActionAttribute(primaryAction)}>${escapeHtml(primaryAction.label)}</button>
+        <div class="my-page-overview-actions">
+          <button type="button" class="my-page-primary-action is-${primaryAction.tone}" ${myPagePrimaryActionAttribute(primaryAction)}>${escapeHtml(primaryAction.label)}</button>
+          <button type="button" class="my-page-visibility-action" data-page-visibility="hide" data-page-id="${escapeHtml(page.id)}" aria-label="Hide ${escapeHtml(page.name)} from My Pages"${pageVisibilityBusyAttributes(page)}>Hide</button>
+        </div>
       </header>
 
       <div class="my-page-folds" aria-label="${escapeHtml(page.name)} management sections">
@@ -5684,13 +5781,15 @@ function ownedPageCard(page) {
 
 function renderMyPages() {
   activeFlowSlug = null;
+  const visiblePages = ownedPages.filter((page) => !pageHiddenInMyPages(page));
+  const hiddenPages = ownedPages.filter(pageHiddenInMyPages);
   preview.innerHTML = `
     <section class="app-view my-pages-view">
       <header class="my-pages-header">
         <div>
           <small>my pages</small>
           <h2>Subscribed pages</h2>
-          <p>${ownedPages.length} page${ownedPages.length === 1 ? "" : "s"}</p>
+          <p>${ownedPages.length} total / ${visiblePages.length} shown / ${hiddenPages.length} hidden</p>
         </div>
         ${viewNav([
           routeButton("#dashboard", "Dashboard"),
@@ -5698,9 +5797,27 @@ function renderMyPages() {
         ])}
       </header>
 
+      ${myPagesVisibilityNoticeMarkup()}
+
       <div class="owned-list">
-        ${ownedPages.length ? ownedPages.map(ownedPageCard).join("") : emptyState("No subscribed pages yet", "Subscribe to a published page package, then your live page controls will appear here.", "#pages")}
+        ${visiblePages.length
+          ? visiblePages.map(ownedPageCard).join("")
+          : hiddenPages.length
+            ? `<article class="my-pages-all-hidden"><strong>All pages are hidden</strong><span>Open Hidden pages below to restore one.</span></article>`
+            : emptyState("No subscribed pages yet", "Subscribe to a published page package, then your live page controls will appear here.", "#pages")}
       </div>
+
+      ${hiddenPages.length ? `
+        <details class="hidden-pages-drawer" ${hiddenPagesExpanded ? "open" : ""}>
+          <summary data-toggle-hidden-pages>
+            <span><small>Hidden pages</small><strong>${hiddenPages.length} page${hiddenPages.length === 1 ? "" : "s"}</strong></span>
+            <em>Live pages and data remain unchanged</em>
+          </summary>
+          <div class="hidden-page-list">
+            ${hiddenPages.map(hiddenPageRow).join("")}
+          </div>
+        </details>
+      ` : ""}
     </section>
   `;
   statusText.textContent = "MY PAGES MANAGEMENT ACTIVE";
@@ -8161,6 +8278,12 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
+  const hiddenPagesToggle = event.target.closest("[data-toggle-hidden-pages]");
+  if (hiddenPagesToggle) {
+    hiddenPagesExpanded = !hiddenPagesToggle.closest("details")?.open;
+    return;
+  }
+
   const loginSubmitButton = event.target.closest("[data-login-submit]");
   if (loginSubmitButton) {
     await withButtonBusy(loginSubmitButton, "Signing in", handleLogin);
@@ -8544,6 +8667,14 @@ preview.addEventListener("click", async (event) => {
   if (configButton) {
     setAppBusy(true, "Opening config");
     window.location.hash = `config-${configButton.dataset.configPage}`;
+    return;
+  }
+
+  const pageVisibilityButton = event.target.closest("[data-page-visibility]");
+  if (pageVisibilityButton) {
+    const page = getPageBySlug(pageVisibilityButton.dataset.pageId);
+    const shouldHide = pageVisibilityButton.dataset.pageVisibility === "hide";
+    await setPageVisibilityPreference(page, shouldHide);
     return;
   }
 

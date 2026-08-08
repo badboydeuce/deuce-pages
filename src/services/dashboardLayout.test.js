@@ -29,6 +29,8 @@ test("dashboard stays focused on subscribed pages and one contextual action", as
 
   assert.match(dashboardRenderer, /dashboard-subscription-list/);
   assert.match(dashboardRenderer, /dashboard-subscription-row/);
+  assert.match(dashboardRenderer, /dashboardPages = ownedPages\.filter/);
+  assert.match(dashboardRenderer, /All pages are hidden/);
   assert.match(dashboardRenderer, /dashboardPageLogoMarkup\(page\)/);
   assert.match(dashboardRenderer, /Browse pages/);
   assert.doesNotMatch(dashboardRenderer, /dashboard-kpis|dashboard-risk-panel|dashboard-grid|recent activity|workspace status/i);

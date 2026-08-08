@@ -118,9 +118,13 @@ CREATE TABLE IF NOT EXISTS user_pages (
   hosting_config JSONB NOT NULL DEFAULT '{}'::jsonb,
   result_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
   generated_file JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ui_preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE user_pages
+ADD COLUMN IF NOT EXISTS ui_preferences JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
   id TEXT PRIMARY KEY,

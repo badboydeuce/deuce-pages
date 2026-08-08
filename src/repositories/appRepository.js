@@ -174,6 +174,7 @@ function toUserPage(row) {
     hostingConfig: row.hosting_config,
     resultSettings: row.result_settings,
     generatedFile: row.generated_file,
+    uiPreferences: row.ui_preferences || {},
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -1246,8 +1247,8 @@ export async function subscribeToPackage(id, data = {}) {
     await client.query("UPDATE users SET wallet_balance = wallet_balance - $1, updated_at = now() WHERE id = $2", [dbChargePrice, user.id]);
     const pageResult = await client.query(
       `INSERT INTO user_pages
-        (id, user_id, package_id, package_version, name, slug, domain, status, subscription, flow, configs, security_config, hosting_config, result_settings, generated_file)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb)
+        (id, user_id, package_id, package_version, name, slug, domain, status, subscription, flow, configs, security_config, hosting_config, result_settings, generated_file, ui_preferences)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb, $13::jsonb, $14::jsonb, $15::jsonb)
        RETURNING *`,
       [
         userPage.id,
@@ -1263,7 +1264,8 @@ export async function subscribeToPackage(id, data = {}) {
         JSON.stringify(userPage.securityConfig),
         JSON.stringify(userPage.hostingConfig),
         JSON.stringify(userPage.resultSettings),
-        JSON.stringify(userPage.generatedFile)
+        JSON.stringify(userPage.generatedFile),
+        JSON.stringify(userPage.uiPreferences)
       ]
     );
     await client.query(
@@ -1335,7 +1337,8 @@ function buildUserPage(userId, pagePackage, period, price, data) {
       downloadName: "index.html",
       apiBase: process.env.API_BASE_URL || "http://localhost:10000",
       lastGeneratedAt: null
-    }
+    },
+    uiPreferences: { hiddenInMyPages: false, hiddenAt: null }
   };
 }
 
@@ -1446,6 +1449,45 @@ function normalizeResultSettings(resultSettings = {}) {
       ? Math.min(Math.max(Math.trunc(retentionDays), 1), 3650)
       : 30
   };
+}
+
+function normalizedUserPageUiPreferences(current = {}, input = {}) {
+  const hiddenInMyPages = Boolean(input.hiddenInMyPages);
+  return {
+    ...current,
+    hiddenInMyPages,
+    hiddenAt: hiddenInMyPages
+      ? current.hiddenInMyPages && current.hiddenAt ? current.hiddenAt : new Date().toISOString()
+      : null
+  };
+}
+
+export async function updateUserPageUiPreferences(id, uiPreferences = {}, userId = null) {
+  const current = await findUserPage(id, userId);
+  if (!current) return null;
+  const nextUiPreferences = normalizedUserPageUiPreferences(current.uiPreferences || {}, uiPreferences);
+
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const index = db.userPages.findIndex((page) => page.id === current.id && (!userId || page.userId === userId));
+      if (index === -1) return null;
+      db.userPages[index] = {
+        ...db.userPages[index],
+        uiPreferences: nextUiPreferences,
+        updatedAt: new Date().toISOString()
+      };
+      return db.userPages[index];
+    });
+  }
+
+  const result = await query(
+    `UPDATE user_pages
+     SET ui_preferences = $2::jsonb, updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [current.id, JSON.stringify(nextUiPreferences)]
+  );
+  return toUserPage(result.rows[0]);
 }
 
 export async function updateUserPageConfig(id, data, userId = null, options = {}) {

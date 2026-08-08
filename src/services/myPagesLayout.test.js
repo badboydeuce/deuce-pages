@@ -11,7 +11,10 @@ async function readProjectFile(file) {
 }
 
 test("My Pages prioritizes health, live URL, and one primary action", async () => {
-  const portalScript = await readProjectFile("script.js");
+  const [portalScript, portalCss] = await Promise.all([
+    readProjectFile("script.js"),
+    readProjectFile("styles.css")
+  ]);
   const cardStart = portalScript.indexOf("function ownedPageCard(page) {");
   const viewStart = portalScript.indexOf("function renderMyPages() {");
   const viewEnd = portalScript.indexOf("function renderGoLiveCenter(");
@@ -32,7 +35,15 @@ test("My Pages prioritizes health, live URL, and one primary action", async () =
   assert.match(card, /data-go-live/);
   assert.match(card, /data-security-tab="security"/);
   assert.match(card, /data-results/);
+  assert.match(card, /data-page-visibility="hide"/);
 
   assert.match(view, /my-pages-view/);
+  assert.match(view, /visiblePages = ownedPages\.filter/);
+  assert.match(view, /hidden-pages-drawer/);
+  assert.match(view, /hiddenPages\.map\(hiddenPageRow\)/);
+  assert.match(portalScript, /data-page-visibility="show"/);
+  assert.match(portalScript, /\/ui-preferences/);
+  assert.match(portalCss, /\.hidden-page-row\s*\{/);
+  assert.match(portalCss, /\.my-pages-visibility-notice\s*\{/);
   assert.doesNotMatch(view, /my-pages-kpis|my-pages-brief|summary-grid/);
 });

@@ -18,6 +18,7 @@ import {
   updateIpRule,
   updateSecurityConfig,
   updateUserPageConfig,
+  updateUserPageUiPreferences,
   userPageCapabilities
 } from "../repositories/appRepository.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -107,6 +108,23 @@ userPagesRouter.get("/:id", (req, res) => {
       res.json({ userPage: withPageCapabilities(userPage) });
     })
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.patch("/:id/ui-preferences", async (req, res) => {
+  try {
+    if (typeof req.body?.hiddenInMyPages !== "boolean") {
+      return res.status(400).json({ error: "hiddenInMyPages must be true or false" });
+    }
+    const userPage = await updateUserPageUiPreferences(
+      req.params.id,
+      { hiddenInMyPages: req.body.hiddenInMyPages },
+      req.user.id
+    );
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    res.json({ userPage: withPageCapabilities(userPage) });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 userPagesRouter.patch("/:id/config", requirePageCapability("editConfig"), (req, res) => {
