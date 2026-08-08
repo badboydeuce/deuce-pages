@@ -32,7 +32,7 @@ test("mobile layouts provide safe areas, touch navigation, and zoom-safe forms",
   assert.match(portalCss, /\.preview input,[\s\S]*font-size:\s*16px/);
   assert.match(portalCss, /\.dropdown-panel,[\s\S]*\.notification-panel\s*\{[^}]*position:\s*fixed/s);
   assert.match(accessCss, /\.auth-field input\s*\{[^}]*font-size:\s*16px/s);
-  assert.match(blogCss, /\.hero-actions\s*\{[^}]*grid-template-columns:\s*1fr/s);
+  assert.match(blogCss, /\.login-stage\s*\{[^}]*left:\s*50%/s);
   assert.match(portalScript, /function keepActiveNavVisible\(item\)/);
   assert.match(portalScript, /nav\.scrollTo\(\{ left:/);
 });
