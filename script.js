@@ -56,7 +56,7 @@ const userPageConfigModel = {
   hosting: ["hostingConfig.domain", "hostingConfig.serverIp", "hostingConfig.hostingType", "hostingConfig.installPath", "hostingConfig.verified"],
   flow: ["flow", "configs", "screenOrder", "disabledScreens"],
   security: ["captcha", "bannedIps", "whitelistIps", "trafficLog"],
-  results: ["results", "resultSettings.webhook", "resultSettings.retentionDays", "resultSettings.notifyOnResult"]
+  results: ["results", "resultSettings.webhook", "resultSettings.retentionDays", "resultSettings.notifyOnResult", "resultSettings.telegramNotifyOnResult"]
 };
 
 let adminUsers = [];
@@ -80,6 +80,9 @@ let notificationUnreadCount = 0;
 let notificationPollTimer = null;
 let notificationInitialized = false;
 const notificationSeenIds = new Set();
+let telegramStatus = { configured: false, botUsername: "", webhookConfigured: false, connected: false, connection: null };
+let telegramLinkPollTimer = null;
+let telegramLinkPendingPageId = "";
 const expandedAdminUsers = new Set();
 const collabAdminUsers = new Set();
 const selectedMarketPlans = {};
@@ -537,6 +540,175 @@ function resetNotifications() {
   if (notificationPanel) notificationPanel.hidden = true;
   if (notificationToggle) notificationToggle.setAttribute("aria-expanded", "false");
   renderNotificationCenter();
+}
+
+function telegramAccountName() {
+  const connection = telegramStatus.connection || {};
+  if (connection.username) return `@${connection.username}`;
+  return connection.firstName || "Telegram account";
+}
+
+function telegramConnectionSummary() {
+  if (!telegramStatus.configured) return "Bot setup required";
+  if (!telegramStatus.connected) return "Not connected";
+  return `Connected as ${telegramAccountName()}`;
+}
+
+async function refreshTelegramStatus() {
+  const result = await requestApi("/api/telegram/status");
+  telegramStatus = { ...telegramStatus, ...result };
+  return telegramStatus;
+}
+
+function clearTelegramLinkPolling() {
+  if (telegramLinkPollTimer) window.clearTimeout(telegramLinkPollTimer);
+  telegramLinkPollTimer = null;
+}
+
+async function enableTelegramForPendingPage() {
+  const pageId = telegramLinkPendingPageId;
+  telegramLinkPendingPageId = "";
+  if (!pageId) return;
+  const page = ownedPages.find((item) => item.id === pageId);
+  if (!page) return;
+  page.resultSettings = { ...(page.resultSettings || {}), telegramNotifyOnResult: true };
+  const saved = await saveFlowState(page);
+  if (saved) {
+    const normalized = normalizeUserPage(saved);
+    ownedPages = ownedPages.map((item) => item.id === normalized.id ? { ...item, ...normalized } : item);
+  }
+}
+
+function startTelegramLinkPolling(remainingChecks = 60) {
+  clearTelegramLinkPolling();
+  const poll = async (remaining) => {
+    try {
+      await refreshTelegramStatus();
+      if (telegramStatus.connected) {
+        await enableTelegramForPendingPage();
+        statusText.textContent = "TELEGRAM CONNECTED / RESULT ALERTS READY";
+        if (routeHash(window.location.hash) === "#notifications") renderTelegramSettings();
+        else if (window.location.hash.startsWith("#config-")) renderUserConfigCenter(window.location.hash.replace("#config-", ""));
+        return;
+      }
+    } catch {
+      // Keep polling while Telegram completes the one-time connection.
+    }
+    if (remaining <= 1) {
+      telegramLinkPendingPageId = "";
+      statusText.textContent = "TELEGRAM CONNECTION WAITING / TRY CONNECT AGAIN";
+      return;
+    }
+    telegramLinkPollTimer = window.setTimeout(() => poll(remaining - 1), 2000);
+  };
+  telegramLinkPollTimer = window.setTimeout(() => poll(remainingChecks), 1500);
+}
+
+async function beginTelegramConnection(page = null) {
+  if (!telegramStatus.configured) throw new Error("Telegram bot setup is not complete");
+  if (telegramStatus.connected) {
+    if (page) {
+      telegramLinkPendingPageId = page.id;
+      await enableTelegramForPendingPage();
+    }
+    return telegramStatus;
+  }
+
+  const popup = window.open("about:blank", "deuceTelegramConnect");
+  if (popup) {
+    popup.opener = null;
+    popup.document.title = "Connecting Telegram";
+    popup.document.body.textContent = "Opening the DEUCE Results bot...";
+  }
+  try {
+    const link = await requestApi("/api/telegram/link", { method: "POST" });
+    telegramLinkPendingPageId = page?.id || "";
+    if (popup) popup.location.replace(link.linkUrl);
+    else window.location.assign(link.linkUrl);
+    startTelegramLinkPolling();
+    statusText.textContent = "PRESS START IN TELEGRAM TO COMPLETE CONNECTION";
+    return link;
+  } catch (error) {
+    if (popup && !popup.closed) popup.close();
+    throw error;
+  }
+}
+
+async function sendTelegramTest() {
+  await requestApi("/api/telegram/test", { method: "POST" });
+  await refreshTelegramStatus();
+  if (routeHash(window.location.hash) === "#notifications") renderTelegramSettings();
+  statusText.textContent = "TELEGRAM TEST NOTIFICATION SENT";
+}
+
+async function disconnectTelegramNotifications() {
+  if (!window.confirm("Disconnect Telegram notifications from this DEUCE account?")) return;
+  await requestApi("/api/telegram/connection", { method: "DELETE" });
+  clearTelegramLinkPolling();
+  telegramLinkPendingPageId = "";
+  await refreshTelegramStatus();
+  renderTelegramSettings();
+  statusText.textContent = "TELEGRAM DISCONNECTED / PAGE SETTINGS PAUSED";
+}
+
+async function setupTelegramWebhook() {
+  await requestApi("/api/telegram/webhook/setup", { method: "POST" });
+  await refreshTelegramStatus();
+  renderTelegramSettings();
+  statusText.textContent = "TELEGRAM WEBHOOK INSTALLED";
+}
+
+function renderTelegramSettings() {
+  activeFlowSlug = null;
+  const connected = telegramStatus.connected;
+  const configured = telegramStatus.configured;
+  const enabledPages = ownedPages.filter((page) => page.resultSettings?.telegramNotifyOnResult === true);
+  preview.innerHTML = `
+    <section class="app-view telegram-settings-view">
+      <div class="view-heading">
+        <small>notification delivery</small>
+        <h2>Telegram notifications</h2>
+        <p>Connect once, then choose which subscribed pages can send generic result alerts.</p>
+      </div>
+      ${viewNav([routeButton("#dashboard", "&#8592; Dashboard", "primary"), routeButton("#my-pages", "My Pages")])}
+      <div class="package-editor-grid">
+        <article class="security-panel telegram-connection-card ${connected ? "is-connected" : ""}">
+          <small>shared deuce bot</small>
+          <h3>${escapeHtml(telegramConnectionSummary())}</h3>
+          <p>${configured
+            ? connected
+              ? "The bot can deliver alerts for pages where Telegram notification is enabled."
+              : `Open @${escapeHtml(telegramStatus.botUsername || "DEUCE bot")} and press Start to connect securely.`
+            : "Add the Telegram bot environment variables on Render before users can connect."}</p>
+          <div class="admin-actions">
+            ${configured && !connected ? '<button type="button" data-telegram-connect>Connect Telegram</button>' : ""}
+            ${connected ? '<button type="button" data-telegram-test>Send test</button><button type="button" class="danger" data-telegram-disconnect>Disconnect</button>' : ""}
+            ${isAdmin() && configured ? '<button type="button" data-telegram-webhook-setup>Install webhook</button>' : ""}
+          </div>
+        </article>
+        <article class="security-panel telegram-privacy-card">
+          <small>privacy boundary</small>
+          <h3>Notification only</h3>
+          <p>Telegram receives the page name, notification time, and an authenticated link back to DEUCE. Submitted fields, IP addresses, sessions, and raw results stay inside DEUCE.</p>
+        </article>
+      </div>
+      <article class="security-panel telegram-page-list">
+        <div class="builder-heading compact">
+          <div><small>per-page controls</small><h3>${enabledPages.length} of ${ownedPages.length} pages enabled</h3></div>
+        </div>
+        <div class="admin-package-list">
+          ${ownedPages.length ? ownedPages.map((page) => `
+            <article class="telegram-page-row">
+              <div><strong>${escapeHtml(page.name)}</strong><span>${page.resultSettings?.telegramNotifyOnResult === true ? connected ? "Telegram alerts active" : "Enabled / connection paused" : "Telegram alerts off"}</span></div>
+              <button type="button" data-route="#config-${escapeHtml(pageRouteKey(page))}">Result settings</button>
+            </article>
+          `).join("") : emptyState("No subscribed pages", "Subscribe to a page before enabling result notifications.", "#pages")}
+        </div>
+      </article>
+    </section>
+  `;
+  statusText.textContent = connected ? "TELEGRAM NOTIFICATIONS CONNECTED" : configured ? "TELEGRAM CONNECTION READY" : "TELEGRAM BOT SETUP REQUIRED";
+  topbarTitle.textContent = "Telegram Notifications";
 }
 
 function renderMissingPage() {
@@ -1979,9 +2151,10 @@ async function loadAppData() {
     let adminDepositRequestsResult = { requests: [] };
     let adminUsersResult = { users: [] };
     let adminInvitationsResult = { invitations: [] };
+    let telegramStatusResult = telegramStatus;
     if (isLoggedIn()) {
       userPagesResult = await requestApi("/api/user-pages");
-      [walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult, adminUsersResult, adminInvitationsResult] = await Promise.all([
+      [walletResult, depositRequestsResult, fundingOptionsResult, adminDepositRequestsResult, adminUsersResult, adminInvitationsResult, telegramStatusResult] = await Promise.all([
         requestApi("/api/wallet"),
         requestApi("/api/wallet/fund-requests").catch(() => ({ requests: [] })),
         requestApi("/api/wallet/funding-options").catch(() => ({ options: walletFundingOptions })),
@@ -1993,7 +2166,8 @@ async function loadAppData() {
           : Promise.resolve({ users: [] }),
         isAdmin()
           ? requestApi("/api/admin/invites").catch(() => ({ invitations: [] }))
-          : Promise.resolve({ invitations: [] })
+          : Promise.resolve({ invitations: [] }),
+        requestApi("/api/telegram/status").catch(() => ({ configured: false, connected: false, connection: null }))
       ]);
     }
     const packages = packagesResult.packages || [];
@@ -2010,6 +2184,7 @@ async function loadAppData() {
     adminDepositRequests = adminDepositRequestsResult.requests || [];
     adminUsers = (adminUsersResult.users || []).map(normalizeAdminUser);
     adminInvitations = adminInvitationsResult.invitations || [];
+    telegramStatus = { ...telegramStatus, ...(telegramStatusResult || {}) };
   } catch (error) {
     apiLoadError = safeErrorMessage(error, "Application data could not be loaded.");
     marketPages = [];
@@ -2017,6 +2192,7 @@ async function loadAppData() {
     ownedPages = [];
     adminUsers = [];
     adminInvitations = [];
+    telegramStatus = { configured: false, botUsername: "", webhookConfigured: false, connected: false, connection: null };
     walletData = { balance: 0, currency: "USD", transactions: [] };
     walletDepositRequests = [];
     walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
@@ -2060,6 +2236,9 @@ function clearAuthState() {
   walletFundOpen = false;
   walletHistoryOpen = false;
   walletFundingOptions = cryptoFundingOptions.map((option) => ({ ...option, address: "", configured: false }));
+  clearTelegramLinkPolling();
+  telegramLinkPendingPageId = "";
+  telegramStatus = { configured: false, botUsername: "", webhookConfigured: false, connected: false, connection: null };
   resetNotifications();
   syncAdminVisibility();
 }
@@ -6131,12 +6310,19 @@ function renderUserConfigCenter(pageSlug = "page-a") {
           <h3>Result handling</h3>
           <label><span>Keep results for</span><input type="number" min="1" max="3650" data-user-config="retentionDays" value="${escapeHtml(resultSettings.retentionDays || 30)}"></label>
           <label class="toggle-row">
-            <input type="checkbox" data-user-config="notifyOnResult" ${resultSettings.notifyOnResult ? "checked" : ""}>
-            <span>Notify me when a new result arrives</span>
+            <input type="checkbox" data-user-config="notifyOnResult" ${resultSettings.notifyOnResult !== false ? "checked" : ""}>
+            <span>Show an in-app notification when a new result arrives</span>
           </label>
+          <label class="toggle-row telegram-page-toggle ${telegramStatus.connected ? "is-connected" : ""}">
+            <input type="checkbox" data-user-config="telegramNotifyOnResult" data-telegram-page-toggle="${escapeHtml(routeKey)}" ${resultSettings.telegramNotifyOnResult === true ? "checked" : ""} ${telegramStatus.configured ? "" : "disabled"}>
+            <span>Send a Telegram result notification</span>
+          </label>
+          <p class="telegram-inline-status">${escapeHtml(telegramConnectionSummary())}. Telegram receives only a notification and a link back to DEUCE.</p>
           <div class="admin-actions">
             <button type="button" data-save-user-config="${routeKey}">Save results</button>
             <button type="button" data-results="${routeKey}">Open results</button>
+            ${telegramStatus.configured && !telegramStatus.connected ? `<button type="button" data-telegram-connect="${escapeHtml(routeKey)}">Connect Telegram</button>` : ""}
+            ${telegramStatus.connected ? '<button type="button" data-telegram-test>Test Telegram</button>' : ""}
           </div>
         </article>
 
@@ -7014,6 +7200,12 @@ function renderRoute() {
     return;
   }
 
+  if (hash === "#notifications") {
+    setActiveNav("#dashboard");
+    renderTelegramSettings();
+    return;
+  }
+
   if (hash === "#admin") {
     renderAdmin();
     return;
@@ -7277,15 +7469,20 @@ async function saveSecurityConfig(page, tab = "security") {
   return true;
 }
 
-function saveUserConfig(page) {
+async function saveUserConfig(page) {
   if (!page) {
     renderMissingPage();
-    return;
+    return false;
   }
   const getField = (name) => preview.querySelector(`[data-user-config="${name}"]`);
   const fieldValue = (name, fallback = "") => getField(name)?.value.trim() || fallback;
   const fieldChecked = (name, fallback = false) => getField(name)?.checked ?? fallback;
   const domain = fieldValue("domain", page.hostingConfig?.domain || page.domain || "");
+  const wantsTelegram = fieldChecked("telegramNotifyOnResult", Boolean(page.resultSettings?.telegramNotifyOnResult));
+  if (wantsTelegram && !telegramStatus.connected) {
+    await beginTelegramConnection(page);
+    return false;
+  }
 
   page.domain = domain;
   page.subscription = {
@@ -7302,7 +7499,8 @@ function saveUserConfig(page) {
     ...(page.resultSettings || {}),
     webhook: page.resultSettings?.webhook || "/api/page-results",
     retentionDays: Number(fieldValue("retentionDays", page.resultSettings?.retentionDays || 30)),
-    notifyOnResult: fieldChecked("notifyOnResult", Boolean(page.resultSettings?.notifyOnResult))
+    notifyOnResult: fieldChecked("notifyOnResult", page.resultSettings?.notifyOnResult !== false),
+    telegramNotifyOnResult: wantsTelegram
   };
   page.hostingConfig = {
     ...(page.hostingConfig || {}),
@@ -7313,9 +7511,13 @@ function saveUserConfig(page) {
     domains: domain ? [domain] : []
   };
 
-  saveFlowState(page);
-  renderUserConfigCenter(pageRouteKey(page));
-  statusText.textContent = `${page.name.toUpperCase()} USER CONFIG SAVED`;
+  const saved = await saveFlowState(page);
+  if (!saved) return false;
+  const normalized = normalizeUserPage(saved);
+  ownedPages = ownedPages.map((item) => item.id === normalized.id ? { ...item, ...normalized } : item);
+  renderUserConfigCenter(pageRouteKey(normalized));
+  statusText.textContent = `${normalized.name.toUpperCase()} USER CONFIG SAVED`;
+  return true;
 }
 
 function collectHostingFields(page) {
@@ -8138,6 +8340,13 @@ notificationToggle?.addEventListener("click", () => {
 });
 
 notificationCenter?.addEventListener("click", async (event) => {
+  const routeTarget = event.target.closest("[data-route]");
+  if (routeTarget) {
+    if (notificationPanel) notificationPanel.hidden = true;
+    notificationToggle?.setAttribute("aria-expanded", "false");
+    window.location.hash = routeTarget.dataset.route;
+    return;
+  }
   const readAll = event.target.closest("[data-notification-read-all]");
   if (readAll) {
     await requestApi("/api/notifications/read-all", { method: "PATCH" });
@@ -8267,6 +8476,41 @@ preview.addEventListener("click", async (event) => {
     } else {
       window.location.hash = routeButton.dataset.route;
     }
+    return;
+  }
+
+  const telegramConnectButton = event.target.closest("[data-telegram-connect]");
+  if (telegramConnectButton) {
+    const page = telegramConnectButton.dataset.telegramConnect
+      ? getPageBySlug(telegramConnectButton.dataset.telegramConnect)
+      : null;
+    await withButtonBusy(telegramConnectButton, "Connecting", () => beginTelegramConnection(page)).catch((error) => {
+      statusText.textContent = `TELEGRAM CONNECTION FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const telegramTestButton = event.target.closest("[data-telegram-test]");
+  if (telegramTestButton) {
+    await withButtonBusy(telegramTestButton, "Sending", sendTelegramTest).catch((error) => {
+      statusText.textContent = `TELEGRAM TEST FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const telegramDisconnectButton = event.target.closest("[data-telegram-disconnect]");
+  if (telegramDisconnectButton) {
+    await withButtonBusy(telegramDisconnectButton, "Disconnecting", disconnectTelegramNotifications).catch((error) => {
+      statusText.textContent = `TELEGRAM DISCONNECT FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const telegramWebhookButton = event.target.closest("[data-telegram-webhook-setup]");
+  if (telegramWebhookButton) {
+    await withButtonBusy(telegramWebhookButton, "Installing", setupTelegramWebhook).catch((error) => {
+      statusText.textContent = `TELEGRAM WEBHOOK FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
     return;
   }
 
@@ -8814,7 +9058,7 @@ preview.addEventListener("click", async (event) => {
 
   const saveUserConfigButton = event.target.closest("[data-save-user-config]");
   if (saveUserConfigButton) {
-    saveUserConfig(getPageBySlug(saveUserConfigButton.dataset.saveUserConfig));
+    await withButtonBusy(saveUserConfigButton, "Saving", () => saveUserConfig(getPageBySlug(saveUserConfigButton.dataset.saveUserConfig)));
     return;
   }
 
@@ -9016,6 +9260,14 @@ preview.addEventListener("toggle", (event) => {
   if (event.target.matches?.("[data-compact-session]")) updateResultsAutoRefreshStatus();
 }, true);
 preview.addEventListener("change", (event) => {
+  if (event.target.matches?.("[data-telegram-page-toggle]") && event.target.checked && !telegramStatus.connected) {
+    const page = getPageBySlug(event.target.dataset.telegramPageToggle);
+    beginTelegramConnection(page).catch((error) => {
+      event.target.checked = false;
+      statusText.textContent = `TELEGRAM CONNECTION FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
   if (event.target.matches?.("[data-package-screen-entry], [data-package-screen-final], [data-package-screen-final-none]")) {
     refreshImportedScreenOrder();
     statusText.textContent = "SCREEN MAPPING CHANGED / SAVE DRAFT TO PERSIST";

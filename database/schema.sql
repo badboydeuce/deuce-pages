@@ -204,6 +204,54 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
   UNIQUE(result_id, event_type)
 );
 
+CREATE TABLE IF NOT EXISTS telegram_connections (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  telegram_user_id TEXT UNIQUE NOT NULL,
+  chat_id TEXT UNIQUE NOT NULL,
+  username TEXT,
+  first_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  linked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  disconnected_at TIMESTAMPTZ,
+  last_delivery_at TIMESTAMPTZ,
+  last_test_at TIMESTAMPTZ,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  last_error_code TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS telegram_link_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT UNIQUE NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS telegram_webhook_updates (
+  update_id TEXT PRIMARY KEY,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS telegram_notification_deliveries (
+  id TEXT PRIMARY KEY,
+  notification_id TEXT NOT NULL REFERENCES notification_outbox(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_page_id TEXT NOT NULL REFERENCES user_pages(id) ON DELETE CASCADE,
+  channel TEXT NOT NULL DEFAULT 'telegram',
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sent_at TIMESTAMPTZ,
+  error_code TEXT,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(notification_id, channel)
+);
+
 CREATE TABLE IF NOT EXISTS traffic_events (
   id TEXT PRIMARY KEY,
   user_page_id TEXT REFERENCES user_pages(id) ON DELETE CASCADE,
@@ -244,6 +292,10 @@ CREATE INDEX IF NOT EXISTS idx_page_results_user_page_session ON page_results(us
 CREATE INDEX IF NOT EXISTS idx_page_results_user_page_status ON page_results(user_page_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_created ON notification_outbox(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_unread ON notification_outbox(user_id, read_at) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_telegram_link_tokens_user ON telegram_link_tokens(user_id, expires_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telegram_link_tokens_hash ON telegram_link_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_telegram_deliveries_due ON telegram_notification_deliveries(status, next_attempt_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_telegram_deliveries_user_page ON telegram_notification_deliveries(user_page_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_id ON traffic_events(user_page_id);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_created_at ON traffic_events(created_at DESC);
 

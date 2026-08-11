@@ -20,7 +20,11 @@ function emptyDb() {
     githubChangeEvents: [],
     pageResults: [],
     trafficEvents: [],
-    notificationOutbox: []
+    notificationOutbox: [],
+    telegramConnections: [],
+    telegramLinkTokens: [],
+    telegramWebhookUpdates: [],
+    telegramNotificationDeliveries: []
   };
 }
 

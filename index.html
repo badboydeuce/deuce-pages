@@ -123,7 +123,10 @@
             <section class="notification-panel" id="notificationPanel" aria-label="Notifications" hidden>
               <header>
                 <div><small>notification center</small><strong>Recent results</strong></div>
-                <button type="button" data-notification-read-all>Mark all read</button>
+                <div class="notification-panel-actions">
+                  <button type="button" data-route="#notifications">Telegram</button>
+                  <button type="button" data-notification-read-all>Mark all read</button>
+                </div>
               </header>
               <div class="notification-list" id="notificationList"><p>No notifications yet.</p></div>
             </section>

@@ -15,6 +15,8 @@ import { previewRouter } from "./routes/preview.js";
 import { runtimeRouter } from "./routes/runtime.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { githubWebhooksRouter } from "./routes/githubWebhooks.js";
+import { telegramRouter } from "./routes/telegram.js";
+import { telegramWebhooksRouter } from "./routes/telegramWebhooks.js";
 import { sanitizeResponseSecrets } from "./services/responseSecrets.js";
 import { publicErrorMessage, sanitizeErrorResponse } from "./services/publicErrors.js";
 import { configureClientIpTrust } from "./services/clientIp.js";
@@ -254,6 +256,7 @@ export function createApp() {
   });
 
   app.use("/api/webhooks", githubWebhooksRouter);
+  app.use("/api/webhooks", telegramWebhooksRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/packages", packagesRouter);
   app.use("/api/admin/packages", packagesRouter);
@@ -262,6 +265,7 @@ export function createApp() {
   app.use("/api/admin/invites", adminInvitesRouter);
   app.use("/api/user-pages", userPagesRouter);
   app.use("/api/notifications", notificationsRouter);
+  app.use("/api/telegram", telegramRouter);
   app.use("/api/wallet", walletRouter);
   app.use("/api/page-security", securityRouter);
   app.use("/api/runtime/runtime", runtimeRouter);

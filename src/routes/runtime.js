@@ -39,6 +39,7 @@ import {
   trustedResultManifestFromPersistent,
   verifyResultFieldManifest
 } from "../services/resultCapture.js";
+import { wakeTelegramDispatcher } from "../services/telegram.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -1002,6 +1003,7 @@ runtimeRouter.post("/results", async (req, res) => {
     pageName: context.page.name,
     hostname: context.clientHost || req.body?.hostname
   }, context.ip, req.headers["user-agent"], { fieldManifest });
+  wakeTelegramDispatcher();
   res.status(201).json({ result });
 });
 
