@@ -91,6 +91,7 @@ securityRouter.post("/check", async (req, res) => {
       result: decision.allowed ? "allowed" : "blocked",
       reason: decision.allowed ? "Passed rules" : decision.reason,
       metadata: {
+        decisionSource: "server_security",
         deviceType: decision.deviceType || null,
         proxyType: decision.proxyType || null,
         reputation: decision.reputation || null,

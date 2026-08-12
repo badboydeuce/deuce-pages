@@ -164,7 +164,8 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
 test("generated launchers refresh live security before booting", async () => {
   const source = await fs.readFile(path.resolve(process.cwd(), "script.js"), "utf8");
   assert.equal((source.match(/async function refreshLiveConfig\(\)/g) || []).length, 2);
-  assert.equal((source.match(/fetch\(config\.runtime\.configEndpoint/g) || []).length, 2);
+  assert.equal((source.match(/configUrl\.searchParams\.set\("sessionId", sessionId\)/g) || []).length, 2);
+  assert.equal((source.match(/fetch\(configUrl\.toString\(\)/g) || []).length, 2);
   assert.equal((source.match(/\/branding\?userPageId=/g) || []).length, 2);
   assert.match(source, /id="deuceGateLogo"/);
   assert.match(source, /id="captchaBrandImage"/);

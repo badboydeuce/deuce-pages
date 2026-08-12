@@ -4,11 +4,11 @@ import {
   applyBulkResultAction,
   deleteResult,
   getResultDetail,
+  getTrafficReport,
   findUserPage,
   findPackage,
   listActivePageSessions,
   listResults,
-  listTrafficEvents,
   listUserPages,
   markGenerated,
   pageSubscriptionState,
@@ -250,10 +250,10 @@ userPagesRouter.post("/:id/generate-index", requirePageCapability("generateIndex
 });
 
 userPagesRouter.get("/:id/traffic", (req, res) => {
-  listTrafficEvents(req.params.id, req.user.id, req.query.limit)
-    .then((trafficEvents) => {
-      if (!trafficEvents) return res.status(404).json({ error: "User page not found" });
-      res.json({ trafficEvents });
+  getTrafficReport(req.params.id, req.user.id, req.query.limit)
+    .then((report) => {
+      if (!report) return res.status(404).json({ error: "User page not found" });
+      res.json(report);
     })
     .catch((error) => res.status(400).json({ error: error.message }));
 });

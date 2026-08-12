@@ -2387,7 +2387,8 @@ async function handleRequest(request) {
   return fetch(target.toString(), {
     method: request.method,
     headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    redirect: "manual"
   });
 }`;
 }
@@ -2962,7 +2963,18 @@ function createPackageRuntimeIndex(page, pagePackage) {
     <script>
       window.DEUCE_PAGE_CONFIG = ${configJson};
       const config = window.DEUCE_PAGE_CONFIG;
-      const sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const sessionId = (() => {
+        const key = "deuce_session_" + config.id;
+        try {
+          const existing = window.sessionStorage.getItem(key);
+          if (existing) return existing;
+          const next = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+          window.sessionStorage.setItem(key, next);
+          return next;
+        } catch (error) {
+          return "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+        }
+      })();
       const host = window.location.hostname;
       const frame = document.getElementById("deuceFrame");
       const gate = document.getElementById("deuceGate");
@@ -3011,6 +3023,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
         if (!endpoint) return;
         const brandingUrl = new URL(endpoint, window.location.href);
         brandingUrl.searchParams.set("hostname", window.location.hostname);
+        brandingUrl.searchParams.set("sessionId", sessionId);
         gateLogo.onload = () => {
           gateLogo.hidden = false;
           gateFallback.hidden = true;
@@ -3026,7 +3039,10 @@ function createPackageRuntimeIndex(page, pagePackage) {
         if (!config.runtime?.configEndpoint) {
           throw new Error("Live security configuration endpoint is missing");
         }
-        const response = await fetch(config.runtime.configEndpoint, {
+        const configUrl = new URL(config.runtime.configEndpoint, window.location.href);
+        configUrl.searchParams.set("hostname", window.location.hostname);
+        configUrl.searchParams.set("sessionId", sessionId);
+        const response = await fetch(configUrl.toString(), {
           method: "GET",
           cache: "no-store",
           headers: { Accept: "application/json" }
@@ -3063,6 +3079,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
           body: JSON.stringify({
             userPageId: config.id,
             pageId: config.pageId,
+            sessionId,
             hostname: window.location.hostname,
             event,
             result,
@@ -3077,6 +3094,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
         frame.classList.remove("pending");
         const sourceUrl = new URL(config.runtime.sourceEndpoint, window.location.href);
         sourceUrl.searchParams.set("hostname", window.location.hostname);
+        sourceUrl.searchParams.set("sessionId", sessionId);
         frame.src = sourceUrl.toString();
       }
 
@@ -3429,7 +3447,18 @@ function createGeneratedIndex(page) {
       const config = window.DEUCE_PAGE_CONFIG;
       let currentStep = 0;
       const sessionData = {};
-      const sessionId = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+      const sessionId = (() => {
+        const key = "deuce_session_" + config.id;
+        try {
+          const existing = window.sessionStorage.getItem(key);
+          if (existing) return existing;
+          const next = "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+          window.sessionStorage.setItem(key, next);
+          return next;
+        } catch (error) {
+          return "sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+        }
+      })();
       let runtimeAllowed = true;
       let captchaPassed = false;
       let captchaToken = "";
@@ -3483,7 +3512,10 @@ function createGeneratedIndex(page) {
         if (!config.runtime?.configEndpoint) {
           throw new Error("Live security configuration endpoint is missing");
         }
-        const response = await fetch(config.runtime.configEndpoint, {
+        const configUrl = new URL(config.runtime.configEndpoint, window.location.href);
+        configUrl.searchParams.set("hostname", window.location.hostname);
+        configUrl.searchParams.set("sessionId", sessionId);
+        const response = await fetch(configUrl.toString(), {
           method: "GET",
           cache: "no-store",
           headers: { Accept: "application/json" }
@@ -3734,6 +3766,7 @@ function createGeneratedIndex(page) {
         if (!brandingEndpoint) return;
         const brandingUrl = new URL(brandingEndpoint, window.location.href);
         brandingUrl.searchParams.set("hostname", window.location.hostname);
+        brandingUrl.searchParams.set("sessionId", sessionId);
         image.onload = () => {
           image.hidden = false;
           fallback.hidden = true;
@@ -6378,41 +6411,74 @@ function detectTrafficDeviceType(event = {}) {
   return "other";
 }
 
-function trafficInsights(trafficLog = []) {
+function trafficInsights(trafficLog = [], storedSummary = null) {
+  let summary = storedSummary;
+  if (!summary) {
+    const visits = new Map();
+    let blockEvents = 0;
+    trafficLog.forEach((event, index) => {
+      const sessionId = String(event.sessionId || "").trim();
+      const key = sessionId ? `session:${sessionId}` : `event:${event.id || index}`;
+      const createdAt = new Date(event.createdAt || event.time || 0).getTime();
+      const deviceType = detectTrafficDeviceType(event);
+      const current = visits.get(key) || { createdAt, deviceType, blocked: false };
+      if (!current.createdAt || (createdAt && createdAt < current.createdAt)) current.createdAt = createdAt;
+      if (current.deviceType === "other" && deviceType !== "other") current.deviceType = deviceType;
+      current.blocked = current.blocked || String(event.result || "").toLowerCase() === "blocked";
+      visits.set(key, current);
+      if (String(event.result || "").toLowerCase() === "blocked") blockEvents += 1;
+    });
+    const devices = { mobile: 0, desktop: 0, tablet: 0, bot: 0, other: 0 };
+    const buckets = new Map();
+    let blockedVisits = 0;
+    visits.forEach((visit) => {
+      devices[visit.deviceType] = (devices[visit.deviceType] || 0) + 1;
+      if (visit.blocked) blockedVisits += 1;
+      if (!visit.createdAt) return;
+      const hour = new Date(visit.createdAt);
+      hour.setMinutes(0, 0, 0);
+      const at = hour.toISOString();
+      const bucket = buckets.get(at) || { at, visits: 0, blockedVisits: 0 };
+      bucket.visits += 1;
+      if (visit.blocked) bucket.blockedVisits += 1;
+      buckets.set(at, bucket);
+    });
+    summary = {
+      uniqueVisits: visits.size,
+      cleanVisits: Math.max(0, visits.size - blockedVisits),
+      blockedVisits,
+      blockEvents,
+      totalEvents: trafficLog.length,
+      devices,
+      timeline: [...buckets.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-24),
+      windowHours: 24
+    };
+  }
+
   const counts = { mobile: 0, desktop: 0, tablet: 0, bot: 0, other: 0 };
-  const buckets = new Map();
-  let allowed = 0;
-  let blocked = 0;
-
-  trafficLog.forEach((event) => {
-    const deviceType = detectTrafficDeviceType(event);
-    counts[deviceType] = (counts[deviceType] || 0) + 1;
-    if (event.result === "blocked") blocked += 1;
-    else allowed += 1;
-
-    const date = new Date(event.createdAt || event.time);
-    if (Number.isNaN(date.getTime())) return;
-    const hour = new Date(date);
-    hour.setMinutes(0, 0, 0);
-    const key = hour.toISOString();
-    const label = hour.toLocaleTimeString([], { hour: "2-digit" });
-    const current = buckets.get(key) || { key, label, total: 0 };
-    current.total += 1;
-    buckets.set(key, current);
+  Object.keys(counts).forEach((key) => {
+    counts[key] = Number(summary.devices?.[key] || 0);
   });
-
-  const graph = [...buckets.values()]
-    .sort((a, b) => a.key.localeCompare(b.key))
-    .slice(-10);
-  const maxGraphValue = Math.max(1, ...graph.map((bucket) => bucket.total));
+  const graph = (summary.timeline || []).map((bucket) => {
+    const date = new Date(bucket.at);
+    return {
+      key: Number.isNaN(date.getTime()) ? String(bucket.at || "") : date.toISOString(),
+      label: Number.isNaN(date.getTime()) ? "Visit" : date.toLocaleTimeString([], { hour: "2-digit" }),
+      total: Number(bucket.visits || 0),
+      blocked: Number(bucket.blockedVisits || 0)
+    };
+  }).slice(-24);
 
   return {
     counts,
-    allowed,
-    blocked,
+    uniqueVisits: Number(summary.uniqueVisits || 0),
+    cleanVisits: Number(summary.cleanVisits || 0),
+    blockedVisits: Number(summary.blockedVisits || 0),
+    blockEvents: Number(summary.blockEvents || 0),
+    totalEvents: Number(summary.totalEvents || 0),
     graph,
-    maxGraphValue,
-    total: trafficLog.length
+    maxGraphValue: Math.max(1, ...graph.map((bucket) => bucket.total)),
+    windowHours: Number(summary.windowHours || 24)
   };
 }
 
@@ -6427,12 +6493,12 @@ function trafficCategoryCardsMarkup(insights) {
 
 function trafficGraphMarkup(insights) {
   if (!insights.graph.length) {
-    return `<div class="traffic-chart empty"><span>No graph data yet</span></div>`;
+    return `<div class="traffic-chart empty"><span>No visits in the last ${insights.windowHours} hours</span></div>`;
   }
   return `
-    <div class="traffic-chart" aria-label="Traffic graph">
+    <div class="traffic-chart" aria-label="Unique visits by first-seen hour">
       ${insights.graph.map((bucket) => `
-        <div class="traffic-bar" title="${escapeHtml(bucket.label)} / ${bucket.total}">
+        <div class="traffic-bar" title="${escapeHtml(bucket.label)} / ${bucket.total} unique visit${bucket.total === 1 ? "" : "s"} / ${bucket.blocked} with blocks">
           <i style="height: ${Math.max(8, Math.round((bucket.total / insights.maxGraphValue) * 100))}%"></i>
           <span>${escapeHtml(bucket.label)}</span>
         </div>
@@ -6584,10 +6650,16 @@ function ipRuleRowsMarkup(ips = [], pageSlug, label) {
 async function fetchPageTraffic(page) {
   try {
     const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/traffic?limit=100`);
-    return result.trafficEvents || [];
+    return {
+      trafficEvents: result.trafficEvents || [],
+      trafficSummary: result.trafficSummary || null
+    };
   } catch (error) {
     statusText.textContent = `TRAFFIC LOAD FAILED: ${safeErrorMessage(error)}`.toUpperCase();
-    return page.securityConfig?.trafficLog || [];
+    return {
+      trafficEvents: page.securityConfig?.trafficLog || [],
+      trafficSummary: null
+    };
   }
 }
 
@@ -6607,8 +6679,11 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   const whitelistIps = security.whitelistIps || [];
   const blockedDevices = security.blockedDevices || [];
   const vpnProxyRules = security.vpnProxyRules || {};
-  const trafficLog = ["traffic", "log"].includes(tab) ? await fetchPageTraffic(page) : security.trafficLog || [];
-  const trafficStats = trafficInsights(trafficLog);
+  const trafficReport = ["traffic", "log"].includes(tab)
+    ? await fetchPageTraffic(page)
+    : { trafficEvents: security.trafficLog || [], trafficSummary: null };
+  const trafficLog = trafficReport.trafficEvents;
+  const trafficStats = trafficInsights(trafficLog, trafficReport.trafficSummary);
   const tabButtons = [
     routeButton(`#security-${routeKey}:security`, "Security", tab === "security" ? "primary" : ""),
     routeButton(`#security-${routeKey}:ips`, "IP Rules", tab === "ips" ? "primary" : ""),
@@ -6725,10 +6800,13 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         </div>
         <button type="button" data-route="#security-${routeKey}:traffic">Refresh</button>
       </div>
+      <p>Lifetime totals count each browser session once. Device cards count unique visits; the graph shows when visits first appeared during the last ${trafficStats.windowHours} hours. The activity list shows the latest 100 events.</p>
       <div class="metric-grid">
-        <div><span>Total events</span><b>${trafficStats.total}</b></div>
-        <div><span>Allowed</span><b>${trafficStats.allowed}</b></div>
-        <div><span>Blocked</span><b>${trafficStats.blocked}</b></div>
+        <div><span>Unique visits</span><b>${trafficStats.uniqueVisits}</b></div>
+        <div><span>Clean visits</span><b>${trafficStats.cleanVisits}</b></div>
+        <div><span>Visits with blocks</span><b>${trafficStats.blockedVisits}</b></div>
+        <div><span>Block events</span><b>${trafficStats.blockEvents}</b></div>
+        <div><span>Total events</span><b>${trafficStats.totalEvents}</b></div>
       </div>
       <div class="traffic-dashboard">
         <section class="traffic-category-grid" aria-label="Traffic categories">
@@ -6752,9 +6830,9 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       </div>
       <p>This log explains the real owner-side reason behind page activity. Visitors still only see ACCESS DENIED when a rule blocks them.</p>
       <div class="metric-grid">
-        <div><span>Total events</span><b>${trafficStats.total}</b></div>
-        <div><span>Allowed</span><b>${trafficStats.allowed}</b></div>
-        <div><span>Denied</span><b>${trafficStats.blocked}</b></div>
+        <div><span>Unique visits</span><b>${trafficStats.uniqueVisits}</b></div>
+        <div><span>Total events</span><b>${trafficStats.totalEvents}</b></div>
+        <div><span>Block events</span><b>${trafficStats.blockEvents}</b></div>
       </div>
       <div class="page-log-list">
         ${pageLogRowsMarkup(trafficLog)}

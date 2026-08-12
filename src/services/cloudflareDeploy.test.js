@@ -66,6 +66,7 @@ test("managed Worker removes the customer Origin before forwarding runtime reque
     assert.equal(forwardedRequest.init.headers.get("x-deuce-client-host"), "client.example");
     assert.equal(forwardedRequest.init.headers.get("x-deuce-client-ip"), "198.51.100.70");
     assert.equal(forwardedRequest.init.headers.get("x-test"), "preserved");
+    assert.equal(forwardedRequest.init.redirect, "manual");
     assert.match(response.headers.get("set-cookie") || "", /^deuce_source_proof=proof/);
   } finally {
     if (previousRuntimeApiBaseUrl === undefined) delete process.env.RUNTIME_API_BASE_URL;

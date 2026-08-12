@@ -298,6 +298,8 @@ CREATE INDEX IF NOT EXISTS idx_telegram_deliveries_due ON telegram_notification_
 CREATE INDEX IF NOT EXISTS idx_telegram_deliveries_user_page ON telegram_notification_deliveries(user_page_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_id ON traffic_events(user_page_id);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_created_at ON traffic_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_created ON traffic_events(user_page_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_session ON traffic_events(user_page_id, session_id);
 
 WITH ranked_heartbeats AS (
   SELECT

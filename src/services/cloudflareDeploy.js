@@ -57,7 +57,8 @@ async function handleRequest(request) {
   return fetch(target.toString(), {
     method: request.method,
     headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    redirect: "manual"
   });
 }`;
 }

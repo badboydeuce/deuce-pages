@@ -5,6 +5,7 @@ import { createRuntimePackageSnapshot } from "../services/runtimeScreens.js";
 import {
   trustedResultManifestFromPersistent
 } from "../services/resultCapture.js";
+import { summarizeTrafficEvents } from "../services/trafficAnalytics.js";
 import {
   queueTelegramDeliveryInJson,
   queueTelegramDeliveryWithClient
@@ -2456,6 +2457,100 @@ export async function listTrafficEvents(userPageId, userId = null, limit = 100) 
     [userPage.id, safeLimit]
   );
   return result.rows.map(toTrafficEvent);
+}
+
+export async function getTrafficReport(userPageId, userId = null, limit = 100) {
+  const userPage = await findUserPage(userPageId, userId);
+  if (!userPage) return null;
+  const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 250);
+
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const allEvents = db.trafficEvents
+      .filter((event) => event.userPageId === userPage.id)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return {
+      trafficEvents: allEvents.slice(0, safeLimit),
+      trafficSummary: summarizeTrafficEvents(allEvents)
+    };
+  }
+
+  const deviceTypeSql = `CASE
+    WHEN metadata->>'deviceType' IN ('mobile', 'desktop', 'tablet', 'bot', 'other')
+      THEN metadata->>'deviceType'
+    WHEN lower(COALESCE(user_agent, '')) ~ 'bot|crawler|spider|slurp|headless|preview|scanner|curl|wget|python-requests|httpclient'
+      THEN 'bot'
+    WHEN lower(COALESCE(user_agent, '')) ~ 'ipad|tablet|kindle|silk|playbook'
+      THEN 'tablet'
+    WHEN lower(COALESCE(user_agent, '')) ~ 'mobi|android|iphone|ipod|phone|blackberry|opera mini|windows phone'
+      THEN 'mobile'
+    WHEN lower(COALESCE(user_agent, '')) ~ 'windows nt|macintosh|linux x86_64|x11|cros'
+      THEN 'desktop'
+    ELSE 'other'
+  END`;
+
+  const [eventsResult, summaryResult] = await Promise.all([
+    query(
+      "SELECT * FROM traffic_events WHERE user_page_id = $1 ORDER BY created_at DESC LIMIT $2",
+      [userPage.id, safeLimit]
+    ),
+    query(
+      `WITH scoped AS (
+         SELECT
+           COALESCE(NULLIF(session_id, ''), id) AS visit_key,
+           created_at,
+           lower(COALESCE(result, '')) = 'blocked' AS is_blocked,
+           ${deviceTypeSql} AS device_type
+         FROM traffic_events
+         WHERE user_page_id = $1
+       ),
+       visits AS (
+         SELECT
+           visit_key,
+           MIN(created_at) AS first_seen_at,
+           BOOL_OR(is_blocked) AS was_blocked,
+           (ARRAY_AGG(device_type ORDER BY CASE WHEN device_type = 'other' THEN 1 ELSE 0 END, created_at ASC))[1] AS device_type
+         FROM scoped
+         GROUP BY visit_key
+       ),
+       device_counts AS (
+         SELECT device_type, COUNT(*)::int AS visit_count
+         FROM visits
+         GROUP BY device_type
+       ),
+       timeline_counts AS (
+         SELECT
+           date_trunc('hour', first_seen_at) AS bucket,
+           COUNT(*)::int AS visit_count,
+           COUNT(*) FILTER (WHERE was_blocked)::int AS blocked_count
+         FROM visits
+         WHERE first_seen_at >= now() - interval '24 hours'
+         GROUP BY date_trunc('hour', first_seen_at)
+       )
+       SELECT json_build_object(
+         'uniqueVisits', (SELECT COUNT(*)::int FROM visits),
+         'cleanVisits', (SELECT COUNT(*) FILTER (WHERE NOT was_blocked)::int FROM visits),
+         'blockedVisits', (SELECT COUNT(*) FILTER (WHERE was_blocked)::int FROM visits),
+         'blockEvents', (SELECT COUNT(*) FILTER (WHERE is_blocked)::int FROM scoped),
+         'totalEvents', (SELECT COUNT(*)::int FROM scoped),
+         'devices', COALESCE((SELECT json_object_agg(device_type, visit_count) FROM device_counts), '{}'::json),
+         'timeline', COALESCE((
+           SELECT json_agg(
+             json_build_object('at', bucket, 'visits', visit_count, 'blockedVisits', blocked_count)
+             ORDER BY bucket
+           )
+           FROM timeline_counts
+         ), '[]'::json),
+         'windowHours', 24
+       ) AS summary`,
+      [userPage.id]
+    )
+  ]);
+
+  return {
+    trafficEvents: eventsResult.rows.map(toTrafficEvent),
+    trafficSummary: summaryResult.rows[0]?.summary || summarizeTrafficEvents([])
+  };
 }
 
 export async function listActivePageSessions(userPageId, userId = null) {
