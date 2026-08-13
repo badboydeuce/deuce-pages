@@ -52,6 +52,12 @@ test("runtime branding selects declared logo assets and rejects unsafe paths", (
 
   assert.equal(packageBrandingPath({
     packageManifest: {
+      files: ["index.html", "images/BANR-icon.png"]
+    }
+  }), "images/BANR-icon.png");
+
+  assert.equal(packageBrandingPath({
+    packageManifest: {
       thumbnailPath: "assets/logo.svg",
       files: ["index.html", "assets/logo.svg", "screens/home.png"]
     }

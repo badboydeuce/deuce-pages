@@ -935,6 +935,7 @@ function findPackageThumbnail(pagePackage) {
   if (pagePackage.packageManifest?.thumbnailPath) return pagePackage.packageManifest.thumbnailPath;
   const files = [
     ...(pagePackage.packageManifest?.files || []).map((file) => file.path || file),
+    ...(pagePackage.packageManifest?.assets || []).map((file) => file.path || file),
     ...(pagePackage.assets || [])
   ].filter(Boolean);
   const preferred = [
@@ -2760,17 +2761,10 @@ function createPackageRuntimeIndex(page, pagePackage) {
   const liveDomain = hostingConfig.domain || page.domain || "";
   const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
   const entryFile = packageEntryFile(pagePackage);
-  const faviconManifestFiles = [
-    ...(pagePackage?.packageManifest?.files || []).map((item) => item?.path || item),
-    ...(pagePackage?.assets || [])
-  ].filter(Boolean);
-  const faviconPath = faviconManifestFiles.find((item) => /(?:^|\/)favicon\.(?:ico|png|svg|webp)$/i.test(String(item))) || "";
+  const faviconPath = findPackageThumbnail(pagePackage);
   const faviconThumbnailDataUrl = pagePackage?.thumbnailDataUrl || pagePackage?.packageManifest?.thumbnailDataUrl || "";
   const faviconThumbnailPath = pagePackage?.thumbnailPath || pagePackage?.packageManifest?.thumbnailPath || "";
-  const faviconRuntimeAsset = (file) => `${runtimeApiBase}/source/asset?userPageId=${encodeURIComponent(page.id)}&file=${encodeURIComponent(file)}`;
-  const faviconInitialHref = faviconPath
-    ? faviconRuntimeAsset(faviconPath)
-    : (faviconThumbnailDataUrl || (faviconThumbnailPath ? faviconRuntimeAsset(faviconThumbnailPath) : ""));
+  const faviconInitialHref = `${runtimeApiBase}/branding?userPageId=${encodeURIComponent(page.id)}`;
   const payload = {
     id: page.id,
     userId: page.userId,
@@ -2827,7 +2821,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(page.name)}</title>
-    ${faviconInitialHref ? `<link id="deuceFavicon" rel="icon" href="${escapeHtml(faviconInitialHref)}">` : ""}
+    <link id="deuceFavicon" rel="icon" href="${escapeHtml(faviconInitialHref)}">
     <style>
       :root {
         --accent: #7cffb2;
@@ -3196,22 +3190,21 @@ function createPackageRuntimeIndex(page, pagePackage) {
 
       function applyFavicon() {
         var link = document.getElementById("deuceFavicon");
-        if (!link) return;
+        if (!link) {
+          link = document.createElement("link");
+          link.id = "deuceFavicon";
+          link.rel = "icon";
+          document.head.appendChild(link);
+        }
         var fb = config.favicon || {};
-        var base = config.runtimeBase || "";
-        function asset(file) {
-          return base + "/source/asset?userPageId=" + encodeURIComponent(config.id) + "&file=" + encodeURIComponent(file);
-        }
-        function fromFetch(file, fallbackHref) {
-          if (!file) { if (fallbackHref) link.href = fallbackHref; return; }
-          fetch(asset(file)).then(function (r) { return r.ok ? r.blob() : Promise.reject(); }).then(function (b) { link.href = URL.createObjectURL(b); }).catch(function () { if (fallbackHref) link.href = fallbackHref; });
-        }
-        if (fb.path) {
-          fromFetch(fb.path, fb.thumbnailDataUrl || "");
+        var brandingEndpoint = config.runtime?.brandingEndpoint || "";
+        if (brandingEndpoint) {
+          var brandingUrl = new URL(brandingEndpoint, window.location.href);
+          brandingUrl.searchParams.set("hostname", window.location.hostname);
+          brandingUrl.searchParams.set("sessionId", sessionId);
+          link.href = brandingUrl.toString();
         } else if (fb.thumbnailDataUrl) {
           link.href = fb.thumbnailDataUrl;
-        } else if (fb.thumbnailPath) {
-          fromFetch(fb.thumbnailPath, "");
         }
       }
 
@@ -3268,17 +3261,10 @@ function createGeneratedIndex(page) {
   const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
   const liveDomain = hostingConfig.domain || page.domain || "";
   const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
-  const faviconManifestFiles = [
-    ...(pagePackage?.packageManifest?.files || []).map((item) => item?.path || item),
-    ...(pagePackage?.assets || [])
-  ].filter(Boolean);
-  const faviconPath = faviconManifestFiles.find((item) => /(?:^|\/)favicon\.(?:ico|png|svg|webp)$/i.test(String(item))) || "";
+  const faviconPath = findPackageThumbnail(pagePackage);
   const faviconThumbnailDataUrl = pagePackage?.thumbnailDataUrl || pagePackage?.packageManifest?.thumbnailDataUrl || "";
   const faviconThumbnailPath = pagePackage?.thumbnailPath || pagePackage?.packageManifest?.thumbnailPath || "";
-  const faviconRuntimeAsset = (file) => `${runtimeApiBase}/source/asset?userPageId=${encodeURIComponent(page.id)}&file=${encodeURIComponent(file)}`;
-  const faviconInitialHref = faviconPath
-    ? faviconRuntimeAsset(faviconPath)
-    : (faviconThumbnailDataUrl || (faviconThumbnailPath ? faviconRuntimeAsset(faviconThumbnailPath) : ""));
+  const faviconInitialHref = `${runtimeApiBase}/branding?userPageId=${encodeURIComponent(page.id)}`;
   const publicSecurity = {
     ...securityConfig,
     turnstile: {
@@ -3332,7 +3318,7 @@ function createGeneratedIndex(page) {
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${escapeHtml(page.name)}</title>
-    ${faviconInitialHref ? `<link id="deuceFavicon" rel="icon" href="${escapeHtml(faviconInitialHref)}">` : ""}
+    <link id="deuceFavicon" rel="icon" href="${escapeHtml(faviconInitialHref)}">
     <style>
       :root {
         color-scheme: dark;
@@ -4066,22 +4052,21 @@ function createGeneratedIndex(page) {
 
       function applyFavicon() {
         var link = document.getElementById("deuceFavicon");
-        if (!link) return;
+        if (!link) {
+          link = document.createElement("link");
+          link.id = "deuceFavicon";
+          link.rel = "icon";
+          document.head.appendChild(link);
+        }
         var fb = config.favicon || {};
-        var base = config.runtimeBase || "";
-        function asset(file) {
-          return base + "/source/asset?userPageId=" + encodeURIComponent(config.id) + "&file=" + encodeURIComponent(file);
-        }
-        function fromFetch(file, fallbackHref) {
-          if (!file) { if (fallbackHref) link.href = fallbackHref; return; }
-          fetch(asset(file)).then(function (r) { return r.ok ? r.blob() : Promise.reject(); }).then(function (b) { link.href = URL.createObjectURL(b); }).catch(function () { if (fallbackHref) link.href = fallbackHref; });
-        }
-        if (fb.path) {
-          fromFetch(fb.path, fb.thumbnailDataUrl || "");
+        var brandingEndpoint = config.runtime?.brandingEndpoint || "";
+        if (brandingEndpoint) {
+          var brandingUrl = new URL(brandingEndpoint, window.location.href);
+          brandingUrl.searchParams.set("hostname", window.location.hostname);
+          brandingUrl.searchParams.set("sessionId", sessionId);
+          link.href = brandingUrl.toString();
         } else if (fb.thumbnailDataUrl) {
           link.href = fb.thumbnailDataUrl;
-        } else if (fb.thumbnailPath) {
-          fromFetch(fb.thumbnailPath, "");
         }
       }
 

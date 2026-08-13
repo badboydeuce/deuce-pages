@@ -163,10 +163,25 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
 
 test("generated launchers refresh live security before booting", async () => {
   const source = await fs.readFile(path.resolve(process.cwd(), "script.js"), "utf8");
+  const thumbnailFinderStart = source.indexOf("function findPackageThumbnail(pagePackage)");
+  const thumbnailFinderEnd = source.indexOf("\nfunction normalizePackage", thumbnailFinderStart);
+  const findPackageThumbnail = new Function(`${source.slice(thumbnailFinderStart, thumbnailFinderEnd)}; return findPackageThumbnail;`)();
+  assert.equal(findPackageThumbnail({
+    packageManifest: {
+      files: [{ path: "index.html" }],
+      assets: [{ path: "images/BANR-icon.png" }]
+    }
+  }), "images/BANR-icon.png");
   assert.equal((source.match(/async function refreshLiveConfig\(\)/g) || []).length, 2);
   assert.equal((source.match(/configUrl\.searchParams\.set\("sessionId", sessionId\)/g) || []).length, 2);
   assert.equal((source.match(/fetch\(configUrl\.toString\(\)/g) || []).length, 2);
-  assert.equal((source.match(/\/branding\?userPageId=/g) || []).length, 2);
+  assert.equal((source.match(/\/branding\?userPageId=/g) || []).length, 4);
+  assert.equal((source.match(/<link id="deuceFavicon" rel="icon" href="\$\{escapeHtml\(faviconInitialHref\)\}">/g) || []).length, 2);
+  assert.equal((source.match(/config\.runtime\?\.brandingEndpoint/g) || []).length, 4);
+  assert.equal((source.match(/brandingUrl\.searchParams\.set\("hostname", window\.location\.hostname\)/g) || []).length, 4);
+  assert.match(source, /\.\.\.\(pagePackage\.packageManifest\?\.assets \|\| \[\]\)/);
+  assert.match(source, /\.\*icon\.\*\\\.\(png\|svg\|webp\|ico\)/);
+  assert.doesNotMatch(source, /function applyFavicon\(\)[\s\S]{0,500}\/source\/asset/);
   assert.match(source, /id="deuceGateLogo"/);
   assert.match(source, /id="captchaBrandImage"/);
   assert.equal((source.match(/Protected by Cloudflare Turnstile/g) || []).length, 2);

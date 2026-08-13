@@ -219,12 +219,7 @@ async function resolveFaviconBranding(page) {
   }
   if (!pagePackage) return { path: "", thumbnailPath: "" };
   const manifest = pagePackage.packageManifest || {};
-  const files = [
-    ...(manifest.files || []).map((item) => item?.path || item),
-    ...(manifest.assets || []),
-    ...(pagePackage.assets || [])
-  ].filter(Boolean);
-  const faviconPath = files.find((item) => /(?:^|\/)favicon\.(?:ico|png|svg|webp)$/i.test(String(item))) || "";
+  const faviconPath = packageBrandingPath(pagePackage);
   const thumbnailPath = pagePackage.thumbnailPath || manifest.thumbnailPath || "";
   return {
     path: faviconPath ? String(faviconPath) : "",
