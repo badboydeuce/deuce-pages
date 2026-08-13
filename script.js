@@ -32,6 +32,7 @@ const notificationToggle = document.querySelector("#notificationToggle");
 const notificationBadge = document.querySelector("#notificationBadge");
 const notificationPanel = document.querySelector("#notificationPanel");
 const notificationList = document.querySelector("#notificationList");
+const topbarMenu = document.querySelector(".topbar-menu");
 const appShell = document.querySelector(".app-shell");
 let activeTemplate = templates[0];
 
@@ -4145,10 +4146,15 @@ function setActiveNav(hash) {
   keepActiveNavVisible(activeItem);
 }
 
-function closeTopbarOverlays() {
-  document.querySelector(".topbar-menu")?.removeAttribute("open");
+function closeTopbarOverlays({ restoreFocus = false } = {}) {
+  const notificationWasOpen = notificationPanel?.hidden === false;
+  const profileWasOpen = Boolean(topbarMenu?.open);
+  topbarMenu?.removeAttribute("open");
   if (notificationPanel) notificationPanel.hidden = true;
   notificationToggle?.setAttribute("aria-expanded", "false");
+  if (!restoreFocus) return;
+  if (notificationWasOpen) notificationToggle?.focus();
+  else if (profileWasOpen) topbarMenu?.querySelector("summary")?.focus();
 }
 
 function dashboardPageAction(page) {
@@ -8412,9 +8418,26 @@ document.addEventListener("pointerdown", () => {
 
 notificationToggle?.addEventListener("click", () => {
   const willOpen = notificationPanel?.hidden !== false;
+  if (willOpen) topbarMenu?.removeAttribute("open");
   if (notificationPanel) notificationPanel.hidden = !willOpen;
   notificationToggle.setAttribute("aria-expanded", willOpen ? "true" : "false");
   if (willOpen) refreshNotifications({ silent: true });
+});
+
+topbarMenu?.addEventListener("toggle", () => {
+  if (!topbarMenu.open) return;
+  if (notificationPanel) notificationPanel.hidden = true;
+  notificationToggle?.setAttribute("aria-expanded", "false");
+});
+
+topbarMenu?.addEventListener("click", (event) => {
+  if (!event.target.closest("button")) return;
+  window.requestAnimationFrame(() => topbarMenu.removeAttribute("open"));
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (notificationCenter?.contains(event.target) || topbarMenu?.contains(event.target)) return;
+  closeTopbarOverlays();
 });
 
 notificationCenter?.addEventListener("click", async (event) => {
@@ -9505,7 +9528,14 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || !activeResultViewer) return;
-  if (activeResultViewer.controlsOpen) setResultViewerControlsOpen(false);
-  else closeResultViewer();
+  if (event.key !== "Escape") return;
+  if (activeResultViewer) {
+    if (activeResultViewer.controlsOpen) setResultViewerControlsOpen(false);
+    else closeResultViewer();
+    return;
+  }
+  if (topbarMenu?.open || notificationPanel?.hidden === false) {
+    event.preventDefault();
+    closeTopbarOverlays({ restoreFocus: true });
+  }
 });

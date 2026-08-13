@@ -991,6 +991,8 @@ code,
   border-radius: var(--radius);
   background: rgba(6, 10, 10, 0.98);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.46);
+  transform-origin: top right;
+  animation: topbarPanelEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .notification-panel > header {
   display: flex;
@@ -1029,6 +1031,24 @@ code,
 .notification-item small { color: var(--accent); font: 0.64rem var(--mono); }
 :root[data-theme="light"] .notification-toggle,
 :root[data-theme="light"] .notification-panel { border-color: rgba(16, 26, 22, 0.1); background: rgba(255, 255, 255, 0.97); }
+
+.topbar-menu[open] summary,
+.notification-toggle[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: rgb(var(--accent-rgb) / 0.5);
+  background: rgb(var(--accent-rgb) / 0.1);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.06);
+}
+
+.topbar-menu[open] .dropdown-panel {
+  transform-origin: top right;
+  animation: topbarPanelEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes topbarPanelEnter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 :root[data-theme="light"] .dashboard-risk-panel.is-red {
   border-color: rgb(var(--danger-rgb) / 0.32);
@@ -8434,15 +8454,16 @@ body.result-viewer-open {
   .dropdown-panel,
   .notification-panel {
     position: fixed;
-    inset:
-      auto max(12px, env(safe-area-inset-right, 0px))
-      calc(78px + env(safe-area-inset-bottom, 0px))
-      max(12px, env(safe-area-inset-left, 0px));
+    top: calc(62px + max(10px, env(safe-area-inset-top, 0px)));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: auto;
+    left: max(12px, env(safe-area-inset-left, 0px));
     width: auto;
-    max-height: min(68dvh, 560px);
+    max-height: min(72dvh, 560px);
     margin: 0;
     overflow-y: auto;
     border-radius: 16px;
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.58), 0 0 0 1px rgb(var(--accent-rgb) / 0.04);
   }
 
   .dropdown-panel {
@@ -8458,7 +8479,7 @@ body.result-viewer-open {
   }
 
   .notification-list {
-    max-height: min(54dvh, 430px);
+    max-height: min(58dvh, 430px);
   }
 
   .app-shell:not(.auth-mode) .preview {
@@ -8537,6 +8558,12 @@ body.result-viewer-open {
   .notification-panel > header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .notification-panel .notification-panel-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+    width: 100%;
   }
 
   .notification-panel header button {
