@@ -106,6 +106,7 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
     assert.equal(initial.headers.get("cache-control"), "no-store");
     const initialBody = await initial.json();
     assert.equal(initialBody.config.security.captcha, false);
+    assert.equal(initialBody.config.security.contentDeterrence, false);
     const publicConfig = JSON.stringify(initialBody);
     assert.equal(publicConfig.includes("data:image"), false);
     assert.equal(publicConfig.includes("github.com/example/private-package"), false);
@@ -126,6 +127,7 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
     await repository.updateUserPageConfig("page_live", {
       securityConfig: {
         captcha: true,
+        contentDeterrence: true,
         turnstile: {
           siteKey: "live_site_key",
           secretKey: "live_secret_key",
@@ -138,6 +140,7 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
     assert.equal(enabled.status, 200);
     const enabledBody = await enabled.json();
     assert.equal(enabledBody.config.security.captcha, true);
+    assert.equal(enabledBody.config.security.contentDeterrence, true);
     assert.equal(enabledBody.config.security.turnstile.enabled, true);
     assert.equal(enabledBody.config.security.turnstile.siteKey, "live_site_key");
     assert.equal(enabledBody.config.security.turnstile.displayDomain, "client.example");
@@ -193,6 +196,11 @@ test("generated launchers refresh live security before booting", async () => {
   assert.match(source, /credentials: "same-origin"/);
   assert.match(source, /sessionId,/);
   assert.match(source, /config\.security\?\.captchaRequired/);
+  assert.match(source, /data-security-field="contentDeterrence"/);
+  assert.match(source, /contentDeterrence: contentDeterrenceField \? contentDeterrenceField\.checked/);
+  assert.equal((source.match(/function enableContentDeterrence\(\)/g) || []).length, 2);
+  assert.equal((source.match(/document\.addEventListener\("contextmenu"/g) || []).length, 2);
+  assert.equal((source.match(/^[ \t]+enableContentDeterrence\(\);/gm) || []).length, 2);
   assert.ok((source.match(/cache: "no-store"/g) || []).length >= 2);
   assert.ok((source.match(/SECURITY CONFIGURATION UNAVAILABLE/g) || []).length >= 2);
   assert.match(source, /await withButtonBusy\(saveSecurityButton, "Saving"/);

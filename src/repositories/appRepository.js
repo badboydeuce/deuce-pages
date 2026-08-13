@@ -1316,6 +1316,7 @@ function buildUserPage(userId, pagePackage, period, price, data) {
     securityConfig: {
       domains: data.domain ? [data.domain] : [],
       captcha: false,
+      contentDeterrence: false,
       turnstile: { provider: "turnstile", siteKey: "", secretKey: "" },
       bannedIps: [],
       whitelistIps: [],

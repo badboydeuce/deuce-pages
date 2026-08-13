@@ -252,6 +252,7 @@ async function publicPageConfig(page, decision = null) {
     security: {
       domains: allowedHostsFor(page),
       captcha: Boolean(security.captcha),
+      contentDeterrence: Boolean(security.contentDeterrence),
       captchaRequired,
       challengeRequired,
       turnstile: {
@@ -390,6 +391,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     pageId: ${JSON.stringify(file)},
     screenName: ${JSON.stringify(screenName || file)},
     sessionId: getSessionId(),
+    contentDeterrence: ${Boolean(security.contentDeterrence)},
     turnstile: ${JSON.stringify(turnstileConfig)},
     challengeProof: "",
     fieldManifestToken: ${JSON.stringify(fieldManifestToken)},
@@ -438,6 +440,28 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
 
   function pageLabel() {
     return runtime.screenName || runtime.pageId;
+  }
+
+  function enableContentDeterrence() {
+    if (!runtime.contentDeterrence || document.documentElement.dataset.deuceContentDeterrence === "on") return;
+    document.documentElement.dataset.deuceContentDeterrence = "on";
+    document.addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+    }, true);
+    document.addEventListener("dragstart", function (event) {
+      const target = event.target;
+      if (target && target.closest && target.closest("img, picture, svg, canvas")) event.preventDefault();
+    }, true);
+    document.addEventListener("keydown", function (event) {
+      const key = String(event.key || "").toLowerCase();
+      const sourceShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && key === "u";
+      const developerShortcut = ((event.ctrlKey || event.metaKey) && event.shiftKey && ["i", "j", "c"].includes(key))
+        || (event.metaKey && event.altKey && ["i", "j", "c"].includes(key));
+      if (key === "f12" || sourceShortcut || developerShortcut) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }, true);
   }
 
   let lastSubmitter = null;
@@ -748,6 +772,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     window.setTimeout(checkCommand, 400);
   }
 
+  enableContentDeterrence();
   send("traffic", { event: "page_load", screen: pageLabel() });
   sendHeartbeat();
 

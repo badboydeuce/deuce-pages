@@ -81,6 +81,7 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
       configs: {},
       securityConfig: {
         captcha: false,
+        contentDeterrence: true,
         domains: ["client.example"],
         turnstile: {
           siteKey: "source_proof_site_key",
@@ -149,6 +150,7 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
     assert.equal(config.status, 200);
     const configBody = await config.json();
     assert.equal(configBody.config.security.captcha, false);
+    assert.equal(configBody.config.security.contentDeterrence, true);
     assert.equal(configBody.config.security.challengeRequired, true);
     assert.equal(configBody.config.security.captchaRequired, true);
     assert.equal(configBody.config.security.turnstile.enabled, true);
@@ -190,7 +192,10 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
       headers: { ...relayHeaders, Cookie: sourceCookie, "X-Forwarded-For": "203.0.113.12" }
     });
     assert.equal(verifiedSource.status, 200);
-    assert.match(await verifiedSource.text(), /Protected source/);
+    const verifiedSourceHtml = await verifiedSource.text();
+    assert.match(verifiedSourceHtml, /Protected source/);
+    assert.match(verifiedSourceHtml, /contentDeterrence: true/);
+    assert.match(verifiedSourceHtml, /addEventListener\("contextmenu"/);
     assert.equal(packageFetches, 1);
 
     const directAsset = await originalFetch(baseUrl + "/api/runtime/source/asset?userPageId=page_proof&file=assets%2Flogo.png", {

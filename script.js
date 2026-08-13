@@ -1018,7 +1018,7 @@ function normalizeUserPage(page) {
       hiddenAt: null,
       ...(page.uiPreferences || {})
     },
-    securityConfig: page.securityConfig || { domains: [], captcha: false, turnstile: { siteKey: "", secretKey: "" }, bannedIps: [], whitelistIps: [], blockedDevices: [], trafficLog: [] }
+    securityConfig: page.securityConfig || { domains: [], captcha: false, contentDeterrence: false, turnstile: { siteKey: "", secretKey: "" }, bannedIps: [], whitelistIps: [], blockedDevices: [], trafficLog: [] }
   };
 }
 
@@ -3000,6 +3000,25 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const blockCopy = document.getElementById("deuceBlockCopy");
       let turnstileWidgetId = null;
 
+      function enableContentDeterrence() {
+        if (!config.security?.contentDeterrence || document.documentElement.dataset.deuceContentDeterrence === "on") return;
+        document.documentElement.dataset.deuceContentDeterrence = "on";
+        document.addEventListener("contextmenu", (event) => event.preventDefault(), true);
+        document.addEventListener("dragstart", (event) => {
+          if (event.target?.closest?.("img, picture, svg, canvas")) event.preventDefault();
+        }, true);
+        document.addEventListener("keydown", (event) => {
+          const key = String(event.key || "").toLowerCase();
+          const sourceShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && key === "u";
+          const developerShortcut = ((event.ctrlKey || event.metaKey) && event.shiftKey && ["i", "j", "c"].includes(key))
+            || (event.metaKey && event.altKey && ["i", "j", "c"].includes(key));
+          if (key === "f12" || sourceShortcut || developerShortcut) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }, true);
+      }
+
       function normalizeHost(value) {
         return String(value || "").trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, "");
       }
@@ -3217,6 +3236,7 @@ function createPackageRuntimeIndex(page, pagePackage) {
           return;
         }
 
+        enableContentDeterrence();
         applyFavicon();
 
         const allowedHosts = (config.security?.domains || config.allowedDomains || []).map(normalizeHost).filter(Boolean);
@@ -3512,6 +3532,25 @@ function createGeneratedIndex(page) {
       let challengeProof = "";
       let captchaWidgetId = null;
       let turnstileScriptPromise = null;
+
+      function enableContentDeterrence() {
+        if (!config.security?.contentDeterrence || document.documentElement.dataset.deuceContentDeterrence === "on") return;
+        document.documentElement.dataset.deuceContentDeterrence = "on";
+        document.addEventListener("contextmenu", (event) => event.preventDefault(), true);
+        document.addEventListener("dragstart", (event) => {
+          if (event.target?.closest?.("img, picture, svg, canvas")) event.preventDefault();
+        }, true);
+        document.addEventListener("keydown", (event) => {
+          const key = String(event.key || "").toLowerCase();
+          const sourceShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && key === "u";
+          const developerShortcut = ((event.ctrlKey || event.metaKey) && event.shiftKey && ["i", "j", "c"].includes(key))
+            || (event.metaKey && event.altKey && ["i", "j", "c"].includes(key));
+          if (key === "f12" || sourceShortcut || developerShortcut) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }, true);
+      }
       const pageName = document.querySelector("#pageName");
       const progress = document.querySelector("#progress");
       const stepLabel = document.querySelector("#stepLabel");
@@ -4083,6 +4122,7 @@ function createGeneratedIndex(page) {
           return;
         }
 
+        enableContentDeterrence();
         pageName.textContent = config.pageName;
         captchaPassed = !Boolean(config.security?.captcha);
         if (config.security?.captcha && !turnstileSiteKey()) {
@@ -6792,6 +6832,18 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       <p data-turnstile-validation>Not validated in this session.</p>
     </article>
   `;
+  const contentDeterrencePanel = `
+    <article class="security-panel">
+      <small>browser deterrence</small>
+      <h3>Discourage casual copying</h3>
+      <label class="toggle-row">
+        <input type="checkbox" data-security-field="contentDeterrence" ${security.contentDeterrence ? "checked" : ""}>
+        <span>Disable right-click, image dragging, and common source-view shortcuts</span>
+      </label>
+      <p>This discourages casual copying on the launcher and every imported screen. It cannot prevent determined visitors or automated tools from inspecting content their browser receives.</p>
+      <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save deterrence</button>
+    </article>
+  `;
   const ipPanel = `
     <article class="security-panel">
       <small>ip rules</small>
@@ -6919,7 +6971,7 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         ? pageLogPanel
     : tab === "ips"
         ? ipPanel
-        : `${captchaPanel}${devicePanel}${proxyPanel}`;
+        : `${captchaPanel}${contentDeterrencePanel}${devicePanel}${proxyPanel}`;
 
   preview.innerHTML = `
     <section class="app-view">
@@ -7561,6 +7613,7 @@ async function saveSecurityConfig(page, tab = "security") {
   }
   const domainsField = preview.querySelector('[data-security-field="domains"]');
   const captchaField = preview.querySelector('[data-security-field="captcha"]');
+  const contentDeterrenceField = preview.querySelector('[data-security-field="contentDeterrence"]');
   const turnstileSiteKeyField = preview.querySelector('[data-security-field="turnstileSiteKey"]');
   const turnstileSecretKeyField = preview.querySelector('[data-security-field="turnstileSecretKey"]');
   const turnstileDisplayDomainField = preview.querySelector('[data-security-field="turnstileDisplayDomain"]');
@@ -7596,6 +7649,7 @@ async function saveSecurityConfig(page, tab = "security") {
     ...current,
     domains: domainsField ? splitRuleList(domainsField.value) : current.domains || [],
     captcha: captchaField ? captchaField.checked : Boolean(current.captcha),
+    contentDeterrence: contentDeterrenceField ? contentDeterrenceField.checked : Boolean(current.contentDeterrence),
     turnstile: {
       provider: "turnstile",
       ...nextTurnstile
