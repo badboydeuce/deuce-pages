@@ -10,7 +10,8 @@ export function publicTurnstileConfig(security = {}) {
   return {
     enabled: Boolean(security.captcha),
     provider: "turnstile",
-    siteKey: security.turnstile?.siteKey || security.turnstileSiteKey || ""
+    siteKey: security.turnstile?.siteKey || security.turnstileSiteKey || "",
+    displayDomain: String(security.turnstile?.displayDomain || "").trim()
   };
 }
 

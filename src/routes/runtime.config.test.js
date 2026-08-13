@@ -140,6 +140,7 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
     assert.equal(enabledBody.config.security.captcha, true);
     assert.equal(enabledBody.config.security.turnstile.enabled, true);
     assert.equal(enabledBody.config.security.turnstile.siteKey, "live_site_key");
+    assert.equal(enabledBody.config.security.turnstile.displayDomain, "client.example");
     assert.equal(JSON.stringify(enabledBody).includes("live_secret_key"), false);
 
     await repository.updateUserPageConfig("page_live", {
