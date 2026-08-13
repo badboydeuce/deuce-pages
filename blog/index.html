@@ -24,28 +24,58 @@
 
     <main id="accessScene" class="access-scene">
       <div class="room-glow" aria-hidden="true"></div>
+      <div class="light-bloom" aria-hidden="true"></div>
+      <div class="floor-light" aria-hidden="true"></div>
       <div class="horizon" aria-hidden="true"></div>
       <div class="orbit orbit-one" aria-hidden="true"></div>
       <div class="orbit orbit-two" aria-hidden="true"></div>
 
       <section class="lamp-rig" aria-label="Light control">
-        <div class="power-cable" aria-hidden="true"></div>
-        <div class="lamp-body" aria-hidden="true">
-          <span class="socket"><i></i><i></i><i></i></span>
-          <span class="bulb"><i class="filament"></i></span>
-          <span class="light-cone"></span>
+        <div class="lamp-shadow" aria-hidden="true"></div>
+        <div class="lamp-base" aria-hidden="true">
+          <span class="base-core"></span>
+          <i></i><i></i>
         </div>
-        <button
-          id="pullCord"
-          class="pull-control"
-          type="button"
-          aria-label="Pull the cord to reveal member login"
-          aria-controls="memberLogin"
-          aria-pressed="false"
-        >
-          <span class="chain-line" aria-hidden="true"></span>
-          <span class="chain-handle" aria-hidden="true"><i></i></span>
-        </button>
+        <div class="lamp-stand" aria-hidden="true">
+          <span class="stand-rail"></span>
+          <span class="stand-highlight"></span>
+          <span class="stand-collar stand-collar-upper"></span>
+          <span class="stand-collar stand-collar-lower"></span>
+          <span class="stand-status"><i></i><i></i><i></i></span>
+        </div>
+        <div class="lamp-head">
+          <div class="lamp-shade" aria-hidden="true">
+            <span class="shade-shell"><i></i><i></i><i></i></span>
+            <span class="shade-rim"></span>
+            <span class="shade-underside"></span>
+          </div>
+          <div class="lamp-body" aria-hidden="true">
+            <span class="socket"><i></i><i></i><i></i></span>
+            <span class="bulb-neck"></span>
+            <span class="bulb">
+              <i class="glass-glint"></i>
+              <i class="filament-stem filament-stem-left"></i>
+              <i class="filament-stem filament-stem-right"></i>
+              <i class="filament"></i>
+            </span>
+            <span class="bulb-aura"></span>
+            <span class="switch-housing"><i></i></span>
+            <span class="light-cone"></span>
+            <span class="lens-flare"></span>
+          </div>
+          <button
+            id="pullCord"
+            class="pull-control"
+            type="button"
+            aria-label="Pull the cord to reveal member login"
+            aria-controls="memberLogin"
+            aria-pressed="false"
+          >
+            <span class="chain-pivot" aria-hidden="true"></span>
+            <span class="chain-line" aria-hidden="true"></span>
+            <span class="chain-handle" aria-hidden="true"><i></i><b></b></span>
+          </button>
+        </div>
       </section>
 
       <section id="memberLogin" class="login-stage" aria-label="Member login" aria-hidden="true" inert>
