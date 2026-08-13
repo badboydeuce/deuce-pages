@@ -137,7 +137,8 @@ export async function sendTelegramTestMessage(chatId, { fetchImpl = globalThis.f
   const openUrl = portalUrl("/portal#notifications");
   return telegramRequest("sendMessage", {
     chat_id: String(chatId),
-    text: "DEUCE Telegram notifications are working. Result contents will never be included in Telegram alerts.",
+    text: "🔔 <b>Telegram Connected</b>\n\n✅ DEUCE Telegram notifications are working.",
+    parse_mode: "HTML",
     disable_web_page_preview: true,
     ...(openUrl ? { reply_markup: { inline_keyboard: [[{ text: "Open DEUCE", url: openUrl }]] } } : {})
   }, { fetchImpl });

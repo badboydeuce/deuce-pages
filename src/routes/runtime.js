@@ -31,7 +31,7 @@ import {
 import { clearSourceProofCookie, readSourceProofCookie, setSourceProofCookie } from "../services/sourceProofCookie.js";
 import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/runtimeScreens.js";
 import { trustedRelayClientIp } from "../services/clientIp.js";
-import { brandingImageForPackage } from "../services/runtimeBranding.js";
+import { brandingImageForPackage, packageBrandingPath } from "../services/runtimeBranding.js";
 import {
   instrumentResultFields,
   serverNormalizedFieldManifest,
@@ -208,10 +208,35 @@ async function recordRuntimeBlock(page, req, details = {}) {
   }
 }
 
-function publicPageConfig(page, decision = null) {
+async function resolveFaviconBranding(page) {
+  let pagePackage = page.configs?.runtimePackageSnapshot || null;
+  if (!pagePackage) {
+    try {
+      pagePackage = await findPackage(page.packageId || page.slug);
+    } catch {
+      pagePackage = null;
+    }
+  }
+  if (!pagePackage) return { path: "", thumbnailPath: "" };
+  const manifest = pagePackage.packageManifest || {};
+  const files = [
+    ...(manifest.files || []).map((item) => item?.path || item),
+    ...(manifest.assets || []),
+    ...(pagePackage.assets || [])
+  ].filter(Boolean);
+  const faviconPath = files.find((item) => /(?:^|\/)favicon\.(?:ico|png|svg|webp)$/i.test(String(item))) || "";
+  const thumbnailPath = pagePackage.thumbnailPath || manifest.thumbnailPath || "";
+  return {
+    path: faviconPath ? String(faviconPath) : "",
+    thumbnailPath: thumbnailPath ? String(thumbnailPath) : ""
+  };
+}
+
+async function publicPageConfig(page, decision = null) {
   const security = page.securityConfig || {};
   const challengeRequired = Boolean(decision?.challengeRequired);
   const captchaRequired = Boolean(security.captcha || challengeRequired);
+  const favicon = await resolveFaviconBranding(page);
   return {
     id: page.id,
     pageId: page.slug,
@@ -245,7 +270,8 @@ function publicPageConfig(page, decision = null) {
     resultSettings: page.resultSettings || {},
     generatedFile: page.generatedFile || {},
     flow: page.flow || [],
-    configs: page.configs || {}
+    configs: page.configs || {},
+    favicon
   };
 }
 
@@ -879,7 +905,7 @@ runtimeRouter.get("/config", async (req, res) => {
   if (!context) return;
   const decision = await enforceRuntimeSecurity(context, req, res);
   if (!decision) return;
-  res.json({ config: publicPageConfig(context.page, decision) });
+  res.json({ config: await publicPageConfig(context.page, decision) });
 });
 
 runtimeRouter.post("/config", async (req, res) => {
@@ -888,7 +914,7 @@ runtimeRouter.post("/config", async (req, res) => {
   if (!context) return;
   const decision = await enforceRuntimeSecurity(context, req, res);
   if (!decision) return;
-  res.json({ config: publicPageConfig(context.page, decision) });
+  res.json({ config: await publicPageConfig(context.page, decision) });
 });
 
 
