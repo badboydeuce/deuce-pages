@@ -161,8 +161,8 @@ test("Telegram connects securely and sends payload-free per-page result notifica
     assert.deepEqual(dispatch, { claimed: 1, sent: 1, failed: 0 });
     assert.equal(telegramRequests.length, 2);
     const resultAlert = telegramRequests[1].body;
-    assert.match(resultAlert.text, /New result received/);
-    assert.match(resultAlert.text, /Page: Banner Live/);
+    assert.match(resultAlert.text, /New Result Received/);
+    assert.match(resultAlert.text, /Page:.*Banner Live/);
     assert.equal(resultAlert.reply_markup.inline_keyboard[0][0].url, "https://d-panel.onrender.com/portal#results-user_page_telegram");
     const serializedAlert = JSON.stringify(resultAlert);
     assert.doesNotMatch(serializedAlert, /never-send-this|private@example\.com|private-session-123|Password|Email/i);

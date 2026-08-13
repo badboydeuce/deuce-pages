@@ -14,6 +14,14 @@ function cleanBotUsername(value = "") {
   return String(value || "").trim().replace(/^@/, "");
 }
 
+function escapeHtml(value = "") {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function cleanErrorMessage(value = "") {
   return String(value || "Telegram request failed")
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
@@ -139,10 +147,15 @@ export function telegramResultMessage(delivery) {
   const received = new Date(delivery?.notificationCreatedAt || delivery?.createdAt || Date.now());
   const receivedLabel = Number.isNaN(received.getTime()) ? "Just now" : received.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
   const pageName = String(delivery?.pageName || "Subscribed page").replace(/\s+/g, " ").trim().slice(0, 120) || "Subscribed page";
+  const safePage = escapeHtml(pageName);
+  const safeReceived = escapeHtml(receivedLabel);
   return [
-    "New result received",
-    `Page: ${pageName}`,
-    `Received: ${receivedLabel}`
+    "🔔 <b>New Result Received</b>",
+    "",
+    `├─ 📄 <b>Page:</b> ${safePage}`,
+    `└─ 🕒 <b>Received:</b> <code>${safeReceived}</code>`,
+    "",
+    "👀 View it in your portal results."
   ].join("\n");
 }
 
@@ -151,6 +164,7 @@ export async function sendTelegramResultDelivery(delivery, { fetchImpl = globalT
   return telegramRequest("sendMessage", {
     chat_id: String(delivery.chatId),
     text: telegramResultMessage(delivery),
+    parse_mode: "HTML",
     disable_web_page_preview: true,
     ...(resultsUrl ? { reply_markup: { inline_keyboard: [[{ text: "Open results in DEUCE", url: resultsUrl }]] } } : {})
   }, { fetchImpl });
