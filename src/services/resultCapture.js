@@ -4,10 +4,10 @@ export const resultCaptureVersion = 1;
 export const resultFieldStates = new Set(["[redacted]", "[blank]", "[missing]"]);
 export const resultFieldSensitivities = ["standard", "personal", "authentication-secret", "financial"];
 
-const excludedControlTypes = new Set(["button", "file", "hidden", "image", "reset", "submit"]);
+const excludedControlTypes = new Set(["button", "hidden", "image", "reset", "submit"]);
 const supportedControlTypes = new Set([
   "checkbox", "date", "datetime-local", "email", "month", "number", "password",
-  "radio", "range", "search", "select", "select-multiple", "tel", "text",
+  "file", "radio", "range", "search", "select", "select-multiple", "tel", "text",
   "textarea", "time", "url", "week"
 ]);
 const maxManifestFields = 240;
@@ -143,7 +143,7 @@ function inferredSensitivity(field = {}) {
   const text = `${field.label || ""} ${field.id || ""} ${field.type || ""}`.toLowerCase();
   if (/password|passcode|otp|one.?time|verification|2fa|mfa|pin|security.?answer|secret|credential/.test(text)) return "authentication-secret";
   if (/card|credit|debit|cvv|cvc|routing|bank|account|expiry|iban|swift/.test(text)) return "financial";
-  if (/name|email|phone|address|birth|dob|ssn|social|country|city|postal|zip/.test(text)) return "personal";
+  if (/name|email|phone|address|birth|dob|ssn|social|country|city|postal|zip|identity|passport|driver|licen[cs]e|document|\bid\s*(?:front|back)\b/.test(text)) return "personal";
   return "standard";
 }
 
@@ -510,8 +510,8 @@ export function serverNormalizedFieldManifest(capture = {}, { screenFile = "" } 
         id,
         label: compactText(field?.label || id.replace(/[_-]+/g, " ")) || `Field ${index + 1}`,
         type: normalizedSubmittedType(field?.type),
-        scopeId,
-        required: false
+        scopeId: compactText(field?.scopeId || scopeId, 96) || "page",
+        required: Boolean(field?.required)
       };
     })
     .filter(Boolean);

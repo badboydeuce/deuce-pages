@@ -7,12 +7,73 @@ import {
 } from "../services/resultCapture.js";
 import { summarizeTrafficEvents } from "../services/trafficAnalytics.js";
 import {
+  deleteObject,
+  getObjectBuffer,
+  headObject,
+  objectStorageConfigured,
+  signedUploadUrl
+} from "../services/objectStorage.js";
+import {
   queueTelegramDeliveryInJson,
   queueTelegramDeliveryWithClient
 } from "./telegramRepository.js";
 
 function createId(prefix) {
   return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 18)}`;
+}
+
+const resultAttachmentMimeTypes = new Map([
+  ["image/jpeg", { extension: "jpg", signature: (buffer) => buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff }],
+  ["image/png", { extension: "png", signature: (buffer) => buffer.length >= 8 && buffer.subarray(0, 8).toString("hex") === "89504e470d0a1a0a" }],
+  ["image/webp", { extension: "webp", signature: (buffer) => buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP" }]
+]);
+const resultAttachmentMaxBytes = Math.min(Math.max(Number(process.env.RESULT_ATTACHMENT_MAX_MB) || 10, 1), 25) * 1024 * 1024;
+const resultAttachmentUploadSeconds = Math.min(Math.max(Number(process.env.RESULT_ATTACHMENT_UPLOAD_SECONDS) || 300, 60), 900);
+const maxPendingResultAttachmentsPerSession = 12;
+
+function compactAttachmentText(value = "", limit = 160) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function normalizeAttachmentIds(value = []) {
+  return Array.isArray(value)
+    ? [...new Set(value.map((item) => String(item || "").trim()).filter((item) => /^attachment_[a-z0-9]{18}$/i.test(item)))].slice(0, 4)
+    : [];
+}
+
+function attachmentSide(label = "", fieldId = "") {
+  const value = `${label} ${fieldId}`.toLowerCase();
+  if (/\bfront\b/.test(value)) return "front";
+  if (/\bback\b|\brear\b/.test(value)) return "back";
+  return "document";
+}
+
+function publicResultAttachment(attachment = {}) {
+  if (!attachment) return null;
+  return {
+    id: attachment.id,
+    resultId: attachment.resultId || attachment.result_id || null,
+    fieldId: attachment.fieldId || attachment.field_id || "",
+    label: attachment.fieldLabel || attachment.field_label || "Uploaded image",
+    side: attachment.side || "document",
+    mimeType: attachment.mimeType || attachment.mime_type || "application/octet-stream",
+    sizeBytes: Number(attachment.sizeBytes ?? attachment.size_bytes ?? attachment.expectedSize ?? attachment.expected_size ?? 0),
+    createdAt: attachment.createdAt || attachment.created_at || null
+  };
+}
+
+function jsonAttachmentKeys(db, userPageId, resultIds) {
+  const selected = new Set(resultIds);
+  return (db.resultAttachments || [])
+    .filter((item) => item.userPageId === userPageId && selected.has(item.resultId))
+    .map((item) => item.objectKey)
+    .filter(Boolean);
+}
+
+async function deleteStoredObjects(keys = []) {
+  for (const key of [...new Set(keys.filter(Boolean))]) {
+    await deleteObject(key);
+  }
 }
 
 function hashPassword(password) {
@@ -250,6 +311,7 @@ function toResult(row) {
     status: row.status || "new",
     reviewedAt: row.reviewed_at || null,
     reviewedBy: row.reviewed_by || "",
+    attachments: Array.isArray(row.attachments) ? row.attachments : [],
     createdAt: row.created_at
   });
 }
@@ -2250,6 +2312,216 @@ export async function updateWalletDepositRequestStatus({ requestId, adminUserId,
   return { request: toDepositRequest(result.rows[0]) };
 }
 
+async function purgeExpiredPendingResultAttachments(userPageId) {
+  const now = Date.now();
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const expired = (db.resultAttachments || []).filter((item) => (
+      item.userPageId === userPageId
+      && !item.resultId
+      && new Date(item.expiresAt || 0).getTime() <= now
+    ));
+    await deleteStoredObjects(expired.map((item) => item.objectKey));
+    if (expired.length) {
+      const expiredIds = new Set(expired.map((item) => item.id));
+      await updateJsonDb((nextDb) => {
+        nextDb.resultAttachments = (nextDb.resultAttachments || []).filter((item) => !expiredIds.has(item.id));
+      });
+    }
+    return expired.length;
+  }
+  const expired = await query(
+    "SELECT id, object_key FROM result_attachments WHERE user_page_id = $1 AND result_id IS NULL AND expires_at <= now()",
+    [userPageId]
+  );
+  await deleteStoredObjects(expired.rows.map((row) => row.object_key));
+  if (expired.rows.length) {
+    await query("DELETE FROM result_attachments WHERE id = ANY($1::text[])", [expired.rows.map((row) => row.id)]);
+  }
+  return expired.rows.length;
+}
+
+export async function createResultAttachmentUpload({ userPageId, sessionId, screenFile = "", fieldId, fieldLabel, mimeType, sizeBytes }) {
+  const userPage = await findUserPage(userPageId);
+  if (!userPage) throw new Error("Runtime page not found");
+  if (!objectStorageConfigured()) throw new Error("Private upload storage is unavailable");
+  const cleanSessionId = compactAttachmentText(sessionId, 96);
+  const cleanFieldId = compactAttachmentText(fieldId, 96);
+  const cleanFieldLabel = compactAttachmentText(fieldLabel || "Uploaded image", 160) || "Uploaded image";
+  const cleanMimeType = String(mimeType || "").toLowerCase().trim();
+  const bytes = Number(sizeBytes || 0);
+  const mimeConfig = resultAttachmentMimeTypes.get(cleanMimeType);
+  if (!cleanSessionId || !cleanFieldId) throw new Error("Upload session and field are required");
+  if (!mimeConfig) throw new Error("Only JPEG, PNG, and WebP ID images are supported");
+  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > resultAttachmentMaxBytes) {
+    throw new Error(`Each ID image must be ${Math.floor(resultAttachmentMaxBytes / (1024 * 1024))} MB or smaller`);
+  }
+  await purgeExpiredPendingResultAttachments(userPage.id);
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  let recentCount = 0;
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    recentCount = (db.resultAttachments || []).filter((item) => (
+      item.userPageId === userPage.id
+      && item.sessionId === cleanSessionId
+      && !item.resultId
+      && new Date(item.createdAt || 0).getTime() >= oneHourAgo
+    )).length;
+  } else {
+    const count = await query(
+      "SELECT count(*)::int AS count FROM result_attachments WHERE user_page_id = $1 AND session_id = $2 AND result_id IS NULL AND created_at >= now() - interval '1 hour'",
+      [userPage.id, cleanSessionId]
+    );
+    recentCount = Number(count.rows[0]?.count || 0);
+  }
+  if (recentCount >= maxPendingResultAttachmentsPerSession) throw new Error("Too many upload attempts for this session");
+
+  const id = createId("attachment");
+  const objectKey = `results/${userPage.id}/${cleanSessionId}/${id}.${mimeConfig.extension}`;
+  const expiresAt = new Date(Date.now() + resultAttachmentUploadSeconds * 1000).toISOString();
+  const uploadUrl = await signedUploadUrl(objectKey, cleanMimeType, resultAttachmentUploadSeconds);
+  const attachment = {
+    id,
+    userPageId: userPage.id,
+    resultId: null,
+    sessionId: cleanSessionId,
+    screenFile: compactAttachmentText(screenFile, 240),
+    fieldId: cleanFieldId,
+    fieldLabel: cleanFieldLabel,
+    side: attachmentSide(cleanFieldLabel, cleanFieldId),
+    objectKey,
+    mimeType: cleanMimeType,
+    expectedSize: bytes,
+    sizeBytes: null,
+    status: "pending",
+    expiresAt,
+    completedAt: null,
+    createdAt: new Date().toISOString()
+  };
+  if (useJsonDb()) {
+    await updateJsonDb((db) => {
+      db.resultAttachments ||= [];
+      db.resultAttachments.push(attachment);
+    });
+  } else {
+    await query(
+      `INSERT INTO result_attachments
+        (id, user_page_id, session_id, screen_file, field_id, field_label, side, object_key, mime_type, expected_size, status, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)`,
+      [id, userPage.id, cleanSessionId, attachment.screenFile, cleanFieldId, cleanFieldLabel, attachment.side, objectKey, cleanMimeType, bytes, expiresAt]
+    );
+  }
+  return {
+    attachment: publicResultAttachment(attachment),
+    uploadUrl,
+    uploadHeaders: { "Content-Type": cleanMimeType },
+    expiresAt
+  };
+}
+
+export async function completeResultAttachmentUpload({ userPageId, sessionId, attachmentId }) {
+  const cleanAttachmentId = String(attachmentId || "").trim();
+  const cleanSessionId = compactAttachmentText(sessionId, 96);
+  let attachment;
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    attachment = (db.resultAttachments || []).find((item) => (
+      item.id === cleanAttachmentId && item.userPageId === userPageId && item.sessionId === cleanSessionId && !item.resultId
+    ));
+  } else {
+    const result = await query(
+      "SELECT * FROM result_attachments WHERE id = $1 AND user_page_id = $2 AND session_id = $3 AND result_id IS NULL LIMIT 1",
+      [cleanAttachmentId, userPageId, cleanSessionId]
+    );
+    attachment = result.rows[0];
+  }
+  if (!attachment) throw new Error("Upload record not found");
+  if (attachment.status === "ready") return publicResultAttachment(attachment);
+  if (attachment.status !== "pending") throw new Error("Upload is not available");
+  const expiresAt = new Date(attachment.expiresAt || attachment.expires_at || 0).getTime();
+  const objectKey = attachment.objectKey || attachment.object_key;
+  if (!expiresAt || expiresAt <= Date.now()) {
+    await deleteObject(objectKey).catch(() => {});
+    throw new Error("Upload link expired. Select the images again");
+  }
+  const expectedSize = Number(attachment.expectedSize ?? attachment.expected_size ?? 0);
+  const expectedMime = attachment.mimeType || attachment.mime_type;
+  let stored;
+  try {
+    stored = await headObject(objectKey);
+  } catch {
+    throw new Error("Uploaded image was not found");
+  }
+  const storedSize = Number(stored.ContentLength || 0);
+  const storedMime = String(stored.ContentType || "").toLowerCase();
+  const mimeConfig = resultAttachmentMimeTypes.get(expectedMime);
+  let valid = Boolean(mimeConfig && storedSize === expectedSize && storedSize > 0 && storedSize <= resultAttachmentMaxBytes && storedMime === expectedMime);
+  if (valid) {
+    const body = await getObjectBuffer(objectKey);
+    valid = body.length === storedSize && mimeConfig.signature(body);
+  }
+  if (!valid) {
+    await deleteObject(objectKey).catch(() => {});
+    if (useJsonDb()) {
+      await updateJsonDb((db) => {
+        const item = (db.resultAttachments || []).find((entry) => entry.id === cleanAttachmentId);
+        if (item) item.status = "rejected";
+      });
+    } else {
+      await query("UPDATE result_attachments SET status = 'rejected' WHERE id = $1", [cleanAttachmentId]);
+    }
+    throw new Error("Uploaded image failed validation");
+  }
+  const completedAt = new Date().toISOString();
+  if (useJsonDb()) {
+    await updateJsonDb((db) => {
+      const item = (db.resultAttachments || []).find((entry) => entry.id === cleanAttachmentId);
+      if (item) {
+        item.status = "ready";
+        item.sizeBytes = storedSize;
+        item.completedAt = completedAt;
+      }
+    });
+    attachment = { ...attachment, status: "ready", sizeBytes: storedSize, completedAt };
+  } else {
+    const updated = await query(
+      "UPDATE result_attachments SET status = 'ready', size_bytes = $2, completed_at = now() WHERE id = $1 RETURNING *",
+      [cleanAttachmentId, storedSize]
+    );
+    attachment = updated.rows[0];
+  }
+  return publicResultAttachment(attachment);
+}
+
+export async function getResultAttachmentContent(userPageId, resultId, attachmentId, userId = null) {
+  const userPage = await findUserPage(userPageId, userId);
+  if (!userPage) return null;
+  let attachment;
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    attachment = (db.resultAttachments || []).find((item) => (
+      item.id === attachmentId
+      && item.resultId === resultId
+      && item.userPageId === userPage.id
+      && item.status === "attached"
+    ));
+  } else {
+    const result = await query(
+      `SELECT * FROM result_attachments
+       WHERE id = $1 AND result_id = $2 AND user_page_id = $3 AND status = 'attached'
+       LIMIT 1`,
+      [attachmentId, resultId, userPage.id]
+    );
+    attachment = result.rows[0];
+  }
+  if (!attachment) return null;
+  const objectKey = attachment.objectKey || attachment.object_key;
+  return {
+    attachment: publicResultAttachment(attachment),
+    buffer: await getObjectBuffer(objectKey)
+  };
+}
+
 export async function listResults(userPageId, userId = null) {
   const userPage = await findUserPage(userPageId, userId);
   if (!userPage) return null;
@@ -2277,9 +2549,17 @@ export async function getResultDetail(userPageId, resultId, userId = null) {
     if (!result) return null;
     const sessionResults = db.pageResults
       .filter((item) => item.userPageId === userPage.id && (result.sessionId ? item.sessionId === result.sessionId : item.id === result.id))
-      .map(publicResult)
+      .map((item) => publicResult({
+        ...item,
+        attachments: (db.resultAttachments || [])
+          .filter((attachment) => attachment.resultId === item.id && attachment.status === "attached")
+          .map(publicResultAttachment)
+      }))
       .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-    return { result: publicResult(result), sessionResults };
+    return {
+      result: sessionResults.find((item) => item.id === result.id) || publicResult(result),
+      sessionResults
+    };
   }
 
   const selected = await query(
@@ -2295,10 +2575,51 @@ export async function getResultDetail(userPageId, resultId, userId = null) {
     )
     : selected;
 
+  const resultIds = sessionResults.rows.map((row) => row.id);
+  const attachmentRows = resultIds.length
+    ? await query(
+      "SELECT * FROM result_attachments WHERE result_id = ANY($1::text[]) AND status = 'attached' ORDER BY created_at ASC",
+      [resultIds]
+    )
+    : { rows: [] };
+  const attachmentsByResult = new Map();
+  for (const attachment of attachmentRows.rows) {
+    if (!attachmentsByResult.has(attachment.result_id)) attachmentsByResult.set(attachment.result_id, []);
+    attachmentsByResult.get(attachment.result_id).push(publicResultAttachment(attachment));
+  }
+  const publicSessionResults = sessionResults.rows.map((row) => toResult({ ...row, attachments: attachmentsByResult.get(row.id) || [] }));
+
   return {
-    result: toResult(selected.rows[0]),
-    sessionResults: sessionResults.rows.map(toResult)
+    result: publicSessionResults.find((item) => item.id === selected.rows[0].id) || toResult(selected.rows[0]),
+    sessionResults: publicSessionResults
   };
+}
+
+async function deleteResultAttachmentObjects(userPageId, resultIds = []) {
+  const cleanIds = [...new Set(resultIds.filter(Boolean))];
+  if (!cleanIds.length) return 0;
+  if (useJsonDb()) {
+    const db = await readJsonDb();
+    const keys = jsonAttachmentKeys(db, userPageId, cleanIds);
+    await deleteStoredObjects(keys);
+    const selected = new Set(cleanIds);
+    return updateJsonDb((nextDb) => {
+      const before = (nextDb.resultAttachments || []).length;
+      nextDb.resultAttachments = (nextDb.resultAttachments || []).filter((item) => (
+        item.userPageId !== userPageId || !selected.has(item.resultId)
+      ));
+      return before - nextDb.resultAttachments.length;
+    });
+  }
+  const attachments = await query(
+    "SELECT id, object_key FROM result_attachments WHERE user_page_id = $1 AND result_id = ANY($2::text[])",
+    [userPageId, cleanIds]
+  );
+  await deleteStoredObjects(attachments.rows.map((row) => row.object_key));
+  if (attachments.rows.length) {
+    await query("DELETE FROM result_attachments WHERE id = ANY($1::text[])", [attachments.rows.map((row) => row.id)]);
+  }
+  return attachments.rows.length;
 }
 
 async function purgeExpiredPageResults(userPage) {
@@ -2306,6 +2627,11 @@ async function purgeExpiredPageResults(userPage) {
   const retentionDays = normalizeResultSettings(userPage.resultSettings).retentionDays;
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
   if (useJsonDb()) {
+    const db = await readJsonDb();
+    const expiredIds = db.pageResults
+      .filter((result) => result.userPageId === userPage.id && new Date(result.createdAt).getTime() < cutoff)
+      .map((result) => result.id);
+    await deleteResultAttachmentObjects(userPage.id, expiredIds);
     return updateJsonDb((db) => {
       const before = db.pageResults.length;
       db.pageResults = db.pageResults.filter((result) => (
@@ -2316,6 +2642,11 @@ async function purgeExpiredPageResults(userPage) {
     });
   }
 
+  const expired = await query(
+    "SELECT id FROM page_results WHERE user_page_id = $1 AND created_at < now() - ($2::int * interval '1 day')",
+    [userPage.id, retentionDays]
+  );
+  await deleteResultAttachmentObjects(userPage.id, expired.rows.map((row) => row.id));
   const result = await query(
     "DELETE FROM page_results WHERE user_page_id = $1 AND created_at < now() - ($2::int * interval '1 day')",
     [userPage.id, retentionDays]
@@ -2326,6 +2657,7 @@ async function purgeExpiredPageResults(userPage) {
 export async function deleteResult(userPageId, resultId, userId = null) {
   const userPage = await findUserPage(userPageId, userId);
   if (!userPage) return null;
+  await deleteResultAttachmentObjects(userPage.id, [resultId]);
   if (useJsonDb()) {
     return updateJsonDb((db) => {
       const before = db.pageResults.length;
@@ -2398,6 +2730,7 @@ export async function applyBulkResultAction(userPageId, resultIds, action, userI
   }
 
   if (cleanAction === "delete") {
+    await deleteResultAttachmentObjects(userPage.id, cleanIds);
     if (useJsonDb()) {
       const affected = await updateJsonDb((db) => {
         const selectedIds = new Set(cleanIds);
@@ -2823,6 +3156,11 @@ export async function markAllNotificationsRead(userId) {
 
 export async function savePageResult(data, ip, userAgent, { fieldManifest = null } = {}) {
   const userPage = await findUserPage(data.userPageId || data.pageId);
+  if (userPage) await purgeExpiredPageResults(userPage);
+  const requestedAttachmentIds = normalizeAttachmentIds(data.attachmentIds);
+  if (Array.isArray(data.attachmentIds) && requestedAttachmentIds.length !== data.attachmentIds.length) {
+    throw new Error("Result attachments are invalid");
+  }
   let safePayload;
   if (fieldManifest && data.capture) {
     const manifest = trustedResultManifestFromPersistent(fieldManifest, {
@@ -2860,15 +3198,23 @@ export async function savePageResult(data, ip, userAgent, { fieldManifest = null
   };
   const notification = notificationForResult(result, userPage);
   if (useJsonDb()) {
+    let attached = [];
     await updateJsonDb((db) => {
-      if (userPage) {
-        const retentionDays = normalizeResultSettings(userPage.resultSettings).retentionDays;
-        const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-        db.pageResults = db.pageResults.filter((item) => (
-          item.userPageId !== userPage.id
-          || new Date(item.createdAt).getTime() >= cutoff
-        ));
+      const selected = requestedAttachmentIds.map((id) => (db.resultAttachments || []).find((item) => item.id === id));
+      if (selected.some((item) => !item
+        || item.userPageId !== result.userPageId
+        || item.sessionId !== result.sessionId
+        || item.resultId
+        || item.status !== "ready")) {
+        throw new Error("ID uploads are missing, expired, or already attached");
       }
+      attached = selected.map((item) => {
+        item.resultId = result.id;
+        item.status = "attached";
+        result.payload[item.fieldLabel] = { kind: "attachment", attachmentId: item.id, side: item.side };
+        return publicResultAttachment(item);
+      });
+      result.attachments = attached;
       db.pageResults.push(result);
       if (notification && !(db.notificationOutbox || []).some((item) => item.resultId === result.id && item.eventType === notification.eventType)) {
         db.notificationOutbox ||= [];
@@ -2877,10 +3223,29 @@ export async function savePageResult(data, ip, userAgent, { fieldManifest = null
       }
       return result;
     });
-    return publicResult(result);
+    return publicResult({ ...result, attachments: attached });
   }
 
   return withTransaction(async (client) => {
+    let attached = [];
+    if (requestedAttachmentIds.length) {
+      const selected = await client.query(
+        "SELECT * FROM result_attachments WHERE id = ANY($1::text[]) FOR UPDATE",
+        [requestedAttachmentIds]
+      );
+      if (selected.rows.length !== requestedAttachmentIds.length || selected.rows.some((item) => (
+        item.user_page_id !== result.userPageId
+        || item.session_id !== result.sessionId
+        || item.result_id
+        || item.status !== "ready"
+      ))) {
+        throw new Error("ID uploads are missing, expired, or already attached");
+      }
+      attached = requestedAttachmentIds.map((id) => selected.rows.find((item) => item.id === id));
+      for (const item of attached) {
+        result.payload[item.field_label] = { kind: "attachment", attachmentId: item.id, side: item.side };
+      }
+    }
     const dbResult = await client.query(
       `INSERT INTO page_results
         (id, user_page_id, user_id, package_id, package_version, page_id, page_name, license_key, session_id, screen, flow, payload, hostname, path, ip, user_agent)
@@ -2888,6 +3253,12 @@ export async function savePageResult(data, ip, userAgent, { fieldManifest = null
        RETURNING *`,
       [result.id, result.userPageId, result.userId, result.packageId, result.packageVersion, result.pageId, result.pageName, result.licenseKey, result.sessionId, result.screen, JSON.stringify(result.flow), JSON.stringify(result.payload), result.hostname, result.path, result.ip, result.userAgent]
     );
+    if (requestedAttachmentIds.length) {
+      await client.query(
+        "UPDATE result_attachments SET result_id = $2, status = 'attached' WHERE id = ANY($1::text[])",
+        [requestedAttachmentIds, result.id]
+      );
+    }
     if (notification) {
       await client.query(
         `INSERT INTO notification_outbox
@@ -2905,13 +3276,9 @@ export async function savePageResult(data, ip, userAgent, { fieldManifest = null
         });
       }
     }
-    if (userPage) {
-      const retentionDays = normalizeResultSettings(userPage.resultSettings).retentionDays;
-      await client.query(
-        "DELETE FROM page_results WHERE user_page_id = $1 AND created_at < now() - ($2::int * interval '1 day')",
-        [userPage.id, retentionDays]
-      );
-    }
-    return toResult(dbResult.rows[0]);
+    return toResult({
+      ...dbResult.rows[0],
+      attachments: attached.map((item) => publicResultAttachment({ ...item, result_id: result.id }))
+    });
   });
 }

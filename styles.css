@@ -7562,6 +7562,56 @@ body.result-viewer-open {
   padding: 20px;
 }
 
+.result-attachment-list {
+  display: grid;
+  gap: 18px;
+}
+
+.result-attachment {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.result-attachment figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.result-attachment figcaption strong {
+  color: var(--soft);
+}
+
+.result-attachment figcaption span,
+.result-attachment a {
+  color: var(--accent);
+  font: 800 0.72rem var(--mono);
+  text-transform: uppercase;
+}
+
+.result-attachment img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  background: #050706;
+}
+
+.result-attachment a {
+  justify-self: start;
+  text-decoration: none;
+}
+
+:root[data-theme="light"] .result-attachment {
+  background: rgb(var(--accent-rgb) / 0.04);
+}
+
 .result-viewer-control-scrim,
 .result-viewer-command-center[hidden],
 .result-viewer-control-scrim[hidden] {

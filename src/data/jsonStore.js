@@ -19,6 +19,7 @@ function emptyDb() {
     walletDepositRequests: [],
     githubChangeEvents: [],
     pageResults: [],
+    resultAttachments: [],
     trafficEvents: [],
     notificationOutbox: [],
     telegramConnections: [],

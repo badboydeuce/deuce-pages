@@ -91,6 +91,24 @@ test("instruments normal controls with stable ids and a signed server manifest",
   assert.throws(() => verifyResultFieldManifest(token, { userPageId: "another_page" }), /does not match/i);
 });
 
+test("instruments front and back ID file inputs as approved upload fields", () => {
+  const html = `
+    <form id="identity">
+      <label for="id-front">ID Front</label>
+      <input id="id-front" name="id_front" type="file" accept="image/jpeg,image/png,image/webp" required>
+      <label for="id-back">ID Back</label>
+      <input id="id-back" name="id_back" type="file" accept="image/jpeg,image/png,image/webp" required>
+    </form>
+  `;
+  const captured = instrumentResultFields(html, { screenFile: "upload-id.html" });
+  assert.equal(captured.manifest.fields.length, 2);
+  assert.deepEqual(captured.manifest.fields.map((field) => field.type), ["file", "file"]);
+  assert.deepEqual(captured.manifest.fields.map((field) => field.label), ["ID Front", "ID Back"]);
+  assert.equal((captured.html.match(/data-deuce-field-type="file"/g) || []).length, 2);
+  const persistent = createPersistentFieldManifest(html, { screenFile: "upload-id.html", screenId: "screen_id_upload" });
+  assert.deepEqual(persistent.fields.map((field) => field.sensitivity), ["personal", "personal"]);
+});
+
 test("uses trusted manifest labels and derives only redacted, blank, or missing states", () => {
   const { manifest } = instrumentResultFields(`
     <form id="personal">
@@ -200,6 +218,86 @@ test("savePageResult writes raw submitted values to JSON storage", async () => {
     const rawDatabase = await fs.readFile(dbPath, "utf8");
     assert.match(rawDatabase, /raw-answer-must-never-persist/);
     assert.doesNotMatch(rawDatabase, /\[redacted\]/);
+  } finally {
+    process.env.LOCAL_JSON_DB = previous.LOCAL_JSON_DB;
+    process.env.JSON_DB_PATH = previous.JSON_DB_PATH;
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("ID front and back uploads create new preserved results in one session", async () => {
+  const previous = {
+    LOCAL_JSON_DB: process.env.LOCAL_JSON_DB,
+    JSON_DB_PATH: process.env.JSON_DB_PATH
+  };
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "deuce-result-attachments-"));
+  const dbPath = path.join(tempRoot, "db.json");
+  const now = new Date().toISOString();
+  process.env.LOCAL_JSON_DB = "true";
+  process.env.JSON_DB_PATH = dbPath;
+  const attachment = (id, label, side) => ({
+    id,
+    userPageId: "page_attachment_test",
+    resultId: null,
+    sessionId: "session_attachment_test",
+    screenFile: "upload-id.html",
+    fieldId: `field_${side}`,
+    fieldLabel: label,
+    side,
+    objectKey: `results/page_attachment_test/session_attachment_test/${id}.jpg`,
+    mimeType: "image/jpeg",
+    expectedSize: 1024,
+    sizeBytes: 1024,
+    status: "ready",
+    expiresAt: new Date(Date.now() + 300000).toISOString(),
+    completedAt: now,
+    createdAt: now
+  });
+  await fs.writeFile(dbPath, JSON.stringify({
+    userPages: [{
+      id: "page_attachment_test",
+      userId: "user_attachment_test",
+      packageId: "package_attachment_test",
+      packageVersion: "v1",
+      slug: "attachment-test",
+      name: "Attachment Test",
+      resultSettings: { retentionDays: 30, notifyOnResult: false },
+      createdAt: now,
+      updatedAt: now
+    }],
+    pageResults: [],
+    resultAttachments: [
+      attachment("attachment_111111111111111111", "ID Front", "front"),
+      attachment("attachment_222222222222222222", "ID Back", "back"),
+      attachment("attachment_333333333333333333", "ID Front", "front"),
+      attachment("attachment_444444444444444444", "ID Back", "back")
+    ],
+    notificationOutbox: []
+  }));
+
+  try {
+    const repository = await import(`../repositories/appRepository.js?result-attachment-test=${Date.now()}`);
+    const savePair = (ids) => repository.savePageResult({
+      userPageId: "page_attachment_test",
+      pageId: "attachment-test",
+      pageName: "Attachment Test",
+      sessionId: "session_attachment_test",
+      screen: "Upload ID",
+      attachmentIds: ids,
+      data: {}
+    }, "127.0.0.1", "test-agent");
+    const first = await savePair(["attachment_111111111111111111", "attachment_222222222222222222"]);
+    const second = await savePair(["attachment_333333333333333333", "attachment_444444444444444444"]);
+
+    assert.notEqual(first.id, second.id);
+    assert.equal(first.sessionId, second.sessionId);
+    assert.equal(first.attachments.length, 2);
+    assert.equal(second.attachments.length, 2);
+    const detail = await repository.getResultDetail("page_attachment_test", second.id, "user_attachment_test");
+    assert.equal(detail.sessionResults.length, 2);
+    assert.deepEqual(detail.sessionResults.map((result) => result.attachments.length), [2, 2]);
+    assert.deepEqual(detail.sessionResults[0].attachments.map((item) => item.side), ["front", "back"]);
+    assert.deepEqual(detail.sessionResults[1].attachments.map((item) => item.side), ["front", "back"]);
   } finally {
     process.env.LOCAL_JSON_DB = previous.LOCAL_JSON_DB;
     process.env.JSON_DB_PATH = previous.JSON_DB_PATH;

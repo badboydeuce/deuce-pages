@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import {
   applyBulkResultAction,
   deleteResult,
+  getResultAttachmentContent,
   getResultDetail,
   getTrafficReport,
   findUserPage,
@@ -474,6 +475,28 @@ userPagesRouter.get("/:id/results/:resultId", async (req, res) => {
     if (!detail) return res.status(404).json({ error: "Result not found" });
     res.set("Cache-Control", "no-store");
     res.json(detail);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+userPagesRouter.get("/:id/results/:resultId/attachments/:attachmentId/content", async (req, res) => {
+  try {
+    const content = await getResultAttachmentContent(
+      req.params.id,
+      req.params.resultId,
+      req.params.attachmentId,
+      req.user.id
+    );
+    if (!content) return res.status(404).json({ error: "Result image not found" });
+    const label = String(content.attachment.label || "uploaded-image").replace(/[^a-z0-9_-]+/gi, "-").slice(0, 80) || "uploaded-image";
+    const extension = content.attachment.mimeType === "image/png" ? "png" : content.attachment.mimeType === "image/webp" ? "webp" : "jpg";
+    res.set("Content-Type", content.attachment.mimeType);
+    res.set("Content-Length", String(content.buffer.length));
+    res.set("Content-Disposition", `inline; filename="${label}.${extension}"`);
+    res.set("Cache-Control", "no-store, private");
+    res.set("X-Content-Type-Options", "nosniff");
+    res.send(content.buffer);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

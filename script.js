@@ -1138,6 +1138,7 @@ function resultDisplayFields(payload = {}, screen = "") {
   const fields = Object.entries(source || {}).reduce((nextFields, [label, value]) => {
     if (isInternalResultField(label)) return nextFields;
     if (value && typeof value === "object" && !Array.isArray(value)) {
+      if (value.kind === "attachment" && value.attachmentId) return nextFields;
       Object.entries(resultDisplayFields(value, label)).forEach(([nestedLabel, nestedValue]) => {
         nextFields[nestedLabel] = nestedValue;
       });
@@ -1277,6 +1278,37 @@ function resultFieldMarkup(fields = {}, screen = "") {
     </div>
   `;
     }).join("");
+}
+
+function resultAttachmentMarkup(result, page) {
+  const attachments = Array.isArray(result.attachments) ? result.attachments : [];
+  if (!attachments.length) return "";
+  const ordered = [...attachments].sort((a, b) => {
+    const rank = { front: 0, back: 1, document: 2 };
+    return (rank[a.side] ?? 3) - (rank[b.side] ?? 3);
+  });
+  return `
+    <section class="result-viewer-section result-attachment-section">
+      <div class="result-viewer-section-head">
+        <div><small>submitted images</small><h3>Original ID images</h3></div>
+        <span>${attachments.length} image${attachments.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="result-attachment-list">
+        ${ordered.map((attachment) => {
+          const label = attachment.side === "front" ? "ID Front" : attachment.side === "back" ? "ID Back" : attachment.label || "Uploaded image";
+          const url = `/api/user-pages/${encodeURIComponent(page.id)}/results/${encodeURIComponent(result.id)}/attachments/${encodeURIComponent(attachment.id)}/content`;
+          const size = attachment.sizeBytes ? `${(Number(attachment.sizeBytes) / (1024 * 1024)).toFixed(2)} MB` : "Original file";
+          return `
+            <figure class="result-attachment">
+              <figcaption><strong>${escapeHtml(label)}</strong><span>${escapeHtml(size)}</span></figcaption>
+              <img src="${escapeHtml(url)}" alt="${escapeHtml(label)}" loading="lazy" decoding="async">
+              <a href="${escapeHtml(url)}" target="_blank" rel="noopener">Open original image</a>
+            </figure>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function resultActionsMarkup(result, pageSlug) {
@@ -1522,6 +1554,7 @@ function renderResultViewer(options = {}) {
             <article><small>Package version</small><strong>${escapeHtml(result.packageVersion || "Unknown")}</strong></article>
             <article><small>Review status</small><strong>${escapeHtml(resultWorkflowLabel(result.status))}</strong></article>
           </section>
+          ${resultAttachmentMarkup(result, page)}
           <section class="result-viewer-section">
             <div class="result-viewer-section-head">
               <div><small>submitted fields</small><h3>Captured field map</h3></div>
@@ -2510,7 +2543,7 @@ function screenFieldManifestMarkup(screen) {
   const fields = Array.isArray(fieldManifest.fields) ? fieldManifest.fields : [];
   const warnings = Array.isArray(fieldManifest.warnings) ? fieldManifest.warnings : [];
   const needsReview = Boolean(fieldManifest.needsReview || fields.some((field) => field.needsReview));
-  const supportedTypes = ["text", "email", "tel", "number", "date", "datetime-local", "textarea", "select", "select-multiple", "checkbox", "radio", "password"];
+  const supportedTypes = ["text", "email", "tel", "number", "date", "datetime-local", "textarea", "select", "select-multiple", "checkbox", "radio", "password", "file"];
   return `
     <details class="screen-field-editor ${needsReview || warnings.length ? "needs-review" : ""}" ${needsReview || warnings.length ? "open" : ""}>
       <summary>

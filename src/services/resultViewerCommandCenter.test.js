@@ -32,6 +32,10 @@ test("secure result viewer is a session-aware command center", async () => {
   assert.match(portalScript, /Captured<\/span>/);
   assert.match(portalScript, /Missing<\/span>/);
   assert.match(portalStyles, /\.result-field-coverage\s*\{/);
+  assert.match(portalScript, /function resultAttachmentMarkup/);
+  assert.match(portalScript, /Original ID images/);
+  assert.match(portalScript, /attachments\/\$\{encodeURIComponent\(attachment\.id\)\}\/content/);
+  assert.match(portalStyles, /\.result-attachment img\s*\{[\s\S]*width:\s*100%[\s\S]*height:\s*auto/);
 
   assert.match(portalStyles, /@media \(max-width: 600px\)[\s\S]*\.result-viewer-command-center\s*\{[\s\S]*position:\s*absolute/);
   assert.match(portalStyles, /\.result-viewer-layout\s*\{[\s\S]*overflow-y:\s*auto/);

@@ -190,6 +190,25 @@ ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
 ALTER TABLE page_results
 ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
 
+CREATE TABLE IF NOT EXISTS result_attachments (
+  id TEXT PRIMARY KEY,
+  user_page_id TEXT NOT NULL REFERENCES user_pages(id) ON DELETE CASCADE,
+  result_id TEXT REFERENCES page_results(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  screen_file TEXT,
+  field_id TEXT NOT NULL,
+  field_label TEXT NOT NULL,
+  side TEXT NOT NULL DEFAULT 'document',
+  object_key TEXT UNIQUE NOT NULL,
+  mime_type TEXT NOT NULL,
+  expected_size BIGINT NOT NULL,
+  size_bytes BIGINT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  expires_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS notification_outbox (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -290,6 +309,9 @@ CREATE INDEX IF NOT EXISTS idx_page_results_created_at ON page_results(created_a
 CREATE INDEX IF NOT EXISTS idx_page_results_user_page_created ON page_results(user_page_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_page_results_user_page_session ON page_results(user_page_id, session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_page_results_user_page_status ON page_results(user_page_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_result_attachments_result ON result_attachments(result_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_result_attachments_session ON result_attachments(user_page_id, session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_result_attachments_pending ON result_attachments(status, expires_at) WHERE result_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_created ON notification_outbox(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_unread ON notification_outbox(user_id, read_at) WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_telegram_link_tokens_user ON telegram_link_tokens(user_id, expires_at DESC);
