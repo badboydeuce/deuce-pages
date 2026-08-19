@@ -97,6 +97,7 @@ const cryptoFundingOptions = [
   { value: "USDT_TRC20", asset: "USDT", network: "TRC20", label: "USDT - TRC20" },
   { value: "USDT_ERC20", asset: "USDT", network: "ERC20", label: "USDT - ERC20" },
   { value: "BTC_BTC", asset: "BTC", network: "BTC", label: "Bitcoin - BTC" },
+  { value: "LTC_LTC", asset: "LTC", network: "LTC", label: "Litecoin - LTC" },
   { value: "ETH_ERC20", asset: "ETH", network: "ERC20", label: "Ethereum - ERC20" },
   { value: "BNB_BEP20", asset: "BNB", network: "BEP20", label: "BNB - BEP20" }
 ];

@@ -17,15 +17,16 @@ const minimumFundingUsd = 30;
 const stablecoinAssets = new Set(["USDT", "USDC"]);
 const quoteCache = new Map();
 
-const cryptoFundingOptions = [
+export const cryptoFundingOptions = [
   { value: "USDT_TRC20", asset: "USDT", network: "TRC20", label: "USDT - TRC20", envKey: "WALLET_USDT_TRC20" },
   { value: "USDT_ERC20", asset: "USDT", network: "ERC20", label: "USDT - ERC20", envKey: "WALLET_USDT_ERC20" },
   { value: "BTC_BTC", asset: "BTC", network: "BTC", label: "Bitcoin - BTC", envKey: "WALLET_BTC" },
+  { value: "LTC_LTC", asset: "LTC", network: "LTC", label: "Litecoin - LTC", envKey: "WALLET_LTC" },
   { value: "ETH_ERC20", asset: "ETH", network: "ERC20", label: "Ethereum - ERC20", envKey: "WALLET_ETH" },
   { value: "BNB_BEP20", asset: "BNB", network: "BEP20", label: "BNB - BEP20", envKey: "WALLET_BNB_BEP20" }
 ];
 
-function fundingOptionsFromEnv() {
+export function fundingOptionsFromEnv() {
   return cryptoFundingOptions.map((option) => {
     const address = String(process.env[option.envKey] || "").trim();
     return {
@@ -47,9 +48,10 @@ function fundingOptionByAssetNetwork(asset, network) {
   )) || null;
 }
 
-function coingeckoIdForAsset(asset) {
+export function coingeckoIdForAsset(asset) {
   return {
     BTC: "bitcoin",
+    LTC: "litecoin",
     ETH: "ethereum",
     BNB: "binancecoin"
   }[String(asset || "").trim().toUpperCase()] || "";
@@ -89,7 +91,7 @@ async function cryptoUsdRate(asset) {
   return quote;
 }
 
-async function buildWalletQuote({ amount, cryptoType, network }) {
+export async function buildWalletQuote({ amount, cryptoType, network }) {
   const usdAmount = Number(amount || 0);
   if (!Number.isFinite(usdAmount) || usdAmount < minimumFundingUsd) {
     return {
