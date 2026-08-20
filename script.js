@@ -4648,13 +4648,6 @@ function marketplaceRegionFlag(region, className = "market-region-flag") {
   return `<img class="${className}" src="${escapeHtml(region.flag)}" alt="" width="48" height="32">`;
 }
 
-function marketRegionBadges(page) {
-  return (page.marketplaceRegions || []).map((code) => {
-    const region = marketplaceRegion(code);
-    return `<span class="market-region-badge">${marketplaceRegionFlag(region)}${escapeHtml(region.label)}</span>`;
-  }).join("");
-}
-
 function renderPages(resetRegion = true) {
   activeFlowSlug = null;
   if (resetRegion) activeMarketRegion = "";
@@ -4695,7 +4688,6 @@ function renderPages(resetRegion = true) {
                 <div class="card-copy">
                   <small>available page</small>
                   <h3>${escapeHtml(page.name)}</h3>
-                  <div class="market-region-badges">${marketRegionBadges(page)}</div>
                   <p>${escapeHtml(page.userSummary)}</p>
                 </div>
               </div>

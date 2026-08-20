@@ -1523,27 +1523,6 @@ code,
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
 }
 
-.market-region-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin: 5px 0 7px;
-}
-
-.market-region-badge {
-  display: inline-flex;
-  gap: 5px;
-  align-items: center;
-  color: var(--muted);
-  font: 800 0.65rem var(--mono);
-  text-transform: uppercase;
-}
-
-.market-region-badge .market-region-flag {
-  width: 24px;
-  height: 16px;
-}
-
 .market-region-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
