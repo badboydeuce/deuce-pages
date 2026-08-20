@@ -4635,7 +4635,6 @@ function renderPages() {
       <div class="view-heading">
         <small>pages marketplace</small>
         <h2>Choose a page</h2>
-        <p>Preview available pages, choose a subscription plan, and activate one from your wallet.</p>
       </div>
       <div class="page-grid">
         ${marketPages.length ? marketPages.map((page) => {
@@ -4782,7 +4781,6 @@ function renderAdmin() {
       <div class="view-heading">
         <small>admin studio</small>
         <h2>Package control center</h2>
-        <p>Import pages, review files, publish packages, and manage subscribers from one compact workspace.</p>
       </div>
       ${viewNav([
         routeButton("#pages", "&#8592; Marketplace"),
@@ -4806,19 +4804,6 @@ function renderAdmin() {
       </div>
 
       <div class="admin-studio-shell">
-        <article class="admin-hero-panel">
-          <div>
-            <small>next action</small>
-            <h3>Publish your first real page package</h3>
-            <p>Connect a repo, detect screens, check CSS/assets, then send a clean package to the marketplace for wallet subscriptions.</p>
-          </div>
-          <div class="admin-actions">
-            <button type="button" data-route="#admin-import-github">Import GitHub</button>
-            <button type="button" data-route="#admin-import-local">Upload files</button>
-            <button type="button" data-route="#admin-users">Users</button>
-          </div>
-        </article>
-
         <div class="admin-workbench">
           <article class="admin-table-card">
             <div class="builder-heading compact">
@@ -6874,7 +6859,6 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         <input type="checkbox" data-security-field="contentDeterrence" ${security.contentDeterrence ? "checked" : ""}>
         <span>Disable right-click, image dragging, and common source-view shortcuts</span>
       </label>
-      <p>This discourages casual copying on the launcher and every imported screen. It cannot prevent determined visitors or automated tools from inspecting content their browser receives.</p>
       <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save deterrence</button>
     </article>
   `;
@@ -6916,7 +6900,6 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           </label>
         `).join("")}
       </div>
-      <p>Best protection is server-side User-Agent detection through your runtime API. It blocks common device classes, but advanced users can spoof their browser, so pair this with IP rules and captcha for stronger control.</p>
       <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save security rules</button>
     </article>
   `;
@@ -6947,7 +6930,6 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           <option value="allow" ${vpnProxyRules.reputationFailureMode === "allow" ? "selected" : ""}>Allow and log</option>
         </select>
       </label>
-      <p>Challenge mode requires a valid Turnstile site and secret key. Provider failures are cached briefly, while successful reputation results use the normal cache.</p>
       <button type="button" data-save-security="${routeKey}" data-save-security-tab="security">Save shield</button>
     </article>
   `;
@@ -7012,7 +6994,6 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
       <div class="view-heading">
         <small>security center</small>
         <h2>${page.name} protection</h2>
-        <p>Manage the rules that protect this page after users download and host the generated index.html.</p>
       </div>
       ${viewNav([
         routeButton("#my-pages", "&#8592; My Pages", "primary"),
