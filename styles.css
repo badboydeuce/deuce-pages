@@ -1499,19 +1499,6 @@ code,
   height: 48px;
 }
 
-.market-region-prompt {
-  display: grid;
-  gap: 5px;
-  justify-items: center;
-  padding: 28px 16px;
-  color: var(--muted);
-  text-align: center;
-}
-
-.market-region-prompt strong {
-  color: var(--ink);
-}
-
 .market-region-flag,
 .admin-region-flag {
   display: block;

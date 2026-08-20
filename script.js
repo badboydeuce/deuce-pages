@@ -970,7 +970,7 @@ function normalizePackage(pagePackage) {
     || manifestScreens.find((screen) => screen.enabled !== false)?.file
     || manifestScreens[0]?.file
     || "";
-  const cleanDescription = pagePackage.packageManifest?.description || "Ready to preview and subscribe.";
+  const cleanDescription = pagePackage.packageManifest?.description || "";
   const marketplaceRegionCodes = Array.isArray(pagePackage.packageManifest?.marketplaceRegions)
     ? pagePackage.packageManifest.marketplaceRegions.filter((code) => marketplaceRegions.some((region) => region.code === code))
     : [];
@@ -4688,7 +4688,7 @@ function renderPages(resetRegion = true) {
                 <div class="card-copy">
                   <small>available page</small>
                   <h3>${escapeHtml(page.name)}</h3>
-                  <p>${escapeHtml(page.userSummary)}</p>
+                  ${page.userSummary ? `<p>${escapeHtml(page.userSummary)}</p>` : ""}
                 </div>
               </div>
               <div class="market-subscription">
@@ -4712,7 +4712,7 @@ function renderPages(resetRegion = true) {
           </article>
         `;
         }).join("") : emptyState(`No ${selectedRegion.label} pages yet`, "Contact support to request a custom page.", emptyAction)}
-      </div>` : `<div class="market-region-prompt"><strong>Choose a location to view available pages</strong><span>Page packages and subscriptions are organized by region.</span></div>`}
+      </div>` : ""}
     </section>
   `;
   statusText.textContent = "PAGES MARKETPLACE READY";
