@@ -38,6 +38,13 @@ let activeTemplate = templates[0];
 
 let marketPages = [];
 let adminPackages = [];
+let activeMarketRegion = "";
+const marketplaceRegions = [
+  { code: "US", label: "US", name: "United States", flag: "/portal/assets/flags/us.svg" },
+  { code: "GB", label: "UK", name: "United Kingdom", flag: "/portal/assets/flags/gb.svg" },
+  { code: "EU", label: "EU", name: "European Union", flag: "/portal/assets/flags/eu.svg" },
+  { code: "CA", label: "Canada", name: "Canada", flag: "/portal/assets/flags/ca.svg" }
+];
 const adminPackageLibraryState = { search: "", status: "all", source: "all", sort: "updated" };
 const githubLiveStatusByPackage = new Map();
 const githubChangeInboxByPackage = new Map();
@@ -964,6 +971,9 @@ function normalizePackage(pagePackage) {
     || manifestScreens[0]?.file
     || "";
   const cleanDescription = pagePackage.packageManifest?.description || "Ready to preview and subscribe.";
+  const marketplaceRegionCodes = Array.isArray(pagePackage.packageManifest?.marketplaceRegions)
+    ? pagePackage.packageManifest.marketplaceRegions.filter((code) => marketplaceRegions.some((region) => region.code === code))
+    : [];
   return {
     ...pagePackage,
     billingPeriods: {
@@ -981,6 +991,7 @@ function normalizePackage(pagePackage) {
       `Monthly ${formatMoney(billing.monthly ?? weekly * 4)}`
     ],
     description: cleanDescription,
+    marketplaceRegions: marketplaceRegionCodes,
     userSummary: cleanDescription,
     stats: [],
     source: pagePackage.sourceType === "github" ? "GitHub repo" : "Uploaded bundle",
@@ -2626,6 +2637,7 @@ function collectAdminPackagePayload(page) {
   });
   const entryScreenId = rows.find((row) => row.querySelector("[data-package-screen-entry]")?.checked)?.dataset.packageScreenId || "";
   const finalScreenId = rows.find((row) => row.querySelector("[data-package-screen-final]")?.checked)?.dataset.packageScreenId || "";
+  const selectedRegions = [...preview.querySelectorAll("[data-package-region]:checked")].map((field) => field.value);
   if (mappedScreens.length && !entryScreenId) throw new Error("Select one entry screen before saving");
   const packageManifest = {
     ...(page.packageManifest || {}),
@@ -2634,6 +2646,7 @@ function collectAdminPackagePayload(page) {
     finalScreenId,
     type: value("type", page.type || page.sourceType || "Page package"),
     description: value("description", page.description || ""),
+    marketplaceRegions: selectedRegions,
     screens: mappedScreens
   };
   return {
@@ -4627,17 +4640,44 @@ async function handleLogout() {
   window.location.replace("/login");
 }
 
-function renderPages() {
+function marketplaceRegion(code) {
+  return marketplaceRegions.find((region) => region.code === code) || marketplaceRegions[0];
+}
+
+function marketplaceRegionFlag(region, className = "market-region-flag") {
+  return `<img class="${className}" src="${escapeHtml(region.flag)}" alt="" width="48" height="32">`;
+}
+
+function marketRegionBadges(page) {
+  return (page.marketplaceRegions || []).map((code) => {
+    const region = marketplaceRegion(code);
+    return `<span class="market-region-badge">${marketplaceRegionFlag(region)}${escapeHtml(region.label)}</span>`;
+  }).join("");
+}
+
+function renderPages(resetRegion = true) {
   activeFlowSlug = null;
+  if (resetRegion) activeMarketRegion = "";
   const emptyAction = isAdmin() ? "#admin" : "";
+  const selectedRegion = marketplaceRegions.find((region) => region.code === activeMarketRegion) || null;
+  const regionalPages = selectedRegion
+    ? marketPages.filter((page) => (page.marketplaceRegions || []).includes(selectedRegion.code))
+    : [];
   preview.innerHTML = `
     <section class="app-view">
       <div class="view-heading">
         <small>pages marketplace</small>
-        <h2>Choose a page</h2>
+        <h2>${selectedRegion ? `Choose a ${escapeHtml(selectedRegion.label)} page` : "Select your country or region"}</h2>
       </div>
-      <div class="page-grid">
-        ${marketPages.length ? marketPages.map((page) => {
+      <div class="market-region-tabs ${selectedRegion ? "" : "is-country-picker"}" aria-label="Marketplace regions">
+        ${marketplaceRegions.map((region) => `
+          <button type="button" class="${region.code === selectedRegion?.code ? "active" : ""}" data-market-region="${region.code}" aria-pressed="${region.code === selectedRegion?.code}">
+            ${marketplaceRegionFlag(region)}<span>${escapeHtml(region.name)}</span>
+          </button>
+        `).join("")}
+      </div>
+      ${selectedRegion ? `<div class="page-grid">
+        ${regionalPages.length ? regionalPages.map((page) => {
           const selectedPlan = selectedBillingPeriod(page);
           return `
           <article class="market-card">
@@ -4655,6 +4695,7 @@ function renderPages() {
                 <div class="card-copy">
                   <small>available page</small>
                   <h3>${escapeHtml(page.name)}</h3>
+                  <div class="market-region-badges">${marketRegionBadges(page)}</div>
                   <p>${escapeHtml(page.userSummary)}</p>
                 </div>
               </div>
@@ -4678,8 +4719,8 @@ function renderPages() {
             </div>
           </article>
         `;
-        }).join("") : emptyState("No published packages yet", "Published pages will appear here when they are available for subscription.", emptyAction)}
-      </div>
+        }).join("") : emptyState(`No ${selectedRegion.label} pages yet`, "Contact support to request a custom page.", emptyAction)}
+      </div>` : `<div class="market-region-prompt"><strong>Choose a location to view available pages</strong><span>Page packages and subscriptions are organized by region.</span></div>`}
     </section>
   `;
   statusText.textContent = "PAGES MARKETPLACE READY";
@@ -5368,6 +5409,20 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
             <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" data-package-thumbnail="${escapeHtml(page.slug)}">
           </label>
           <code>${escapeHtml(thumbnailLabel)}</code>
+        </article>
+
+        <article class="security-panel package-form marketplace-region-editor">
+          <small>marketplace regions</small>
+          <h3>Regional availability</h3>
+          <div class="market-region-options">
+            ${marketplaceRegions.map((region) => `
+              <label>
+                <input type="checkbox" value="${region.code}" data-package-region ${(page.marketplaceRegions || []).includes(region.code) ? "checked" : ""}>
+                ${marketplaceRegionFlag(region, "admin-region-flag")}
+                <span>${escapeHtml(region.name)}</span>
+              </label>
+            `).join("")}
+          </div>
         </article>
 
         <article class="security-panel package-form">
@@ -8698,6 +8753,13 @@ preview.addEventListener("input", (event) => {
 preview.addEventListener("click", async (event) => {
   const clickedButton = event.target.closest("button");
   pulseButton(clickedButton);
+
+  const marketRegionButton = event.target.closest("[data-market-region]");
+  if (marketRegionButton) {
+    activeMarketRegion = marketRegionButton.dataset.marketRegion;
+    renderPages(false);
+    return;
+  }
 
   const logoutButton = event.target.closest("[data-logout]");
   if (logoutButton) {

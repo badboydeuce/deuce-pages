@@ -307,6 +307,12 @@ export function createApp() {
 
   app.get("/portal/assets/styles.css", requirePortalSession, (req, res) => sendNoStoreFile(res, "styles.css"));
   app.get("/portal/assets/script.js", requirePortalSession, (req, res) => sendNoStoreFile(res, "script.js"));
+  app.use("/portal/assets/flags", requirePortalSession, express.static(path.join(publicRoot, "assets", "flags"), {
+    dotfiles: "deny",
+    index: false,
+    redirect: false,
+    maxAge: "1d"
+  }));
   app.get(["/portal", "/portal/", "/portal/*"], requirePortalSession, (req, res) => {
     sendNoStoreFile(res, "index.html");
   });
