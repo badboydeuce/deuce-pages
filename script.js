@@ -970,7 +970,8 @@ function normalizePackage(pagePackage) {
     || manifestScreens.find((screen) => screen.enabled !== false)?.file
     || manifestScreens[0]?.file
     || "";
-  const cleanDescription = pagePackage.packageManifest?.description || "";
+  const savedDescription = String(pagePackage.packageManifest?.description || "").trim();
+  const cleanDescription = savedDescription.toLowerCase() === "ready to preview and subscribe." ? "" : savedDescription;
   const marketplaceRegionCodes = Array.isArray(pagePackage.packageManifest?.marketplaceRegions)
     ? pagePackage.packageManifest.marketplaceRegions.filter((code) => marketplaceRegions.some((region) => region.code === code))
     : [];
