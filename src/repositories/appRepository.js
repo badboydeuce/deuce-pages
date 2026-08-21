@@ -2887,6 +2887,34 @@ export async function getTrafficReport(userPageId, userId = null, limit = 100) {
   };
 }
 
+export async function clearTrafficEvents(userPageId, userId = null, scope = "") {
+  const userPage = await findUserPage(userPageId, userId);
+  if (!userPage) return null;
+  const cleanScope = String(scope || "").toLowerCase();
+  const scopeHours = { "24h": 24, "7d": 24 * 7 };
+  if (cleanScope !== "all" && !scopeHours[cleanScope]) throw new Error("Unsupported traffic clear scope");
+  const cutoff = cleanScope === "all" ? null : new Date(Date.now() - scopeHours[cleanScope] * 60 * 60 * 1000).toISOString();
+
+  if (useJsonDb()) {
+    const deletedCount = await updateJsonDb((db) => {
+      const before = db.trafficEvents.length;
+      db.trafficEvents = db.trafficEvents.filter((event) => {
+        if (event.userPageId !== userPage.id) return true;
+        if (!cutoff) return false;
+        const createdAt = new Date(event.createdAt).getTime();
+        return !Number.isFinite(createdAt) || createdAt < new Date(cutoff).getTime();
+      });
+      return before - db.trafficEvents.length;
+    });
+    return { deletedCount, scope: cleanScope, cutoff };
+  }
+
+  const result = cutoff
+    ? await query("DELETE FROM traffic_events WHERE user_page_id = $1 AND created_at >= $2::timestamptz", [userPage.id, cutoff])
+    : await query("DELETE FROM traffic_events WHERE user_page_id = $1", [userPage.id]);
+  return { deletedCount: result.rowCount, scope: cleanScope, cutoff };
+}
+
 export async function listActivePageSessions(userPageId, userId = null) {
   const trafficEvents = await listTrafficEvents(userPageId, userId, 250);
   if (!trafficEvents) return null;

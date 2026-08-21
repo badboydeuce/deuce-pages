@@ -2,6 +2,7 @@ import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import {
   applyBulkResultAction,
+  clearTrafficEvents,
   deleteResult,
   getResultAttachmentContent,
   getResultDetail,
@@ -257,6 +258,16 @@ userPagesRouter.get("/:id/traffic", (req, res) => {
       res.json(report);
     })
     .catch((error) => res.status(400).json({ error: error.message }));
+});
+
+userPagesRouter.delete("/:id/traffic", async (req, res) => {
+  try {
+    const result = await clearTrafficEvents(req.params.id, req.user.id, req.body?.scope);
+    if (!result) return res.status(404).json({ error: "User page not found" });
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 userPagesRouter.post("/:id/results/bulk", async (req, res) => {

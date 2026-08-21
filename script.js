@@ -6844,6 +6844,22 @@ async function fetchPageTraffic(page) {
   }
 }
 
+async function clearPageTraffic(page, scope) {
+  if (!page) throw new Error("Page record not found");
+  const labels = { "24h": "the last 24 hours", "7d": "the last 7 days", all: "all recorded traffic" };
+  const periodLabel = labels[scope];
+  if (!periodLabel) throw new Error("Select a valid traffic period");
+  if (!window.confirm(`Clear ${periodLabel} for ${page.name}? This cannot be undone.`)) return false;
+  const result = await requestApi(`/api/user-pages/${encodeURIComponent(page.id)}/traffic`, {
+    method: "DELETE",
+    body: JSON.stringify({ scope })
+  });
+  await renderSecurityCenter(pageRouteKey(page), "traffic");
+  const deletedCount = Number(result.deletedCount || 0);
+  statusText.textContent = `${deletedCount} TRAFFIC EVENT${deletedCount === 1 ? "" : "S"} CLEARED`;
+  return true;
+}
+
 async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
   activeFlowSlug = null;
   tab = tab === "domains" ? "security" : tab;
@@ -6988,7 +7004,15 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
           <small>traffic</small>
           <h3>Visits and block counts</h3>
         </div>
-        <button type="button" data-route="#security-${routeKey}:traffic">Refresh</button>
+        <div class="traffic-heading-actions">
+          <button type="button" data-route="#security-${routeKey}:traffic">Refresh</button>
+          <select data-clear-traffic-scope aria-label="Traffic period to clear">
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="all">All traffic</option>
+          </select>
+          <button type="button" class="danger" data-clear-traffic="${escapeHtml(routeKey)}">Clear traffic</button>
+        </div>
       </div>
       <div class="metric-grid">
         <div><span>Unique visits</span><b>${trafficStats.uniqueVisits}</b></div>
@@ -9409,6 +9433,18 @@ preview.addEventListener("click", async (event) => {
     }).catch((error) => {
       statusText.textContent = `IP REMOVE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
+    return;
+  }
+
+  const clearTrafficButton = event.target.closest("[data-clear-traffic]");
+  if (clearTrafficButton) {
+    const resultPage = getPageBySlug(clearTrafficButton.dataset.clearTraffic);
+    const scope = clearTrafficButton.closest(".traffic-heading-actions")?.querySelector("[data-clear-traffic-scope]")?.value || "";
+    try {
+      await withButtonBusy(clearTrafficButton, "Clearing", () => clearPageTraffic(resultPage, scope));
+    } catch (error) {
+      statusText.textContent = `TRAFFIC CLEAR FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    }
     return;
   }
 

@@ -116,6 +116,79 @@ test("server-side traffic reporting records denied visits and returns unique-ses
     assert.equal(body.trafficSummary.blockEvents, 1);
     assert.equal(body.trafficSummary.totalEvents, 3);
     assert.equal(body.trafficEvents.some((event) => event.event === "security_denied" && event.result === "blocked"), true);
+
+    const invalidClear = await fetch(baseUrl + "/api/user-pages/page_traffic/traffic", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Cookie: `deuce_session=${originalToken}` },
+      body: JSON.stringify({ scope: "30d" })
+    });
+    assert.equal(invalidClear.status, 400);
+
+    const initialClear = await fetch(baseUrl + "/api/user-pages/page_traffic/traffic", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Cookie: `deuce_session=${originalToken}` },
+      body: JSON.stringify({ scope: "all" })
+    });
+    assert.equal(initialClear.status, 200);
+    assert.equal((await initialClear.json()).deletedCount, 3);
+
+    const seededDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    seededDb.users.push({ id: "user_other", email: "other@example.test", name: "Other User", passwordHash: "unused", role: "subscriber", status: "active", createdAt: now });
+    const otherToken = "traffic_other_token";
+    seededDb.sessions.push({
+      id: "auth_other",
+      userId: "user_other",
+      tokenHash: crypto.createHash("sha256").update(otherToken).digest("hex"),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      createdAt: now
+    });
+    seededDb.userPages.push({
+      ...seededDb.userPages[0],
+      id: "page_other",
+      userId: "user_other",
+      slug: "other-traffic-page",
+      name: "Other Traffic Page"
+    });
+    const event = (id, userPageId, ageHours) => ({
+      id,
+      userPageId,
+      pageId: userPageId,
+      sessionId: id,
+      event: "page_load",
+      result: "allowed",
+      createdAt: new Date(Date.now() - ageHours * 60 * 60 * 1000).toISOString()
+    });
+    seededDb.trafficEvents.push(
+      event("recent", "page_traffic", 1),
+      event("week", "page_traffic", 72),
+      event("old", "page_traffic", 240),
+      event("other", "page_other", 1)
+    );
+    await fs.writeFile(dbPath, JSON.stringify(seededDb));
+
+    const unauthorizedClear = await fetch(baseUrl + "/api/user-pages/page_traffic/traffic", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Cookie: `deuce_session=${otherToken}` },
+      body: JSON.stringify({ scope: "all" })
+    });
+    assert.equal(unauthorizedClear.status, 404);
+
+    const clearScope = async (scope) => {
+      const response = await fetch(baseUrl + "/api/user-pages/page_traffic/traffic", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Cookie: `deuce_session=${originalToken}` },
+        body: JSON.stringify({ scope })
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    assert.equal((await clearScope("24h")).deletedCount, 1);
+    assert.equal((await clearScope("7d")).deletedCount, 1);
+    assert.equal((await clearScope("all")).deletedCount, 1);
+
+    const finalDb = JSON.parse(await fs.readFile(dbPath, "utf8"));
+    assert.equal(finalDb.trafficEvents.some((item) => item.userPageId === "page_traffic"), false);
+    assert.equal(finalDb.trafficEvents.some((item) => item.id === "other" && item.userPageId === "page_other"), true);
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await fs.rm(tempRoot, { recursive: true, force: true });

@@ -6016,6 +6016,24 @@ code,
   justify-content: end;
 }
 
+.traffic-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: end;
+}
+
+.traffic-heading-actions select {
+  min-height: 38px;
+}
+
+.builder-heading .traffic-heading-actions .danger {
+  color: #ffffff;
+  border-color: var(--danger);
+  background: var(--danger);
+}
+
 .builder-heading button {
   min-height: 38px;
   padding: 0 13px;
