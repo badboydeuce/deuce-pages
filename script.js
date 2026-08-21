@@ -6990,7 +6990,6 @@ async function renderSecurityCenter(pageSlug = "page-a", tab = "security") {
         </div>
         <button type="button" data-route="#security-${routeKey}:traffic">Refresh</button>
       </div>
-      <p>Lifetime totals count each browser session once. Device cards count unique visits; the graph shows when visits first appeared during the last ${trafficStats.windowHours} hours. The activity list shows the latest 100 events.</p>
       <div class="metric-grid">
         <div><span>Unique visits</span><b>${trafficStats.uniqueVisits}</b></div>
         <div><span>Clean visits</span><b>${trafficStats.cleanVisits}</b></div>
