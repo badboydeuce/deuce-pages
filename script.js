@@ -851,7 +851,7 @@ function formatMoney(value) {
 
 function billingPrice(pagePackage, period) {
   const billing = pagePackage.billingPeriods || {};
-  return Number(billing[period] ?? billing.weekly ?? 25);
+  return Number(billing[period] ?? billing.weekly ?? 50);
 }
 
 function billingLabel(period) {
@@ -962,7 +962,7 @@ function findPackageThumbnail(pagePackage) {
 
 function normalizePackage(pagePackage) {
   const billing = pagePackage.billingPeriods || {};
-  const weekly = Number(billing.weekly ?? 25);
+  const weekly = Number(billing.weekly ?? 50);
   const manifestScreens = pagePackage.packageManifest?.screens || [];
   const entryScreenId = pagePackage.packageManifest?.entryScreenId || "";
   const previewFile = manifestScreens.find((screen) => screen.id === entryScreenId && screen.enabled !== false)?.file
@@ -978,18 +978,18 @@ function normalizePackage(pagePackage) {
   return {
     ...pagePackage,
     billingPeriods: {
-      daily: Number(billing.daily ?? Math.ceil(weekly / 5)),
+      daily: Number(billing.daily ?? 25),
       weekly,
-      biweekly: Number(billing.biweekly ?? weekly * 2),
-      monthly: Number(billing.monthly ?? weekly * 4)
+      biweekly: Number(billing.biweekly ?? 100),
+      monthly: Number(billing.monthly ?? 150)
     },
     type: pagePackage.packageManifest?.type || pagePackage.sourceType || "Page package",
     weeklyPrice: `${formatMoney(weekly)}/week`,
     prices: [
-      `Daily ${formatMoney(billing.daily ?? Math.ceil(weekly / 5))}`,
+      `Daily ${formatMoney(billing.daily ?? 25)}`,
       `Weekly ${formatMoney(weekly)}`,
-      `Biweekly ${formatMoney(billing.biweekly ?? weekly * 2)}`,
-      `Monthly ${formatMoney(billing.monthly ?? weekly * 4)}`
+      `Biweekly ${formatMoney(billing.biweekly ?? 100)}`,
+      `Monthly ${formatMoney(billing.monthly ?? 150)}`
     ],
     description: cleanDescription,
     marketplaceRegions: marketplaceRegionCodes,

@@ -24,10 +24,10 @@ const packageData = {
   sourceType: "github",
   repoUrl: scan.repoUrl,
   billingPeriods: {
-    daily: Number(process.env.FIRST_PAGE_PRICE_DAILY || 5),
-    weekly: Number(process.env.FIRST_PAGE_PRICE_WEEKLY || 25),
-    biweekly: Number(process.env.FIRST_PAGE_PRICE_BIWEEKLY || 45),
-    monthly: Number(process.env.FIRST_PAGE_PRICE_MONTHLY || 80)
+    daily: Number(process.env.FIRST_PAGE_PRICE_DAILY || 25),
+    weekly: Number(process.env.FIRST_PAGE_PRICE_WEEKLY || 50),
+    biweekly: Number(process.env.FIRST_PAGE_PRICE_BIWEEKLY || 100),
+    monthly: Number(process.env.FIRST_PAGE_PRICE_MONTHLY || 150)
   },
   screens: scan.screenManifest.screens.map((screen) => screen.buttonLabel),
   assets: scan.assets,

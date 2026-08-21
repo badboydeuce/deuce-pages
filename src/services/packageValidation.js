@@ -29,7 +29,9 @@ export function validatePackageData(data = {}, { publishing = false } = {}) {
     const price = cleanPrice(data.billingPeriods?.[period], period, issues);
     if (price !== undefined) billingPeriods[period] = price;
   }
-  if (!Object.keys(billingPeriods).length && !publishing) billingPeriods.weekly = 25;
+  if (!Object.keys(billingPeriods).length && !publishing) {
+    Object.assign(billingPeriods, { daily: 25, weekly: 50, biweekly: 100, monthly: 150 });
+  }
   if (publishing && !Object.values(billingPeriods).some((price) => price > 0)) {
     issues.push("At least one paid billing period is required before publishing");
   }

@@ -927,7 +927,7 @@ export async function createPackage(data) {
         status: data.status || "draft",
         sourceType: data.sourceType || "upload",
         repoUrl: data.repoUrl || null,
-        billingPeriods: data.billingPeriods || { weekly: 25 },
+        billingPeriods: data.billingPeriods || { daily: 25, weekly: 50, biweekly: 100, monthly: 150 },
         screens: data.screens || [],
         assets: data.assets || [],
         cssFiles: data.cssFiles || [],
@@ -955,7 +955,7 @@ export async function createPackage(data) {
       data.status || "draft",
       data.sourceType || "upload",
       data.repoUrl || null,
-      JSON.stringify(data.billingPeriods || { weekly: 25 }),
+      JSON.stringify(data.billingPeriods || { daily: 25, weekly: 50, biweekly: 100, monthly: 150 }),
       JSON.stringify(data.screens || []),
       JSON.stringify(data.assets || []),
       JSON.stringify(data.cssFiles || []),
@@ -1253,7 +1253,7 @@ export async function subscribeToPackage(id, data = {}) {
   if (!data.userId) return { error: "Authentication required", status: 401 };
   const period = data.billingPeriod || "weekly";
   if (!["daily", "weekly", "biweekly", "monthly"].includes(period)) return { error: "Unsupported billing period", status: 400 };
-  const price = Number(pagePackage.billingPeriods?.[period] ?? pagePackage.billingPeriods?.weekly ?? 25);
+  const price = Number(pagePackage.billingPeriods?.[period] ?? pagePackage.billingPeriods?.weekly ?? 50);
   const duplicateSubscription = (userPage) => {
     if (!userPage) return null;
     const state = pageSubscriptionState(userPage);
