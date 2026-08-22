@@ -2784,14 +2784,13 @@ function shouldUsePackageRuntime(page, pagePackage) {
   return Boolean(
     sourceReady
     && packageEntryFile(pagePackage)
-    && (page.hostingConfig?.connectionType || "cloudflare-worker") === "cloudflare-worker"
   );
 }
 
 function publicLauncherHosting(hostingConfig = {}, liveDomain = "") {
   return {
     domain: liveDomain,
-    connectionType: hostingConfig.connectionType || "cloudflare-worker"
+    connectionType: "cloudflare-worker"
   };
 }
 
@@ -2802,10 +2801,8 @@ function publicLauncherGeneratedFile(generatedFile = {}) {
 }
 
 function createPackageRuntimeIndex(page, pagePackage) {
-  const serverApiBase = page.generatedFile?.apiBase || "https://your-render-app.onrender.com";
   const hostingConfig = page.hostingConfig || {};
-  const usesCloudflareRelay = hostingConfig.connectionType === "cloudflare-worker";
-  const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
+  const runtimeApiBase = "/api";
   const liveDomain = hostingConfig.domain || page.domain || "";
   const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
   const entryFile = packageEntryFile(pagePackage);
@@ -3322,11 +3319,9 @@ function createGeneratedIndex(page) {
       config: getScreenConfig(page, screenName)
     };
   });
-  const serverApiBase = page.generatedFile?.apiBase || "https://your-render-app.onrender.com";
   const securityConfig = page.securityConfig || {};
   const hostingConfig = page.hostingConfig || {};
-  const usesCloudflareRelay = hostingConfig.connectionType === "cloudflare-worker";
-  const runtimeApiBase = usesCloudflareRelay ? "/api" : `${serverApiBase.replace(/\/$/, "")}/api/runtime`;
+  const runtimeApiBase = "/api";
   const liveDomain = hostingConfig.domain || page.domain || "";
   const strictAllowedDomains = [normalizeAllowedHost(liveDomain)].filter(Boolean);
   const faviconPath = findPackageThumbnail(pagePackage);
@@ -5852,8 +5847,8 @@ function pageRiskSignal(page) {
   const renewal = subscriptionState(page);
   const domain = hosting.domain || page.domain || "";
   const serverIp = hosting.serverIp || hosting.origin || hosting.relayTarget || "";
-  const connectionType = hosting.connectionType || "cloudflare-worker";
-  const workerReady = connectionType !== "cloudflare-worker" || Boolean(hosting.cloudflare?.routePattern || hosting.workerRoute || hosting.relayVerified);
+  const connectionType = "cloudflare-worker";
+  const workerReady = Boolean(hosting.cloudflare?.routePattern || hosting.workerRoute || hosting.relayVerified);
   const generatedReady = Boolean(generated.lastGeneratedAt || generated.version);
   const allowedDomains = (security.domains || []).map(normalizeAllowedHost).filter(Boolean);
   const domainAllowed = !domain || !allowedDomains.length || allowedDomains.includes(normalizeAllowedHost(domain));
@@ -6225,7 +6220,7 @@ function renderGoLiveCenter(pageSlug = "page-a") {
   const hostingType = hosting.hostingType || "render-static-site";
   const isRenderStatic = hostingType === "render-static-site";
   const installPath = hosting.installPath || (isRenderStatic ? "root / public directory" : "public_html");
-  const connectionType = hosting.connectionType || "cloudflare-worker";
+  const connectionType = "cloudflare-worker";
   const relaySecret = "";
   const relaySecretConfigured = Boolean(hosting.relaySecretConfigured || hosting.relaySecret);
   const relayTarget = hosting.relayTarget || apiBase();
@@ -6348,9 +6343,9 @@ function renderGoLiveCenter(pageSlug = "page-a") {
             <select data-hosting-field="connectionType">
               ${[
                 ["cloudflare-worker", "Cloudflare Worker Relay"],
-                ["direct-api", "Direct API"],
-                ["server-proxy", "Server proxy"]
-              ].map(([value, label]) => `<option value="${value}" ${connectionType === value ? "selected" : ""}>${label}</option>`).join("")}
+                ["direct-api", "Direct API (disabled)"],
+                ["server-proxy", "Server proxy (disabled)"]
+              ].map(([value, label]) => `<option value="${value}" ${connectionType === value ? "selected" : ""} ${value === "cloudflare-worker" ? "" : "disabled"}>${label}</option>`).join("")}
             </select>
           </label>
           <div class="admin-actions">
@@ -7818,7 +7813,7 @@ function collectHostingFields(page) {
   return {
     domain: field("domain") || page.domain,
     serverIp: field("serverIp"),
-    connectionType: field("connectionType") || "cloudflare-worker",
+    connectionType: "cloudflare-worker",
     hostingType: selectedHostingType,
     installPath: field("installPath") || (selectedHostingType === "render-static-site" ? "root / public directory" : "public_html"),
     relayTarget: page.hostingConfig?.relayTarget || apiBase(),
@@ -7856,7 +7851,7 @@ function saveHostingConfig(page, verify = false) {
   };
   page.generatedFile = {
     ...(page.generatedFile || {}),
-    apiBase: hosting.connectionType === "cloudflare-worker" ? "/api" : hosting.relayTarget,
+    apiBase: "/api",
     lastGeneratedAt: page.generatedFile?.lastGeneratedAt || null
   };
 

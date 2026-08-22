@@ -123,6 +123,14 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
     const deniedBranding = await requestBranding("wrong_relay_secret");
     assert.equal(deniedBranding.status, 403);
 
+    await repository.updateUserPageConfig("page_live", {
+      hostingConfig: { relaySecret: "" }
+    }, "user_live");
+    const missingRelayConfig = await requestLiveConfig();
+    assert.equal(missingRelayConfig.status, 403);
+    await repository.updateUserPageConfig("page_live", {
+      hostingConfig: { relaySecret }
+    }, "user_live");
 
     await repository.updateUserPageConfig("page_live", {
       securityConfig: {

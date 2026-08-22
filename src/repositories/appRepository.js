@@ -1393,6 +1393,7 @@ function buildUserPage(userId, pagePackage, period, price, data) {
     hostingConfig: {
       domain: data.domain || "",
       serverIp: data.serverIp || "",
+      connectionType: "cloudflare-worker",
       hostingType: data.hostingType || "render-static-site",
       installPath: data.installPath || "root / public directory",
       verified: false,
@@ -1593,9 +1594,9 @@ export async function updateUserPageConfig(id, data, userId = null, options = {}
         || current.securityConfig?.turnstileSecretKey
         || ""
     }),
-    hostingConfig: { ...current.hostingConfig, ...(data.hostingConfig || {}) },
+    hostingConfig: { ...current.hostingConfig, ...(data.hostingConfig || {}), connectionType: "cloudflare-worker" },
     resultSettings: normalizeResultSettings({ ...current.resultSettings, ...(data.resultSettings || {}) }),
-    generatedFile: { ...current.generatedFile, ...(data.generatedFile || {}) }
+    generatedFile: { ...current.generatedFile, ...(data.generatedFile || {}), apiBase: "/api" }
   };
 
   if (useJsonDb()) {

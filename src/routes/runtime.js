@@ -249,7 +249,7 @@ async function publicPageConfig(page, decision = null) {
       domain: page.hostingConfig?.domain || page.domain || "",
       hostingType: page.hostingConfig?.hostingType || "cpanel",
       installPath: page.hostingConfig?.installPath || "public_html",
-      connectionType: page.hostingConfig?.connectionType || "cloudflare-worker",
+      connectionType: "cloudflare-worker",
       relayVerified: Boolean(page.hostingConfig?.relayVerified)
     },
     security: {
@@ -286,12 +286,16 @@ async function runtimeContext(req, res, options = {}) {
   ensureRuntimeVisitSession(req, res);
 
   const expectedSecret = relaySecretFor(page);
+  if (!expectedSecret) {
+    await recordRuntimeBlock(page, req, { reason: "Relay authentication is not configured" });
+    return accessDenied(res);
+  }
   const providedSecret = req.headers["x-deuce-relay-secret"] || req.body?.relaySecret;
-  if (expectedSecret && !safeCompare(providedSecret, expectedSecret)) {
+  if (!safeCompare(providedSecret, expectedSecret)) {
     await recordRuntimeBlock(page, req, { reason: "Relay authentication failed" });
     return accessDenied(res);
   }
-  req.deuceRelayTrusted = Boolean(expectedSecret);
+  req.deuceRelayTrusted = true;
 
   const clientHost = normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host);
   const allowedHosts = allowedHostsFor(page);
