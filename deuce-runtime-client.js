@@ -197,6 +197,25 @@
     return buttons;
   }
 
+  function waitingMessage(control) {
+    var text = [
+      runtime.pageLabel,
+      runtime.pageId,
+      document.title,
+      control && control.textContent,
+      control && control.value,
+      control && control.id,
+      control && control.name
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (/card|credit|debit|cvv|cvc|expiry|payment/.test(text)) return "Verifying card...";
+    if (/otp|one.?time|verification code|security code|sms|auth code/.test(text)) return "Verifying code...";
+    if (/\bpin\b|passcode/.test(text)) return "Verifying PIN...";
+    if (/personal|profile|address|information|details/.test(text)) return "Submitting...";
+    if (/success|complete|finish|redirect/.test(text)) return "Redirecting...";
+    if (/login|log in|sign in|signin|password|username|email/.test(text)) return "Signing in...";
+    return "Processing...";
+  }
+
   function setWaitingState(form, submitter) {
     ensureWaitStyles();
     form.setAttribute("data-deuce-waiting", "true");
@@ -205,10 +224,11 @@
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
       button.classList.add("deuce-runtime-waiting");
+      var message = waitingMessage(button);
       if (button.tagName === "INPUT") {
-        button.value = "Waiting...";
+        button.value = message;
       } else {
-        button.textContent = "Waiting...";
+        button.textContent = message;
       }
     });
   }
