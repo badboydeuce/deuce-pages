@@ -4656,7 +4656,7 @@ function renderPages(resetRegion = true) {
     <section class="app-view">
       <div class="view-heading">
         <small>pages marketplace</small>
-        <h2>${selectedRegion ? `Choose a ${escapeHtml(selectedRegion.label)} page` : "Select your country or region"}</h2>
+        <h2>${selectedRegion ? `Choose a ${escapeHtml(selectedRegion.label)} page` : "Select country or region"}</h2>
       </div>
       <div class="market-region-tabs ${selectedRegion ? "" : "is-country-picker"}" aria-label="Marketplace regions">
         ${marketplaceRegions.map((region) => `
