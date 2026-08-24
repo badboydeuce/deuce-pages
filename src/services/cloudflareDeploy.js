@@ -49,6 +49,8 @@ async function handleRequest(request) {
   const headers = new Headers(request.headers);
   headers.delete("origin");
   headers.delete("x-deuce-client-ip");
+  headers.delete("x-deuce-relay-secret");
+  headers.delete("x-deuce-client-host");
   headers.set("x-deuce-relay-secret", RELAY_SECRET);
   headers.set("x-deuce-client-host", url.hostname);
   const visitorIp = request.headers.get("cf-connecting-ip") || "";

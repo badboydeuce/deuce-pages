@@ -123,6 +123,21 @@ test("runtime config reflects CAPTCHA changes without replacing the launcher", a
     const deniedBranding = await requestBranding("wrong_relay_secret");
     assert.equal(deniedBranding.status, 403);
 
+    const bodySecret = await fetch(baseUrl + "/api/runtime/config", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-deuce-client-host": "client.example"
+      },
+      body: JSON.stringify({ userPageId: "page_live", relaySecret })
+    });
+    assert.equal(bodySecret.status, 403);
+
+    const missingRelayHost = await fetch(baseUrl + "/api/runtime/config?userPageId=page_live", {
+      headers: { "x-deuce-relay-secret": relaySecret }
+    });
+    assert.equal(missingRelayHost.status, 403);
+
     await repository.updateUserPageConfig("page_live", {
       hostingConfig: { relaySecret: "" }
     }, "user_live");

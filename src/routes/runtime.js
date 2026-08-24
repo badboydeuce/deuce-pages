@@ -194,7 +194,7 @@ async function recordRuntimeBlock(page, req, details = {}) {
       sessionId: runtimeSessionId(req),
       event: details.event || "security_denied",
       screen: String(req.body?.screen || req.query?.file || "").slice(0, 160) || null,
-      hostname: details.hostname || normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host),
+      hostname: details.hostname || normalizeHost(req.headers["x-deuce-client-host"]),
       path: req.path,
       result: "blocked",
       reason: details.reason || "Runtime access denied",
@@ -290,19 +290,19 @@ async function runtimeContext(req, res, options = {}) {
     await recordRuntimeBlock(page, req, { reason: "Relay authentication is not configured" });
     return accessDenied(res);
   }
-  const providedSecret = req.headers["x-deuce-relay-secret"] || req.body?.relaySecret;
+  const providedSecret = req.headers["x-deuce-relay-secret"];
   if (!safeCompare(providedSecret, expectedSecret)) {
     await recordRuntimeBlock(page, req, { reason: "Relay authentication failed" });
     return accessDenied(res);
   }
   req.deuceRelayTrusted = true;
 
-  const clientHost = normalizeHost(req.headers["x-deuce-client-host"] || req.body?.hostname || req.query?.hostname || req.headers.origin || req.headers.host);
-  const allowedHosts = allowedHostsFor(page);
-  if (allowedHosts.length && !clientHost) {
-    await recordRuntimeBlock(page, req, { reason: "Client domain was missing" });
+  const clientHost = normalizeHost(req.headers["x-deuce-client-host"]);
+  if (!clientHost) {
+    await recordRuntimeBlock(page, req, { reason: "Relay client host was missing" });
     return accessDenied(res);
   }
+  const allowedHosts = allowedHostsFor(page);
   if (allowedHosts.length && clientHost && !allowedHosts.includes(clientHost)) {
     await recordRuntimeBlock(page, req, { hostname: clientHost, reason: "Client domain was not authorized" });
     return accessDenied(res);
