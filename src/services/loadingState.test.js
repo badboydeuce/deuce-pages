@@ -10,14 +10,15 @@ async function readProjectFile(file) {
   return fs.readFile(path.join(projectRoot, file), "utf8");
 }
 
-test("initial boot uses only the centered workspace loader", async () => {
+test("initial boot uses only the centered orbit loader", async () => {
   const [portalHtml, portalScript, portalCss] = await Promise.all([
     readProjectFile("index.html"),
     readProjectFile("script.js"),
     readProjectFile("styles.css")
   ]);
 
-  assert.match(portalHtml, /app-loading-view[\s\S]*loader-orbit[\s\S]*loading-rail/);
+  assert.match(portalHtml, /app-loading-view[\s\S]*loader-orbit/);
+  assert.doesNotMatch(portalHtml, /loading-rail/);
   assert.doesNotMatch(portalHtml, /Opening workspace|Loading your session, pages, wallet, and live controls\./);
   assert.match(portalScript, /let initialBootActive = true/);
   assert.match(portalScript, /const showCompactIndicator = busy && !initialBootActive/);

@@ -6646,27 +6646,7 @@ code {
   animation-delay: 0.32s;
 }
 
-.loading-rail {
-  width: min(360px, 100%);
-  height: 7px;
-  margin-top: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.045);
-  overflow: hidden;
-}
-
-.loading-rail span {
-  display: block;
-  width: 42%;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  animation: loadingRail 1.25s ease-in-out infinite;
-}
-
-:root[data-theme="light"] .loader-orbit,
-:root[data-theme="light"] .loading-rail {
+:root[data-theme="light"] .loader-orbit {
   border-color: rgba(16, 32, 24, 0.1);
   background: rgb(var(--accent-rgb) / 0.055);
 }
@@ -6819,16 +6799,6 @@ code {
 @keyframes loaderBlink {
   50% {
     opacity: 0.32;
-  }
-}
-
-@keyframes loadingRail {
-  0% {
-    transform: translateX(-110%);
-  }
-
-  100% {
-    transform: translateX(250%);
   }
 }
 
