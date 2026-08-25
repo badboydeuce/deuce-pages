@@ -17,7 +17,8 @@ test("initial boot uses only the centered workspace loader", async () => {
     readProjectFile("styles.css")
   ]);
 
-  assert.match(portalHtml, /app-loading-view[\s\S]*Opening workspace[\s\S]*loading-rail/);
+  assert.match(portalHtml, /app-loading-view[\s\S]*loader-orbit[\s\S]*loading-rail/);
+  assert.doesNotMatch(portalHtml, /Opening workspace|Loading your session, pages, wallet, and live controls\./);
   assert.match(portalScript, /let initialBootActive = true/);
   assert.match(portalScript, /const showCompactIndicator = busy && !initialBootActive/);
   assert.match(portalScript, /classList\.toggle\("is-loading", showCompactIndicator\)/);

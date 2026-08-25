@@ -117,7 +117,7 @@ test("invite-only registration consumes links once and supports admin revocation
     assert.equal(protectedPortal.status, 200);
     const portalHtml = await protectedPortal.text();
     assert.match(portalHtml, /DEUCE PAGES/);
-    assert.match(portalHtml, /Opening workspace/);
+    assert.doesNotMatch(portalHtml, /Opening workspace|Loading your session, pages, wallet, and live controls\./);
     assert.doesNotMatch(portalHtml, /Welcome back|Loading your workspace access screen/);
 
     const logout = await api("/api/auth/logout", { method: "POST", cookie: sessionCookie });
