@@ -118,6 +118,7 @@ test("production HTTP security middleware protects portal and preview responses"
     assert.equal(isolatedPreview.headers.get("cross-origin-resource-policy"), "cross-origin");
     assert.match(isolatedPreview.headers.get("content-security-policy") || "", /sandbox allow-scripts allow-forms allow-modals allow-same-origin/);
     assert.match(isolatedPreview.headers.get("content-security-policy") || "", /frame-ancestors 'self' https:\/\/portal\.example/);
+    assert.match(isolatedPreview.headers.get("content-security-policy") || "", /img-src 'self' data: blob: https:/);
     assert.match(await isolatedPreview.text(), /Preview session required/);
 
     const previewApi = await requestAsHost(baseUrl, "/api/health");

@@ -222,7 +222,7 @@ function setGitHubPreviewHeaders(res) {
     "form-action 'none'",
     "frame-ancestors 'self'",
     "frame-src https://challenges.cloudflare.com",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: https:",
     "media-src 'self' blob:",
     "object-src 'none'",
     "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",

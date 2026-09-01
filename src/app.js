@@ -122,7 +122,9 @@ const isolatedPreviewHeaders = helmet({
       formAction: ["'self'"],
       frameAncestors: previewFrameAncestors,
       frameSrc: ["https://challenges.cloudflare.com"],
-      imgSrc: ["'self'", "data:", "blob:"],
+      // Page packages commonly assign hosted SVG/logo URLs from their own scripts.
+      // Keep executable resources restricted while allowing HTTPS image sources.
+      imgSrc: ["'self'", "data:", "blob:", "https:"],
       mediaSrc: ["'self'", "blob:"],
       objectSrc: ["'none'"],
       sandbox: ["allow-scripts", "allow-forms", "allow-modals", "allow-same-origin"],
