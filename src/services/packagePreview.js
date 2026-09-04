@@ -171,7 +171,7 @@ export function resolveRelativePath(fromFile, relativePath) {
     return null;
   }
   const clean = relativePath.split("#")[0].split("?")[0];
-  const fromParts = String(fromFile || "").split("/");
+  const fromParts = clean.startsWith("/") ? [] : String(fromFile || "").split("/");
   fromParts.pop();
 
   for (const part of clean.split("/")) {
@@ -184,6 +184,37 @@ export function resolveRelativePath(fromFile, relativePath) {
   }
 
   return fromParts.join("/");
+}
+
+export function previewFaviconPathForPackage(pagePackage) {
+  const manifest = pagePackage?.packageManifest || {};
+  const files = [...(manifest.files || []), ...(manifest.assets || []), ...(pagePackage?.assets || [])]
+    .map((item) => String(item?.path || item || "").trim().replace(/^\/+/, "").replace(/\\/g, "/"))
+    .filter(Boolean);
+  const available = new Set(files);
+  const explicit = String(manifest.thumbnailPath || "").trim().replace(/^\/+/, "").replace(/\\/g, "/");
+  if (explicit && available.has(explicit) && /\.(?:ico|png|svg|webp|jpe?g)$/i.test(explicit)) return explicit;
+
+  const priorities = [
+    /(?:^|\/)favicon(?:[-_][^/]*)?\.(?:ico|png|svg|webp)$/i,
+    /(?:^|\/)apple-touch-icon(?:[-_][^/]*)?\.(?:png|webp)$/i,
+    /(?:^|\/)(?:site-)?logo\.(?:png|jpe?g|svg|webp)$/i,
+    /(?:^|\/)[^/]*(?:icon|logo|brand)[^/]*\.(?:ico|png|jpe?g|svg|webp)$/i
+  ];
+  for (const pattern of priorities) {
+    const match = files.find((file) => pattern.test(file));
+    if (match) return match;
+  }
+  return "";
+}
+
+export function injectPreviewFavicon(html, { basePath = "", pagePackage } = {}) {
+  if (/<link\b[^>]*\brel=["'][^"']*\b(?:shortcut\s+)?icon\b[^"']*["'][^>]*>/i.test(html)) return html;
+  const file = previewFaviconPathForPackage(pagePackage);
+  if (!file) return html;
+  const href = `${basePath}/p/asset?${new URLSearchParams({ file }).toString()}`;
+  const link = `<link rel="icon" href="${href}">`;
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${link}</head>`) : `${link}${html}`;
 }
 
 export function rewritePreviewAssets(html, { basePath = "", file }) {

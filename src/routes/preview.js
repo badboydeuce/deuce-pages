@@ -7,6 +7,7 @@ import {
 import {
   contentTypeFor,
   fetchPackageFile,
+  injectPreviewFavicon,
   injectPreviewJourney,
   previewSourceForPackage,
   previewScreensForPackage,
@@ -74,7 +75,8 @@ async function renderPreviewHtml(req, res, file) {
   const screens = previewScreensForPackage(pagePackage);
   const turnstileHtml = injectPreviewTurnstile(html, { basePath });
   const previewHtml = rewritePreviewAssets(turnstileHtml, { basePath, file: source.file });
-  res.send(injectPreviewJourney(previewHtml, { basePath, file: source.file, screens }));
+  const brandedPreviewHtml = injectPreviewFavicon(previewHtml, { basePath, pagePackage });
+  res.send(injectPreviewJourney(brandedPreviewHtml, { basePath, file: source.file, screens }));
 }
 
 previewRouter.get("/session/:ticket", async (req, res) => {
