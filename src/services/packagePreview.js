@@ -78,7 +78,7 @@ export function previewFileForPackage(pagePackage) {
 
 export function previewScreensForPackage(pagePackage) {
   const manifest = screenManifestV2ForPackage(pagePackage);
-  return manifest.screens
+  const screens = manifest.screens
     .filter((screen) => screen.enabled)
     .map((screen) => ({
       ...screen,
@@ -87,6 +87,10 @@ export function previewScreensForPackage(pagePackage) {
       isEntry: screen.id === manifest.entryScreenId,
       isFinal: screen.id === manifest.finalScreenId
     }));
+  const entryIndex = screens.findIndex((screen) => screen.isEntry);
+  if (entryIndex <= 0) return screens;
+  const [entry] = screens.splice(entryIndex, 1);
+  return [entry, ...screens];
 }
 export function previewSourceForPackage(pagePackage, fileOverride = "") {
   const r2 = pagePackage.packageManifest?.r2;
