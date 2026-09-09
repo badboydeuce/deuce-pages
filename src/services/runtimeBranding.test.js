@@ -9,12 +9,15 @@ import {
 
 const tinyPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 
-test("runtime branding accepts only validated raster data images", () => {
+test("runtime branding accepts validated raster and safe SVG data images", () => {
   const image = decodeBrandingDataUrl(tinyPng);
   assert.equal(image?.contentType, "image/png");
   assert.equal(image?.buffer.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
 
-  assert.equal(decodeBrandingDataUrl("data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="), null);
+  const safeSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10z"/></svg>').toString("base64");
+  assert.equal(decodeBrandingDataUrl(`data:image/svg+xml;base64,${safeSvg}`)?.contentType, "image/svg+xml");
+  const scriptedSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>').toString("base64");
+  assert.equal(decodeBrandingDataUrl(`data:image/svg+xml;base64,${scriptedSvg}`), null);
   assert.equal(decodeBrandingDataUrl("data:image/png;base64,ZmFrZQ=="), null);
 
   const oversized = Buffer.concat([
@@ -61,5 +64,5 @@ test("runtime branding selects declared logo assets and rejects unsafe paths", (
       thumbnailPath: "assets/logo.svg",
       files: ["index.html", "assets/logo.svg", "screens/home.png"]
     }
-  }), "");
+  }), "assets/logo.svg");
 });

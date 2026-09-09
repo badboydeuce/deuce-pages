@@ -5,7 +5,9 @@ import {
   previewFaviconPathForPackage,
   previewFileForPackage,
   previewScreensForPackage,
-  resolveRelativePath
+  resolveRelativePath,
+  rewriteCssAssetUrls,
+  rewritePreviewAssets
 } from "./packagePreview.js";
 
 test("preview favicon detection supports imported SVG logos", () => {
@@ -51,4 +53,30 @@ test("preview journey starts at entry and still includes every enabled screen", 
     previewScreensForPackage(pagePackage).map((screen) => screen.file),
     ["index.html", "page1.html", "page2.html", "page3.html", "page4.html", "page6.html"]
   );
+});
+
+test("preview preserves SVG symbol fragments", () => {
+  const html = '<svg><use href="assets/symbols.svg#brand-logo"></use></svg>';
+  assert.equal(
+    rewritePreviewAssets(html, { file: "index.html" }),
+    '<svg><use href="/p/asset?file=assets%2Fsymbols.svg#brand-logo"></use></svg>'
+  );
+});
+
+test("CSS sprite and font URLs are routed through protected package assets", () => {
+  const css = `
+    .brand { background-image: url('../images/sprites.png?v=2#brand'); background-position: -32px 0; }
+    @font-face { src: url("../fonts/icons.woff2?#iefix") format("woff2"); }
+    @import "theme/mobile.css";
+    .remote { background: url(https://cdn.example/logo.svg); }
+  `;
+  const rewritten = rewriteCssAssetUrls(css, {
+    file: "styles/main.css",
+    assetUrlFor: (file) => `/p/asset?${new URLSearchParams({ file }).toString()}`
+  });
+  assert.match(rewritten, /url\('\/p\/asset\?file=images%2Fsprites\.png#brand'\)/);
+  assert.match(rewritten, /url\("\/p\/asset\?file=fonts%2Ficons\.woff2#iefix"\)/);
+  assert.match(rewritten, /@import "\/p\/asset\?file=styles%2Ftheme%2Fmobile\.css"/);
+  assert.match(rewritten, /url\(https:\/\/cdn\.example\/logo\.svg\)/);
+  assert.match(rewritten, /background-position: -32px 0/);
 });

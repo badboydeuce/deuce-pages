@@ -16,7 +16,8 @@ import {
   fetchPackageFile,
   previewFileForPackage,
   previewSourceForPackage,
-  resolveRelativePath
+  resolveRelativePath,
+  rewriteCssAssetUrls
 } from "../services/packagePreview.js";
 import {
   publicTurnstileConfig,
@@ -1016,6 +1017,13 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
     const buffer = Buffer.from(await response.arrayBuffer());
     res.setHeader("Content-Type", contentTypeFor(file));
     res.setHeader("Cache-Control", "no-store");
+    if (/\.css$/i.test(file)) {
+      res.send(rewriteCssAssetUrls(buffer.toString("utf8"), {
+        file,
+        assetUrlFor: (assetFile) => runtimeAssetUrl(context.page.id, assetFile)
+      }));
+      return;
+    }
     res.send(buffer);
     return;
   }

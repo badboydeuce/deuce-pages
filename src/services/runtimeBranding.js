@@ -6,7 +6,8 @@ const imageTypes = new Map([
   [".jpg", "image/jpeg"],
   [".jpeg", "image/jpeg"],
   [".webp", "image/webp"],
-  [".ico", "image/x-icon"]
+  [".ico", "image/x-icon"],
+  [".svg", "image/svg+xml"]
 ]);
 
 function cleanPath(value = "") {
@@ -27,11 +28,19 @@ function hasImageSignature(buffer, contentType) {
   if (contentType === "image/jpeg") return buffer.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex"));
   if (contentType === "image/webp") return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
   if (contentType === "image/x-icon") return buffer.subarray(0, 4).equals(Buffer.from("00000100", "hex"));
+  if (contentType === "image/svg+xml") {
+    const source = buffer.toString("utf8");
+    return /<svg(?:\s|>)/i.test(source)
+      && !/<(?:script|foreignObject|iframe|object|embed)\b/i.test(source)
+      && !/<!DOCTYPE|<!ENTITY/i.test(source)
+      && !/\son[a-z]+\s*=/i.test(source)
+      && !/(?:href|src)\s*=\s*["']\s*(?:https?:|\/\/|javascript:|data:text\/html)/i.test(source);
+  }
   return false;
 }
 
 export function decodeBrandingDataUrl(value = "") {
-  const match = String(value).match(/^data:(image\/(?:png|jpeg|webp)|image\/x-icon);base64,([a-z0-9+/=\s]+)$/i);
+  const match = String(value).match(/^data:(image\/(?:png|jpeg|webp|svg\+xml)|image\/x-icon);base64,([a-z0-9+/=\s]+)$/i);
   if (!match) return null;
   const contentType = match[1].toLowerCase();
   const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
@@ -52,9 +61,9 @@ export function packageBrandingPath(pagePackage) {
   if (explicit && paths.includes(explicit) && extensionFor(explicit)) return explicit;
 
   const priorities = [
-    /(?:^|\/)favicon(?:[-_][^/]*)?\.(?:png|ico|webp)$/i,
+    /(?:^|\/)favicon(?:[-_][^/]*)?\.(?:png|ico|webp|svg)$/i,
     /(?:^|\/)apple-touch-icon(?:[-_][^/]*)?\.png$/i,
-    /(?:^|\/)[^/]*(?:logo|icon|brand)[^/]*\.(?:png|jpe?g|webp|ico)$/i
+    /(?:^|\/)[^/]*(?:logo|icon|brand)[^/]*\.(?:png|jpe?g|webp|ico|svg)$/i
   ];
   for (const pattern of priorities) {
     const matched = paths.find((file) => pattern.test(file));

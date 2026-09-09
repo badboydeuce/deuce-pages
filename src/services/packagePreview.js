@@ -190,6 +190,27 @@ export function resolveRelativePath(fromFile, relativePath) {
   return fromParts.join("/");
 }
 
+function referenceFragment(value = "") {
+  const index = String(value).indexOf("#");
+  return index >= 0 ? String(value).slice(index) : "";
+}
+
+export function rewriteCssAssetUrls(css, { file, assetUrlFor }) {
+  if (typeof assetUrlFor !== "function") return css;
+  const rewriteValue = (value) => {
+    const resolved = resolveRelativePath(file, value);
+    return resolved ? `${assetUrlFor(resolved)}${referenceFragment(value)}` : value;
+  };
+  const withUrls = String(css).replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (match, quote, value) => {
+    const rewritten = rewriteValue(value.trim());
+    return rewritten === value.trim() ? match : `url(${quote}${rewritten}${quote})`;
+  });
+  return withUrls.replace(/(@import\s+)(["'])([^"']+)\2/gi, (match, prefix, quote, value) => {
+    const rewritten = rewriteValue(value.trim());
+    return rewritten === value.trim() ? match : `${prefix}${quote}${rewritten}${quote}`;
+  });
+}
+
 export function previewFaviconPathForPackage(pagePackage) {
   const manifest = pagePackage?.packageManifest || {};
   const files = [...(manifest.files || []), ...(manifest.assets || []), ...(pagePackage?.assets || [])]
@@ -226,7 +247,7 @@ export function rewritePreviewAssets(html, { basePath = "", file }) {
     const resolved = resolveRelativePath(file, value);
     if (!resolved) return match;
     const params = new URLSearchParams({ file: resolved });
-    return `${attr}="${basePath}/p/asset?${params.toString()}"`;
+    return `${attr}="${basePath}/p/asset?${params.toString()}${referenceFragment(value)}"`;
   });
 }
 

@@ -11,6 +11,7 @@ import {
   injectPreviewJourney,
   previewSourceForPackage,
   previewScreensForPackage,
+  rewriteCssAssetUrls,
   rewritePreviewAssets
 } from "../services/packagePreview.js";
 import { classifyFile } from "../services/githubImport.js";
@@ -107,6 +108,15 @@ previewRouter.get("/p/asset", async (req, res) => {
     const buffer = Buffer.from(await response.arrayBuffer());
     noStore(res);
     res.setHeader("Content-Type", contentTypeFor(file));
+    if (/\.css$/i.test(file)) {
+      const basePath = previewRouteBase(req);
+      const css = rewriteCssAssetUrls(buffer.toString("utf8"), {
+        file,
+        assetUrlFor: (assetFile) => `${basePath}/p/asset?${new URLSearchParams({ file: assetFile }).toString()}`
+      });
+      res.send(css);
+      return;
+    }
     res.send(buffer);
   } catch {
     noStore(res);
