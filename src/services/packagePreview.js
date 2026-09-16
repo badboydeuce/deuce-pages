@@ -261,6 +261,37 @@ export function injectPreviewJourney(html, { basePath = "", file, screens = [] }
   var journey = ${JSON.stringify({ basePath, file: cleanFile, screens: journeyScreens, currentIndex: safeIndex })};
   var current = journey.screens[journey.currentIndex] || journey.screens[0] || { file: journey.file, name: "Preview" };
   var next = journey.screens[journey.currentIndex + 1] || null;
+  var progressiveSubmitForm = null;
+
+  function fieldIsVisible(field) {
+    if (!field || field.disabled || field.hidden || String(field.type || "").toLowerCase() === "hidden") return false;
+    if (field.closest && field.closest('[hidden], [aria-hidden="true"]')) return false;
+    if (window.getComputedStyle) {
+      var style = window.getComputedStyle(field);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+    }
+    return true;
+  }
+
+  function shouldYieldToProgressiveStep(form, control) {
+    var text = [control && control.textContent, control && control.value, control && control.getAttribute && control.getAttribute("aria-label")]
+      .filter(Boolean).join(" ").toLowerCase();
+    if (!/\\b(?:continue|next)\\b/.test(text)) return false;
+    var scope = form || (control && control.closest && control.closest("form, main, section, article, .container, .login-box, .login-container, .form, .card, .panel")) || document;
+    var fields = Array.from(scope.querySelectorAll ? scope.querySelectorAll("input, select, textarea") : []);
+    var visiblePassword = fields.some(function (field) {
+      return String(field.type || "").toLowerCase() === "password" && fieldIsVisible(field);
+    });
+    if (visiblePassword) return false;
+    var hiddenPassword = fields.some(function (field) {
+      return String(field.type || "").toLowerCase() === "password" && !fieldIsVisible(field);
+    });
+    var visibleIdentity = fields.some(function (field) {
+      var type = field.tagName === "TEXTAREA" ? "textarea" : String(field.type || "text").toLowerCase();
+      return ["email", "text", "tel", "textarea"].includes(type) && fieldIsVisible(field);
+    });
+    return hiddenPassword || visibleIdentity;
+  }
 
   function previewUrl(screen) {
     if (!screen || !screen.file) return "";
@@ -277,6 +308,11 @@ export function injectPreviewJourney(html, { basePath = "", file, screens = [] }
   }
 
   document.addEventListener("submit", function (event) {
+    if (event.target === progressiveSubmitForm) {
+      progressiveSubmitForm = null;
+      return;
+    }
+    if (shouldYieldToProgressiveStep(event.target, event.submitter)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     goNext();
@@ -287,6 +323,13 @@ export function injectPreviewJourney(html, { basePath = "", file, screens = [] }
     if (submitControl && submitControl.form) {
       var type = (submitControl.getAttribute("type") || "submit").toLowerCase();
       if (type === "submit") {
+        if (shouldYieldToProgressiveStep(submitControl.form, submitControl)) {
+          progressiveSubmitForm = submitControl.form;
+          window.setTimeout(function () {
+            if (progressiveSubmitForm === submitControl.form) progressiveSubmitForm = null;
+          }, 0);
+          return;
+        }
         if (typeof submitControl.form.checkValidity === "function" && !submitControl.form.checkValidity()) {
           if (typeof submitControl.form.reportValidity === "function") submitControl.form.reportValidity();
           return;

