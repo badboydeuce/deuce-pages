@@ -2970,6 +2970,8 @@ export async function setSessionCommand(userPageId, sessionId, command, userId =
       targetFile: String(command.targetFile || "").trim(),
       targetScreenId: String(command.targetScreenId || "").trim(),
       targetRole: String(command.targetRole || "").trim(),
+      value: String(command.value || "").replace(/[<>]/g, "").trim().slice(0, 64),
+      target: /^[a-zA-Z0-9_-]{1,64}$/.test(String(command.target || "").trim()) ? String(command.target).trim().slice(0, 64) : "",
       note: String(command.note || "").trim(),
       forceReload: Boolean(command.forceReload),
       status: "queued",
@@ -2996,38 +2998,48 @@ export async function deliverSessionCommand(userPageId, sessionId) {
   const currentConfigs = userPage.configs || {};
   const currentCommands = currentConfigs.sessionCommands || {};
   const command = currentCommands[cleanSessionId];
-  if (!command || command.action !== "redirect" || !command.targetUrl) return { command: null };
+  if (!command) return { command: null };
 
-  const delivered = {
-    ...command,
-    status: "delivered",
-    deliveredAt: new Date().toISOString()
-  };
-  const currentHistory = currentConfigs.sessionCommandHistory || {};
-  const nextCommands = { ...currentCommands };
-  const nextHistory = {
-    ...currentHistory,
-    [cleanSessionId]: [delivered, ...(currentHistory[cleanSessionId] || [])].slice(0, 10)
-  };
-  delete nextCommands[cleanSessionId];
+  if (command.action === "redirect" && command.targetUrl) {
+    const delivered = {
+      ...command,
+      status: "delivered",
+      deliveredAt: new Date().toISOString()
+    };
+    const currentHistory = currentConfigs.sessionCommandHistory || {};
+    const nextCommands = { ...currentCommands };
+    const nextHistory = {
+      ...currentHistory,
+      [cleanSessionId]: [delivered, ...(currentHistory[cleanSessionId] || [])].slice(0, 10)
+    };
+    delete nextCommands[cleanSessionId];
 
-  await updateUserPageConfig(userPage.id, {
-    configs: {
-      ...currentConfigs,
-      sessionCommands: nextCommands,
-      sessionCommandHistory: nextHistory
-    }
-  });
+    await updateUserPageConfig(userPage.id, {
+      configs: {
+        ...currentConfigs,
+        sessionCommands: nextCommands,
+        sessionCommandHistory: nextHistory
+      }
+    });
 
-  return { command: delivered };
+    return { command: delivered };
+  }
+
+  if (command.action === "displayValue" && command.value) {
+    return { command };
+  }
+
+  return { command: null };
 }
 
 export async function getSessionCommand(userPageId, sessionId) {
   const userPage = await findUserPage(userPageId);
   if (!userPage) return null;
   const command = userPage.configs?.sessionCommands?.[String(sessionId || "").trim()];
-  if (!command || command.action !== "redirect" || !command.targetUrl) return { command: null };
-  return { command };
+  if (!command) return { command: null };
+  if (command.action === "redirect" && command.targetUrl) return { command };
+  if (command.action === "displayValue" && command.value) return { command };
+  return { command: null };
 }
 
 export async function saveTrafficEvent(data, ip, userAgent) {

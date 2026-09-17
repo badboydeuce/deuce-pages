@@ -2327,6 +2327,36 @@ code,
   text-transform: uppercase;
 }
 
+.session-push {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+:root[data-theme="light"] .session-push {
+  border-top-color: rgba(16, 32, 24, 0.12);
+}
+
+.session-push-row {
+  display: flex;
+  gap: 8px;
+}
+
+.session-push-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-push .flow-command-title {
+  color: var(--muted);
+  font: 900 0.66rem var(--mono);
+  text-transform: uppercase;
+}
+
 .session-route-buttons {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -8364,8 +8394,22 @@ body.result-viewer-open {
 }
 
 .invite-list {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: grid;
   gap: 8px;
+}
+
+.invite-history {
+  margin-top: 16px;
+}
+
+.invite-history summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .invite-list article {

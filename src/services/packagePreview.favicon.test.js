@@ -92,22 +92,3 @@ test("preview yields intermediate Continue submissions to multi-step page script
   assert.match(html, /if \(event\.target === progressiveSubmitForm\)/);
   assert.match(html, /if \(shouldYieldToProgressiveStep\(event\.target, event\.submitter\)\) return/);
 });
-
-test("preview supports configured email handoff without submitting a result", () => {
-  const html = injectPreviewJourney('<html><body><input data-deuce-field-id="fld_destination"></body></html>', {
-    file: "destination.html",
-    screens: [{ file: "destination.html", name: "Destination" }],
-    emailHandoff: {
-      enabled: true,
-      sourceFieldId: "fld_source",
-      destinationFieldId: "fld_destination",
-      clearOnFinalScreen: true
-    },
-    isFinalScreen: true
-  });
-  assert.match(html, /deuce_preview_email_handoff/);
-  assert.match(html, /function rememberHandoffEmail\(\)/);
-  assert.match(html, /function applyHandoffEmail\(\)/);
-  assert.match(html, /\["input", "change", "keyup"\]/);
-  assert.doesNotMatch(html, /\/results/);
-});

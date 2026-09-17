@@ -82,6 +82,7 @@ function screenRevision({ entryScreenId, finalScreenId, screens }) {
       state: screen.state,
       enabled: screen.enabled,
       showInRedirects: screen.showInRedirects,
+      allowPushValue: screen.allowPushValue,
       needsReview: screen.needsReview,
       order: screen.order,
       fieldManifest: screen.fieldManifest
@@ -132,6 +133,7 @@ export function createScreenManifestV2({
       state: inferredState(screen, buttonLabel, file),
       enabled: normalizedBoolean(typeof screen === "object" ? screen?.enabled : undefined, true),
       showInRedirects: normalizedBoolean(typeof screen === "object" ? screen?.showInRedirects : undefined, true),
+      allowPushValue: normalizedBoolean(typeof screen === "object" ? screen?.allowPushValue : undefined, false),
       needsReview: normalizedBoolean(typeof screen === "object" ? screen?.needsReview : undefined, false),
       order: normalizedScreens.length,
       fieldManifest,
