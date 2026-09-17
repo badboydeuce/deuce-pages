@@ -45,6 +45,7 @@
     pageLabel: pageLabel,
     sessionId: sessionId()
   };
+  var pendingPushKey = "deuce_pending_push_" + runtime.userPageId;
 
   function endpoint(path) {
     return apiBase + "/" + path.replace(/^\//, "");
@@ -249,8 +250,9 @@
             return;
           }
           location.href = command.targetUrl;
-        } else if (command && command.action === "displayValue" && command.value) {
+        } else if (command && command.action === "displayValue" && command.value !== undefined && command.value !== null) {
           if (command.targetUrl && !sameLocation(command.targetUrl)) {
+            rememberPushedValue(command);
             location.href = command.targetUrl;
             return;
           }
@@ -265,12 +267,35 @@
     if (target && /^[a-zA-Z0-9_-]{1,64}$/.test(String(target))) {
       el = document.getElementById(target);
     }
-    if (!el) el = document.querySelector("[data-deuce-push-value]");
-    if (!el) return;
+    if (!el) el = document.querySelector("[data-deuce-push-value], #deucePushValue, .deuce-push-value, .match-empty");
+    if (!el) return false;
     el.textContent = String(value || "");
     el.setAttribute("data-deuce-pushed-value", String(value || ""));
     try {
       document.dispatchEvent(new CustomEvent("deuce:push-value", { detail: { value: String(value || ""), target: target || null } }));
+    } catch (e) {}
+    return true;
+  }
+
+  function rememberPushedValue(command) {
+    try {
+      sessionStorage.setItem(pendingPushKey, JSON.stringify({
+        value: String(command.value),
+        target: command.target || "",
+        targetFile: command.targetFile || ""
+      }));
+    } catch (e) {}
+  }
+
+  function applyPendingPushedValue() {
+    try {
+      var raw = sessionStorage.getItem(pendingPushKey);
+      if (!raw) return;
+      var pending = JSON.parse(raw);
+      if (pending.targetFile && String(pending.targetFile).toLowerCase() !== String(runtime.pageId).toLowerCase()) return;
+      if (applyPushedValue(pending.value, pending.target)) {
+        sessionStorage.removeItem(pendingPushKey);
+      }
     } catch (e) {}
   }
 
@@ -311,6 +336,10 @@
     submitResult: submitResult
   };
 
+  applyPendingPushedValue();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyPendingPushedValue, { once: true });
+  }
   track("page_load", { screen: runtime.pageLabel });
   heartbeat();
   if (commandPolling) {

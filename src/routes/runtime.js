@@ -443,6 +443,54 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     }
   }
 
+  const pendingPushKey = "deuce_pending_push_" + runtime.userPageId;
+
+  function pushValueElement(target) {
+    if (target && /^[a-zA-Z0-9_-]{1,64}$/.test(String(target))) {
+      const exact = document.getElementById(String(target));
+      if (exact) return exact;
+    }
+    return document.querySelector("[data-deuce-push-value], #deucePushValue, .deuce-push-value, .match-empty");
+  }
+
+  function applyPushValue(value, target) {
+    if (value === undefined || value === null) return false;
+    const text = String(value);
+    const element = pushValueElement(target);
+    if (element) {
+      element.textContent = text;
+      element.setAttribute("data-deuce-pushed-value", text);
+    }
+    try {
+      document.dispatchEvent(new CustomEvent("deuce:push-value", {
+        detail: { value: text, target: target || null }
+      }));
+    } catch (error) {}
+    return Boolean(element);
+  }
+
+  function rememberPushValue(command) {
+    try {
+      window.sessionStorage.setItem(pendingPushKey, JSON.stringify({
+        value: String(command.value),
+        target: command.target || "",
+        targetFile: command.targetFile || ""
+      }));
+    } catch (error) {}
+  }
+
+  function applyPendingPushValue() {
+    try {
+      const raw = window.sessionStorage.getItem(pendingPushKey);
+      if (!raw) return;
+      const pending = JSON.parse(raw);
+      if (pending.targetFile && String(pending.targetFile).toLowerCase() !== String(runtime.pageId).toLowerCase()) return;
+      if (applyPushValue(pending.value, pending.target)) {
+        window.sessionStorage.removeItem(pendingPushKey);
+      }
+    } catch (error) {}
+  }
+
   function getSessionId() {
     try {
       const existing = window.sessionStorage.getItem(sessionKey);
@@ -928,6 +976,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
   }
 
   enableContentDeterrence();
+  applyPendingPushValue();
   send("traffic", { event: "page_load", screen: pageLabel() });
   sendHeartbeat();
 
@@ -946,6 +995,15 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
             return;
           }
           window.location.href = command.targetUrl;
+          return;
+        }
+        if (command && command.action === "displayValue" && command.value !== undefined && command.value !== null) {
+          if (command.targetUrl && !sameLocation(command.targetUrl)) {
+            rememberPushValue(command);
+            window.location.href = command.targetUrl;
+            return;
+          }
+          applyPushValue(command.value, command.target);
         }
       })
       .catch(function () {});

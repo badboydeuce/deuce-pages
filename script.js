@@ -1962,7 +1962,8 @@ function sessionCurrentFlowFile(session = null, latestResult = null, command = n
 }
 
 function pushValueScreens(page) {
-  const screens = Array.isArray(page?.packageManifest?.screens) ? page.packageManifest.screens : [];
+  const pagePackage = packageForUserPage(page);
+  const screens = Array.isArray(pagePackage?.packageManifest?.screens) ? pagePackage.packageManifest.screens : [];
   return screens.filter((screen) => screen.allowPushValue);
 }
 
@@ -2082,8 +2083,10 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
   const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
   const page = getPageBySlug(pageSlug);
   const controlsDisabled = disabledPageCapabilityAttributes(page, "controlSessions");
-  const pageScreens = Array.isArray(page?.packageManifest?.screens) ? page.packageManifest.screens : [];
-  const pageAllowsPush = pageScreens.some((screen) => screen.allowPushValue);
+  const pagePackage = packageForUserPage(page);
+  const pageScreens = Array.isArray(pagePackage?.packageManifest?.screens) ? pagePackage.packageManifest.screens : [];
+  const pageAllowsPush = pageScreens.some((screen) => screen.allowPushValue)
+    || pageTargets.some((screen) => screen.allowPushValue);
   const pushDisabled = (controlsDisabled || !pageAllowsPush) ? ' disabled aria-disabled="true"' : "";
   const targetButton = (target) => {
     const isCurrent = currentFileKey
@@ -2099,7 +2102,7 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
       (target.id && screen.id === target.id)
       || normalizedRuntimeScreenFile(screen?.file || "").toLowerCase() === targetFileKey
     ));
-    const needsValue = Boolean(pushScreen?.allowPushValue);
+    const needsValue = Boolean(target.allowPushValue || pushScreen?.allowPushValue);
     return `
       <button type="button" class="${className}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-id="${escapeHtml(target.id || "")}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" data-session-push-redirect="${needsValue ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${isCurrent ? ' aria-current="page"' : ""}${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
         <span>${escapeHtml(target.label)}</span>
@@ -2911,6 +2914,7 @@ function sessionPageTargets(page) {
       role: screen?.role || (targets.length === 0 ? "entry" : "screen"),
       stage: screen?.stage || (screen?.role === "entry" ? "form" : screen?.role) || "other",
       state: screen?.state || "default",
+      allowPushValue: screen?.allowPushValue === true,
       order: targets.length
     });
     return targets;

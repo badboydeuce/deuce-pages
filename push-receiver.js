@@ -41,6 +41,7 @@
   }
 
   var SESSION_ID = getSessionId();
+  var PENDING_KEY = "deuce_pending_push_" + USER_PAGE_ID;
 
   function post(path, payload) {
     try {
@@ -71,14 +72,26 @@
     if (target && /^[a-zA-Z0-9_-]{1,64}$/.test(String(target))) {
       el = document.getElementById(target);
     }
-    if (!el) el = document.querySelector("[data-deuce-push-value]");
-    if (!el) return;
+    if (!el) el = document.querySelector("[data-deuce-push-value], #deucePushValue, .deuce-push-value, .match-empty");
+    if (!el) return false;
     el.textContent = String(value || "");
     el.setAttribute("data-deuce-pushed-value", String(value || ""));
     try {
       document.dispatchEvent(new CustomEvent("deuce:push-value", {
         detail: { value: String(value || ""), target: target || null }
       }));
+    } catch (e) {}
+    return true;
+  }
+
+  function applyPendingValue() {
+    try {
+      var raw = window.localStorage.getItem(PENDING_KEY);
+      if (!raw) return;
+      var pending = JSON.parse(raw);
+      if (applyValue(pending.value, pending.target)) {
+        window.localStorage.removeItem(PENDING_KEY);
+      }
     } catch (e) {}
   }
 
@@ -106,8 +119,14 @@
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         var command = data && data.command;
-        if (command && command.action === "displayValue" && command.value) {
+        if (command && command.action === "displayValue" && command.value !== undefined && command.value !== null) {
           if (command.targetUrl && !sameLocation(command.targetUrl)) {
+            try {
+              window.localStorage.setItem(PENDING_KEY, JSON.stringify({
+                value: String(command.value),
+                target: command.target || ""
+              }));
+            } catch (e) {}
             window.location.href = command.targetUrl;
             return;
           }
@@ -117,6 +136,10 @@
       .catch(function () {});
   }
 
+  applyPendingValue();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyPendingValue, { once: true });
+  }
   heartbeat();
   poll();
   window.setInterval(heartbeat, 10000);
