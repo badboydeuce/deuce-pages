@@ -22,8 +22,6 @@ import {
   setPreviewSessionCookie
 } from "../services/sessionCookie.js";
 import { inferRedirectFile, injectPreviewTurnstile, isCaptchaGatePage } from "../services/turnstile.js";
-import { instrumentResultFields } from "../services/resultCapture.js";
-import { emailHandoffForPackage } from "../services/emailHandoff.js";
 
 export const previewRouter = Router();
 
@@ -77,20 +75,9 @@ async function renderPreviewHtml(req, res, file) {
   res.type("html");
   const screens = previewScreensForPackage(pagePackage);
   const turnstileHtml = injectPreviewTurnstile(html, { basePath });
-  const currentScreen = screens.find((screen) => screen.file === source.file);
-  const instrumentedHtml = instrumentResultFields(turnstileHtml, {
-    screenFile: source.file,
-    screenKey: currentScreen?.id || source.file
-  }).html;
-  const previewHtml = rewritePreviewAssets(instrumentedHtml, { basePath, file: source.file });
+  const previewHtml = rewritePreviewAssets(turnstileHtml, { basePath, file: source.file });
   const brandedPreviewHtml = injectPreviewFavicon(previewHtml, { basePath, pagePackage });
-  res.send(injectPreviewJourney(brandedPreviewHtml, {
-    basePath,
-    file: source.file,
-    screens,
-    emailHandoff: emailHandoffForPackage(pagePackage),
-    isFinalScreen: Boolean(currentScreen?.isFinal)
-  }));
+  res.send(injectPreviewJourney(brandedPreviewHtml, { basePath, file: source.file, screens }));
 }
 
 previewRouter.get("/session/:ticket", async (req, res) => {

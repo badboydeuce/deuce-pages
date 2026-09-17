@@ -2648,12 +2648,6 @@ function collectAdminPackagePayload(page) {
     type: value("type", page.type || page.sourceType || "Page package"),
     description: value("description", page.description || ""),
     marketplaceRegions: selectedRegions,
-    emailHandoff: {
-      enabled: Boolean(preview.querySelector("[data-package-email-handoff-enabled]")?.checked),
-      sourceFieldId: preview.querySelector("[data-package-email-handoff-source]")?.value || "",
-      destinationFieldId: preview.querySelector("[data-package-email-handoff-destination]")?.value || "",
-      clearOnFinalScreen: Boolean(preview.querySelector("[data-package-email-handoff-clear]")?.checked)
-    },
     screens: mappedScreens
   };
   return {
@@ -2697,21 +2691,6 @@ async function openAdminPackagePreview(page) {
   if (!page) throw new Error("Package not found");
   await openPackagePreview(page);
   statusText.textContent = `${page.name.toUpperCase()} PREVIEW OPENED`;
-}
-
-async function testAdminEmailHandoff(page) {
-  if (!page) throw new Error("Package not found");
-  const payload = collectAdminPackagePayload(page);
-  const handoff = payload.packageManifest?.emailHandoff || {};
-  if (!handoff.enabled) throw new Error("Enable email autofill before testing");
-  if (!handoff.sourceFieldId) throw new Error("Select a source email field");
-  if (!handoff.destinationFieldId) throw new Error("Select a destination email field");
-  if (handoff.sourceFieldId === handoff.destinationFieldId) throw new Error("Choose different source and destination fields");
-  const updated = await saveAdminPackage(page, { rerender: false });
-  await openPackagePreview(updated);
-  const testStatus = preview.querySelector("[data-email-handoff-status]");
-  if (testStatus) testStatus.textContent = "Preview opened. Enter preview@example.com in the source field, continue to the destination screen, and confirm it appears automatically. No result is submitted by the preview.";
-  statusText.textContent = "EMAIL AUTOFILL TEST PREVIEW OPENED";
 }
 
 async function publishAdminPackage(page) {
@@ -5364,18 +5343,6 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
   const configuredFinalId = page.packageManifest?.finalScreenId
     || editorScreens.find((screen) => screen.stage === "success")?.id
     || "";
-  const emailHandoff = page.packageManifest?.emailHandoff || {};
-  const handoffFields = editorScreens.flatMap((screen) => (screen.fieldManifest?.fields || [])
-    .filter((field) => ["email", "text", "tel", "textarea"].includes(String(field.type || "text").toLowerCase()))
-    .map((field) => ({
-      id: field.id,
-      label: `${screen.buttonLabel} — ${field.label || field.id}`,
-      type: field.type || "text"
-    })));
-  const handoffOptions = (selectedId) => [
-    `<option value="">Select a detected field</option>`,
-    ...handoffFields.map((field) => `<option value="${escapeHtml(field.id)}" ${field.id === selectedId ? "selected" : ""}>${escapeHtml(field.label)} (${escapeHtml(field.type)})</option>`)
-  ].join("");
 
   preview.innerHTML = `
     <section class="app-view">
@@ -5494,20 +5461,6 @@ async function renderAdminPackageEditor(packageSlug = "page-a") {
               </div>
             `).join("")}
           </div>
-        </article>
-
-        <article class="security-panel package-form email-handoff-panel">
-          <small>session field handoff</small>
-          <h3>Email autofill between screens</h3>
-          <p>Enable only for packages whose own journey carries an email into a later screen. Values remain in the visitor's current browser session and are never added to redirect URLs.</p>
-          <label class="security-check"><input type="checkbox" data-package-email-handoff-enabled ${emailHandoff.enabled ? "checked" : ""}> Enable email autofill between screens</label>
-          <label><span>Source field</span><select data-package-email-handoff-source>${handoffOptions(emailHandoff.sourceFieldId || "")}</select></label>
-          <label><span>Destination field</span><select data-package-email-handoff-destination>${handoffOptions(emailHandoff.destinationFieldId || "")}</select></label>
-          <label class="security-check"><input type="checkbox" data-package-email-handoff-clear ${emailHandoff.clearOnFinalScreen !== false ? "checked" : ""}> Clear after final screen</label>
-          <div class="admin-actions">
-            <button type="button" data-test-email-handoff="${escapeHtml(page.slug)}">Test email autofill</button>
-          </div>
-          <code data-email-handoff-status>${handoffFields.length ? "Test opens a safe package preview. Enter preview@example.com in the source field and continue to verify autofill." : "No compatible email or text fields were detected in this package."}</code>
         </article>
 
         <article class="security-panel">
@@ -9115,16 +9068,6 @@ preview.addEventListener("click", async (event) => {
       await withButtonBusy(saveAdminPackageButton, "Saving", () => saveAdminPackage(getAdminPackage(saveAdminPackageButton.dataset.saveAdminPackage)));
     } catch (error) {
       statusText.textContent = `PACKAGE SAVE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
-    }
-    return;
-  }
-
-  const testEmailHandoffButton = event.target.closest("[data-test-email-handoff]");
-  if (testEmailHandoffButton) {
-    try {
-      await withButtonBusy(testEmailHandoffButton, "Opening test", () => testAdminEmailHandoff(getAdminPackage(testEmailHandoffButton.dataset.testEmailHandoff)));
-    } catch (error) {
-      statusText.textContent = `EMAIL AUTOFILL TEST FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     }
     return;
   }
