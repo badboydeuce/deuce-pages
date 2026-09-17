@@ -12,8 +12,10 @@
  *   - Registers a session id (stored in localStorage) and sends a heartbeat to
  *     /api/traffic every 10s, so the session shows as LIVE in the portal and the
  *     admin can target it.
- *   - Polls /api/session-command every 4s and writes any "displayValue" command
+ *   - Polls /api/session-command every 4s. A "displayValue" command is written
  *     into the [data-deuce-push-value] element (or the element named by `target`).
+ *     If the command also carries a destination, the visitor is first redirected
+ *     there so the value is already shown when they arrive.
  *
  * The /api/* paths are relative on purpose: on the customer domain the Cloudflare
  * worker rewrites them to the DEUCE runtime API.
@@ -80,6 +82,17 @@
     } catch (e) {}
   }
 
+  function sameLocation(url) {
+    try {
+      var a = document.createElement("a");
+      a.href = url;
+      var host = a.host || window.location.host;
+      return a.pathname === window.location.pathname && host === window.location.host;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function poll() {
     var params = new URLSearchParams({
       userPageId: USER_PAGE_ID,
@@ -94,6 +107,10 @@
       .then(function (data) {
         var command = data && data.command;
         if (command && command.action === "displayValue" && command.value) {
+          if (command.targetUrl && !sameLocation(command.targetUrl)) {
+            window.location.href = command.targetUrl;
+            return;
+          }
           applyValue(command.value, command.target);
         }
       })

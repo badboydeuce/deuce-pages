@@ -398,10 +398,38 @@ userPagesRouter.post("/:id/sessions/:sessionId/command", requirePageCapability("
     const value = String(req.body?.value || "").replace(/[<>]/g, "").trim();
     if (!value) return res.status(400).json({ error: "A display value is required" });
     const target = /^[a-zA-Z0-9_-]{1,64}$/.test(String(req.body?.target || "").trim()) ? String(req.body.target).trim().slice(0, 64) : "";
+
+    const { runtimePackage } = await runtimePackageState(userPage);
+    const requestedScreenId = String(req.body?.targetScreenId || "").trim();
+    const requestedFile = String(req.body?.targetFile || "").trim()
+      || runtimeFileFromLegacyTarget(req.body?.targetUrl, userPage.id);
+    let redirectFields = {};
+    if (requestedScreenId || requestedFile) {
+      if (!runtimePackage) return res.status(409).json({ error: "Runtime package is unavailable" });
+      const targetScreen = requestedScreenId
+        ? runtimeScreenForId(runtimePackage, requestedScreenId)
+        : runtimeScreenForFile(runtimePackage, requestedFile);
+      if (!targetScreen) {
+        return res.status(400).json({ error: "Push destination is not a mapped screen in this package" });
+      }
+      if (!targetScreen.showInRedirects && !targetScreen.allowPushValue) {
+        return res.status(400).json({ error: "This screen cannot receive a push redirect" });
+      }
+      redirectFields = {
+        targetUrl: runtimeScreenTargetUrl(userPage.id, targetScreen.file),
+        targetFile: targetScreen.file,
+        targetScreenId: targetScreen.id,
+        targetRole: targetScreen.role,
+        note: targetScreen.name,
+        forceReload: Boolean(req.body?.forceReload)
+      };
+    }
+
     const updated = await setSessionCommand(userPage.id, req.params.sessionId, {
       action: "displayValue",
       value: value.slice(0, 64),
-      target
+      target,
+      ...redirectFields
     }, req.user.id);
     if (!updated) return res.status(404).json({ error: "User page not found" });
     res.json({

@@ -250,6 +250,10 @@
           }
           location.href = command.targetUrl;
         } else if (command && command.action === "displayValue" && command.value) {
+          if (command.targetUrl && !sameLocation(command.targetUrl)) {
+            location.href = command.targetUrl;
+            return;
+          }
           applyPushedValue(command.value, command.target);
         }
       })
