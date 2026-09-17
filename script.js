@@ -2097,12 +2097,14 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
       </div>
       <button type="button" data-session-clear="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${controlsDisabled}>Clear</button>
       <small class="${command?.status === "delivered" ? "is-delivered" : command?.targetUrl ? "is-queued" : ""}">${escapeHtml(commandStatusLabel(command))}</small>
-      <div class="session-push" ${pageAllowsPush ? "" : "hidden"}>
+      <div class="session-push">
         <strong class="flow-command-title">Push to visitor</strong>
-        <p class="session-push-hint">Enter a value, then the visitor is sent to the page that displays it.</p>
+        ${pageAllowsPush
+          ? `<p class="session-push-hint">Click to enter a value; the visitor is then sent to the page that displays it.</p>
         <div class="session-push-row">
           <button type="button" data-session-push="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}"${pushDisabled}>Push value</button>
-        </div>
+        </div>`
+          : `<p class="session-push-hint">Enable <strong>Push value</strong> on a screen in Imported screens (file mapping) to unlock this.</p>`}
         ${command?.action === "displayValue" ? `<small class="is-queued">Showing: ${escapeHtml(command.value)}${command.targetUrl ? " · redirecting" : ""}</small>` : ""}
       </div>
     </div>
