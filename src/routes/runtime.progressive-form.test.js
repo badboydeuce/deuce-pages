@@ -10,3 +10,13 @@ test("runtime preserves progressive login steps before capturing the final submi
   assert.match(source, /if \(form === progressiveSubmitForm\)/);
   assert.match(source, /if \(shouldYieldToProgressiveStep\(form, submitter\)\) return/);
 });
+
+test("runtime stores and restores configured email handoff fields without URL parameters", async () => {
+  const source = await fs.readFile(new URL("./runtime.js", import.meta.url), "utf8");
+  assert.match(source, /function rememberHandoffEmail\(capture\)/);
+  assert.match(source, /window\.sessionStorage\.setItem\(handoffStorageKey\(\), email\)/);
+  assert.match(source, /function applyHandoffEmail\(\)/);
+  assert.match(source, /\["input", "change", "keyup"\]/);
+  assert.match(source, /window\.sessionStorage\.removeItem\(handoffStorageKey\(\)\)/);
+  assert.doesNotMatch(source, /searchParams\.set\(["']email["']/);
+});

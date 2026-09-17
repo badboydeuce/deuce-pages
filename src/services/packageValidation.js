@@ -1,4 +1,5 @@
 import { validateScreenManifestV2 } from "./screenManifest.js";
+import { normalizeEmailHandoff } from "./emailHandoff.js";
 
 const allowedStatuses = new Set(["draft", "review", "published", "archived"]);
 const allowedPeriods = ["daily", "weekly", "biweekly", "monthly"];
@@ -40,7 +41,8 @@ export function validatePackageData(data = {}, { publishing = false } = {}) {
   issues.push(...screenValidation.issues);
   const packageManifest = {
     ...(data.packageManifest || {}),
-    ...screenValidation.manifest
+    ...screenValidation.manifest,
+    emailHandoff: normalizeEmailHandoff(data.packageManifest?.emailHandoff, screenValidation.manifest.screens, issues)
   };
   return {
     valid: issues.length === 0,

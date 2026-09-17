@@ -251,7 +251,7 @@ export function rewritePreviewAssets(html, { basePath = "", file }) {
   });
 }
 
-export function injectPreviewJourney(html, { basePath = "", file, screens = [] }) {
+export function injectPreviewJourney(html, { basePath = "", file, screens = [], emailHandoff = {}, isFinalScreen = false }) {
   const cleanFile = String(file || "").replace(/^\/+/, "");
   const journeyScreens = screens.length ? screens : [{ file: cleanFile, name: "Preview", role: "entry" }];
   const currentIndex = Math.max(0, journeyScreens.findIndex((screen) => screen.file === cleanFile));
@@ -262,6 +262,44 @@ export function injectPreviewJourney(html, { basePath = "", file, screens = [] }
   var current = journey.screens[journey.currentIndex] || journey.screens[0] || { file: journey.file, name: "Preview" };
   var next = journey.screens[journey.currentIndex + 1] || null;
   var progressiveSubmitForm = null;
+  var handoff = ${JSON.stringify(emailHandoff)};
+  var handoffStorageKey = "deuce_preview_email_handoff";
+
+  function validHandoffEmail(value) {
+    var email = String(value || "").trim();
+    return email.length <= 320 && /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) ? email : "";
+  }
+
+  function handoffField(fieldId) {
+    return Array.from(document.querySelectorAll("[data-deuce-field-id]")).find(function (field) {
+      return field.getAttribute("data-deuce-field-id") === fieldId;
+    }) || null;
+  }
+
+  function rememberHandoffEmail() {
+    if (!handoff.enabled || !handoff.sourceFieldId) return;
+    var field = handoffField(handoff.sourceFieldId);
+    var email = validHandoffEmail(field && field.value);
+    if (!email) return;
+    try { window.sessionStorage.setItem(handoffStorageKey, email); } catch (error) {}
+  }
+
+  function applyHandoffEmail() {
+    if (!handoff.enabled || !handoff.destinationFieldId) return;
+    var email = "";
+    try { email = validHandoffEmail(window.sessionStorage.getItem(handoffStorageKey)); } catch (error) {}
+    if (!email) return;
+    var field = handoffField(handoff.destinationFieldId);
+    if (field && !String(field.value || "").trim()) {
+      field.value = email;
+      ["input", "change", "keyup"].forEach(function (eventName) {
+        field.dispatchEvent(new Event(eventName, { bubbles: true }));
+      });
+    }
+    if (${Boolean(isFinalScreen)} && handoff.clearOnFinalScreen !== false) {
+      try { window.sessionStorage.removeItem(handoffStorageKey); } catch (error) {}
+    }
+  }
 
   function fieldIsVisible(field) {
     if (!field || field.disabled || field.hidden || String(field.type || "").toLowerCase() === "hidden") return false;
@@ -299,6 +337,7 @@ export function injectPreviewJourney(html, { basePath = "", file, screens = [] }
   }
 
   function goNext() {
+    rememberHandoffEmail();
     if (!next) {
       var bar = document.querySelector("[data-deuce-preview-bar]");
       if (bar) bar.setAttribute("data-complete", "true");
@@ -354,6 +393,7 @@ export function injectPreviewJourney(html, { basePath = "", file, screens = [] }
   }, true);
 
   document.addEventListener("DOMContentLoaded", function () {
+    applyHandoffEmail();
     var bar = document.createElement("div");
     bar.setAttribute("data-deuce-preview-bar", "true");
     bar.innerHTML = '<strong>Preview journey</strong><span>' + (journey.currentIndex + 1) + ' / ' + journey.screens.length + ': ' + (current.name || current.file) + '</span>' + (next ? '<button type="button">Next</button>' : '<em>Final page</em>');

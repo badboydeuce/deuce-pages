@@ -69,6 +69,7 @@ export function createRuntimePackageSnapshot(pagePackage = {}) {
       finalScreenId: screenManifest.finalScreenId,
       ...(manifest.r2 ? { r2: { prefix: manifest.r2.prefix || "" } } : {}),
       ...(manifest.github ? { github: { ...manifest.github } } : {}),
+      ...(manifest.emailHandoff ? { emailHandoff: { ...manifest.emailHandoff } } : {}),
       files: Array.isArray(manifest.files) ? manifest.files : [],
       screens: screenManifest.screens
     }
