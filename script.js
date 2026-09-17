@@ -1966,11 +1966,23 @@ function pushValueScreens(page) {
   return screens.filter((screen) => screen.allowPushValue);
 }
 
-function openPushValueDialog(pageSlug, sessionId) {
+function openPushValueDialog(pageSlug, sessionId, destination = null) {
   const page = getPageBySlug(pageSlug);
   if (!page || !sessionId) return;
-  const screens = pushValueScreens(page);
-  if (!screens.length) return;
+  let screens = [];
+  let primary = null;
+  if (destination && (destination.file || destination.id)) {
+    primary = {
+      id: String(destination.id || ""),
+      file: String(destination.file || ""),
+      name: destination.label || destination.file || ""
+    };
+    screens = [primary];
+  } else {
+    screens = pushValueScreens(page);
+    if (!screens.length) return;
+    primary = screens[0];
+  }
 
   const backdrop = document.createElement("div");
   backdrop.className = "push-dialog-backdrop";
@@ -1978,7 +1990,6 @@ function openPushValueDialog(pageSlug, sessionId) {
   backdrop.setAttribute("aria-modal", "true");
   backdrop.setAttribute("aria-label", "Push value to visitor");
 
-  const primary = screens[0];
   const destinationSelect = screens.length > 1
     ? `<label class="push-dialog-field"><span>Send visitor to</span><select data-push-target>${screens
         .map((screen) => `<option value="${escapeHtml(screen.id)}" data-file="${escapeHtml(screen.file)}">${escapeHtml(screen.name || screen.label || screen.file)}</option>`)
@@ -2083,8 +2094,14 @@ function sessionCommandMarkup(sessionId, pageSlug, pageTargets = [], command = n
     const className = [isCurrent ? "is-current" : "", isError ? "is-error" : "", isSuccess ? "is-success" : ""]
       .filter(Boolean)
       .join(" ");
+    const targetFileKey = normalizedRuntimeScreenFile(target.file).toLowerCase();
+    const pushScreen = pageScreens.find((screen) => (
+      (target.id && screen.id === target.id)
+      || normalizedRuntimeScreenFile(screen?.file || "").toLowerCase() === targetFileKey
+    ));
+    const needsValue = Boolean(pushScreen?.allowPushValue);
     return `
-      <button type="button" class="${className}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-id="${escapeHtml(target.id || "")}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${isCurrent ? ' aria-current="page"' : ""}${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
+      <button type="button" class="${className}" data-session-redirect="${escapeHtml(sessionId)}" data-session-page="${escapeHtml(pageSlug)}" data-session-target-id="${escapeHtml(target.id || "")}" data-session-target-file="${escapeHtml(target.file)}" data-session-target-label="${escapeHtml(target.label)}" data-session-force-reload="${target.forceReload ? "true" : "false"}" data-session-push-redirect="${needsValue ? "true" : "false"}" aria-pressed="${isCurrent ? "true" : "false"}"${isCurrent ? ' aria-current="page"' : ""}${controlsDisabled || (isCurrent && !target.forceReload ? ' disabled aria-disabled="true"' : "")}>
         <span>${escapeHtml(target.label)}</span>
       </button>
     `;
@@ -2882,7 +2899,7 @@ function sessionPageTargets(page) {
     .map((file) => file.toLowerCase()));
   const seen = new Set();
   return candidates.reduce((targets, screen) => {
-    if (typeof screen === "object" && (screen?.enabled === false || screen?.showInRedirects === false)) return targets;
+    if (typeof screen === "object" && (screen?.enabled === false || (screen?.showInRedirects === false && screen?.allowPushValue !== true))) return targets;
     const file = normalizedRuntimeScreenFile(sessionTargetFile(screen, manifestScreens));
     const key = file.toLowerCase();
     if (!file || seen.has(key) || (availableFiles.size && !availableFiles.has(key))) return targets;
@@ -9619,6 +9636,14 @@ preview.addEventListener("click", async (event) => {
     const forceReload = sessionRedirectButton.dataset.sessionForceReload === "true";
     if (!resultPage || !targetFile) {
       statusText.textContent = "MAPPED PACKAGE PAGE REQUIRED";
+      return;
+    }
+    if (sessionRedirectButton.dataset.sessionPushRedirect === "true") {
+      openPushValueDialog(sessionRedirectButton.dataset.sessionPage, sessionId, {
+        id: targetScreenId,
+        file: targetFile,
+        label: String(sessionRedirectButton.dataset.sessionTargetLabel || "").trim()
+      });
       return;
     }
     await withButtonBusy(sessionRedirectButton, "Redirecting", () => runResultsMutation(async () => {
