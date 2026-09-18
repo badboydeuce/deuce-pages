@@ -93,6 +93,7 @@ let telegramLinkPollTimer = null;
 let telegramLinkPendingPageId = "";
 const expandedAdminUsers = new Set();
 const collabAdminUsers = new Set();
+let adminUserSearchQuery = "";
 const selectedMarketPlans = {};
 const billingPeriodLabels = {
   daily: "Daily",
@@ -5821,11 +5822,18 @@ function renderAdminUsers() {
         <div class="builder-heading">
           <div>
             <small>user directory</small>
-            <h3>Accounts</h3>
+            <h3>User accounts</h3>
           </div>
           <button type="button" data-refresh-admin-users>Refresh</button>
         </div>
-        <div class="user-manager-list">
+        <details class="invite-history user-directory-fold" open>
+          <summary>Accounts (<span data-admin-user-visible-count>${adminUsers.length}</span>)</summary>
+          <div class="user-directory-search">
+            <label for="adminUserSearch">Search users</label>
+            <input id="adminUserSearch" type="search" data-admin-user-search value="${escapeHtml(adminUserSearchQuery)}" placeholder="Search name, email, role, status, or page" autocomplete="off">
+          </div>
+          <p class="user-directory-empty" data-admin-user-search-empty hidden>No users match your search.</p>
+          <div class="user-manager-list">
           ${adminUsers.length ? adminUsers.map((user) => {
             const initials = user.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "US";
             const selectedPage = user.pages?.[0] || null;
@@ -5833,8 +5841,16 @@ function renderAdminUsers() {
             const collabsOpen = collabAdminUsers.has(user.id);
             const collab = user.collaboration || {};
             const recentSpendRows = (user.recentTransactions || []).slice(0, 3);
+            const searchText = [
+              user.id,
+              user.name,
+              user.email,
+              user.role,
+              user.status,
+              ...(user.pages || []).flatMap((page) => [page.id, page.name, page.slug, page.status])
+            ].filter(Boolean).join(" ").toLowerCase();
             return `
-            <article class="admin-user-card">
+            <article class="admin-user-card" data-admin-user-card data-admin-user-search-text="${escapeHtml(searchText)}">
               <div class="user-avatar">${escapeHtml(initials)}</div>
               <div class="user-copy">
                 <strong>${escapeHtml(user.name)}</strong>
@@ -5934,7 +5950,8 @@ function renderAdminUsers() {
             </article>
           `;
           }).join("") : emptyState("No users loaded", "Refresh users or check admin API access.", "#admin-users")}
-        </div>
+          </div>
+        </details>
       </article>
 
       <div class="admin-grid">
@@ -5966,6 +5983,24 @@ function renderAdminUsers() {
 
   statusText.textContent = "ADMIN USER MANAGER READY";
   topbarTitle.textContent = "User Manager";
+  applyAdminUserSearch();
+}
+
+function applyAdminUserSearch() {
+  const searchInput = preview.querySelector("[data-admin-user-search]");
+  if (!searchInput) return;
+  adminUserSearchQuery = searchInput.value.trim().toLowerCase();
+  let visibleCount = 0;
+  preview.querySelectorAll("[data-admin-user-card]").forEach((card) => {
+    const matches = !adminUserSearchQuery
+      || String(card.dataset.adminUserSearchText || "").includes(adminUserSearchQuery);
+    card.hidden = !matches;
+    if (matches) visibleCount += 1;
+  });
+  const count = preview.querySelector("[data-admin-user-visible-count]");
+  if (count) count.textContent = String(visibleCount);
+  const empty = preview.querySelector("[data-admin-user-search-empty]");
+  if (empty) empty.hidden = visibleCount > 0 || !adminUsers.length;
 }
 
 function pageTrafficCount(page) {
@@ -8896,6 +8931,11 @@ preview.addEventListener("change", (event) => {
 });
 
 preview.addEventListener("input", (event) => {
+  const adminUserSearch = event.target.closest("[data-admin-user-search]");
+  if (adminUserSearch) {
+    applyAdminUserSearch();
+    return;
+  }
   const packageSearch = event.target.closest("[data-admin-package-search]");
   if (packageSearch) {
     adminPackageLibraryState.search = packageSearch.value;

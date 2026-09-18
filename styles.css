@@ -8560,6 +8560,59 @@ body.result-viewer-open {
   font-weight: 600;
 }
 
+.user-directory-fold {
+  margin-top: 0;
+}
+
+.user-directory-fold > summary {
+  color: var(--text);
+}
+
+.user-directory-search {
+  display: grid;
+  gap: 7px;
+  margin: 4px 0 12px;
+}
+
+.user-directory-search label {
+  color: var(--soft);
+  font: 700 0.72rem var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.user-directory-search input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.user-directory-search input:focus {
+  border-color: var(--accent);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.18);
+  outline-offset: 1px;
+}
+
+.user-directory-empty {
+  margin: 0;
+  padding: 18px 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.user-manager-list [data-admin-user-card][hidden] {
+  display: none;
+}
+
+:root[data-theme="light"] .user-directory-search input {
+  border-color: rgba(16, 32, 24, 0.12);
+  background: rgba(255, 255, 255, 0.78);
+}
+
 .invite-list article {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
