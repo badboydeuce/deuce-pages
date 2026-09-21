@@ -89,6 +89,8 @@ let notificationPollTimer = null;
 let notificationInitialized = false;
 const notificationSeenIds = new Set();
 let telegramStatus = { configured: false, botUsername: "", webhookConfigured: false, connected: false, connection: null };
+let telegramBroadcasts = [];
+let telegramBroadcastRecipientCount = 0;
 let telegramLinkPollTimer = null;
 let telegramLinkPendingPageId = "";
 const expandedAdminUsers = new Set();
@@ -668,6 +670,47 @@ async function setupTelegramWebhook() {
   statusText.textContent = "TELEGRAM WEBHOOK INSTALLED";
 }
 
+async function refreshTelegramBroadcasts() {
+  if (!isAdmin()) return;
+  const result = await requestApi("/api/telegram/admin/broadcasts");
+  telegramBroadcasts = result.broadcasts || [];
+  telegramBroadcastRecipientCount = Number(result.recipientCount || 0);
+}
+
+async function saveTelegramBroadcastPreference(enabled) {
+  const result = await requestApi("/api/telegram/broadcast-preference", {
+    method: "PATCH",
+    body: JSON.stringify({ enabled })
+  });
+  telegramStatus = { ...telegramStatus, ...result };
+  renderTelegramSettings();
+  statusText.textContent = enabled ? "TELEGRAM BROADCASTS ENABLED" : "TELEGRAM BROADCASTS DISABLED";
+}
+
+async function createTelegramBroadcast(form) {
+  const broadcast = await requestApi("/api/telegram/admin/broadcasts", {
+    method: "POST",
+    body: JSON.stringify({
+      title: form.querySelector('[name="broadcastTitle"]')?.value || "",
+      message: form.querySelector('[name="broadcastMessage"]')?.value || "",
+      buttonLabel: form.querySelector('[name="broadcastButtonLabel"]')?.value || "",
+      buttonUrl: form.querySelector('[name="broadcastButtonUrl"]')?.value || "",
+      silent: form.querySelector('[name="broadcastSilent"]')?.checked === true
+    })
+  });
+  await refreshTelegramBroadcasts();
+  renderTelegramSettings();
+  return broadcast.broadcast;
+}
+
+async function sendTelegramBroadcast(broadcastId, testOnly = false) {
+  if (!testOnly && !window.confirm(`Send this broadcast to ${telegramBroadcastRecipientCount} opted-in Telegram subscriber${telegramBroadcastRecipientCount === 1 ? "" : "s"}?`)) return;
+  await requestApi(`/api/telegram/admin/broadcasts/${encodeURIComponent(broadcastId)}/${testOnly ? "test" : "send"}`, { method: "POST" });
+  await refreshTelegramBroadcasts();
+  renderTelegramSettings();
+  statusText.textContent = testOnly ? "TELEGRAM BROADCAST TEST SENT" : "TELEGRAM BROADCAST QUEUED";
+}
+
 function renderTelegramSettings() {
   activeFlowSlug = null;
   const connected = telegramStatus.connected;
@@ -702,6 +745,44 @@ function renderTelegramSettings() {
           <p>Telegram receives the page name, notification time, and an authenticated link back to DEUCE. Submitted fields, IP addresses, sessions, and raw results stay inside DEUCE.</p>
         </article>
       </div>
+      ${connected ? `
+        <article class="security-panel telegram-broadcast-preference">
+          <small>broadcast preference</small>
+          <h3>Service announcements</h3>
+          <label class="toggle-row">
+            <input type="checkbox" data-telegram-broadcast-optin ${telegramStatus.connection?.broadcastOptIn === true ? "checked" : ""}>
+            <span>Receive occasional DPanel announcements through Telegram</span>
+          </label>
+          <p>This is separate from result alerts. You can turn it off at any time.</p>
+        </article>
+      ` : ""}
+      ${isAdmin() ? `
+        <article class="security-panel telegram-broadcast-admin">
+          <div class="builder-heading compact">
+            <div><small>admin broadcast</small><h3>${telegramBroadcastRecipientCount} opted-in recipient${telegramBroadcastRecipientCount === 1 ? "" : "s"}</h3></div>
+          </div>
+          <form class="telegram-broadcast-form" data-telegram-broadcast-form>
+            <label>Internal title<input name="broadcastTitle" maxlength="120" required placeholder="September service update"></label>
+            <label>Telegram message<textarea name="broadcastMessage" maxlength="4000" required rows="6" placeholder="Write a clear announcement..."></textarea></label>
+            <div class="telegram-broadcast-fields">
+              <label>Button label<input name="broadcastButtonLabel" maxlength="64" placeholder="Open DPanel"></label>
+              <label>HTTPS button URL<input name="broadcastButtonUrl" type="url" placeholder="https://dpanel.live/portal"></label>
+            </div>
+            <label class="toggle-row"><input type="checkbox" name="broadcastSilent"><span>Deliver silently</span></label>
+            <div class="admin-actions"><button type="button" data-create-telegram-broadcast>Create draft</button></div>
+          </form>
+          <div class="telegram-broadcast-history">
+            ${telegramBroadcasts.length ? telegramBroadcasts.map((broadcast) => `
+              <article>
+                <div><strong>${escapeHtml(broadcast.title)}</strong><span>${escapeHtml(broadcast.status)} · ${Number(broadcast.sentCount || 0)}/${Number(broadcast.totalRecipients || 0)} sent${Number(broadcast.failedCount || 0) ? ` · ${Number(broadcast.failedCount)} failed` : ""}</span></div>
+                <div class="admin-actions">
+                  ${broadcast.status === "draft" ? `<button type="button" data-test-telegram-broadcast="${escapeHtml(broadcast.id)}">Test to me</button><button type="button" data-send-telegram-broadcast="${escapeHtml(broadcast.id)}" ${telegramBroadcastRecipientCount < 1 ? "disabled" : ""}>Send</button>` : ""}
+                </div>
+              </article>
+            `).join("") : "<p>No broadcasts created yet.</p>"}
+          </div>
+        </article>
+      ` : ""}
       <article class="security-panel telegram-page-list">
         <div class="builder-heading compact">
           <div><small>per-page controls</small><h3>${enabledPages.length} of ${ownedPages.length} pages enabled</h3></div>
@@ -7674,6 +7755,9 @@ function renderRoute() {
   if (hash === "#notifications") {
     setActiveNav("#dashboard");
     renderTelegramSettings();
+    if (isAdmin()) refreshTelegramBroadcasts().then(() => {
+      if (routeHash(window.location.hash) === "#notifications") renderTelegramSettings();
+    }).catch((error) => { statusText.textContent = `BROADCASTS UNAVAILABLE: ${safeErrorMessage(error)}`.toUpperCase(); });
     return;
   }
 
@@ -9012,6 +9096,41 @@ preview.addEventListener("click", async (event) => {
   if (telegramWebhookButton) {
     await withButtonBusy(telegramWebhookButton, "Installing", setupTelegramWebhook).catch((error) => {
       statusText.textContent = `TELEGRAM WEBHOOK FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const broadcastPreference = event.target.closest("[data-telegram-broadcast-optin]");
+  if (broadcastPreference) {
+    await saveTelegramBroadcastPreference(broadcastPreference.checked).catch((error) => {
+      broadcastPreference.checked = !broadcastPreference.checked;
+      statusText.textContent = `BROADCAST PREFERENCE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const createBroadcastButton = event.target.closest("[data-create-telegram-broadcast]");
+  if (createBroadcastButton) {
+    const form = createBroadcastButton.closest("[data-telegram-broadcast-form]");
+    if (!form?.reportValidity()) return;
+    await withButtonBusy(createBroadcastButton, "Creating", () => createTelegramBroadcast(form)).catch((error) => {
+      statusText.textContent = `BROADCAST CREATE FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const testBroadcastButton = event.target.closest("[data-test-telegram-broadcast]");
+  if (testBroadcastButton) {
+    await withButtonBusy(testBroadcastButton, "Sending", () => sendTelegramBroadcast(testBroadcastButton.dataset.testTelegramBroadcast, true)).catch((error) => {
+      statusText.textContent = `BROADCAST TEST FAILED: ${safeErrorMessage(error)}`.toUpperCase();
+    });
+    return;
+  }
+
+  const sendBroadcastButton = event.target.closest("[data-send-telegram-broadcast]");
+  if (sendBroadcastButton) {
+    await withButtonBusy(sendBroadcastButton, "Queueing", () => sendTelegramBroadcast(sendBroadcastButton.dataset.sendTelegramBroadcast, false)).catch((error) => {
+      statusText.textContent = `BROADCAST SEND FAILED: ${safeErrorMessage(error)}`.toUpperCase();
     });
     return;
   }

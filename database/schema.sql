@@ -239,6 +239,9 @@ CREATE TABLE IF NOT EXISTS telegram_connections (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE telegram_connections
+ADD COLUMN IF NOT EXISTS broadcast_opt_in BOOLEAN NOT NULL DEFAULT false;
+
 CREATE TABLE IF NOT EXISTS telegram_link_tokens (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -269,6 +272,40 @@ CREATE TABLE IF NOT EXISTS telegram_notification_deliveries (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(notification_id, channel)
+);
+
+CREATE TABLE IF NOT EXISTS telegram_broadcasts (
+  id TEXT PRIMARY KEY,
+  created_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  button_label TEXT,
+  button_url TEXT,
+  silent BOOLEAN NOT NULL DEFAULT false,
+  status TEXT NOT NULL DEFAULT 'draft',
+  total_recipients INTEGER NOT NULL DEFAULT 0,
+  sent_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  queued_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS telegram_broadcast_deliveries (
+  id TEXT PRIMARY KEY,
+  broadcast_id TEXT NOT NULL REFERENCES telegram_broadcasts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  chat_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  telegram_message_id TEXT,
+  sent_at TIMESTAMPTZ,
+  error_code TEXT,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(broadcast_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS traffic_events (
@@ -318,6 +355,8 @@ CREATE INDEX IF NOT EXISTS idx_telegram_link_tokens_user ON telegram_link_tokens
 CREATE INDEX IF NOT EXISTS idx_telegram_link_tokens_hash ON telegram_link_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_telegram_deliveries_due ON telegram_notification_deliveries(status, next_attempt_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_telegram_deliveries_user_page ON telegram_notification_deliveries(user_page_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telegram_broadcasts_created ON telegram_broadcasts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telegram_broadcast_deliveries_due ON telegram_broadcast_deliveries(status, next_attempt_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_id ON traffic_events(user_page_id);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_created_at ON traffic_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_traffic_events_user_page_created ON traffic_events(user_page_id, created_at DESC);

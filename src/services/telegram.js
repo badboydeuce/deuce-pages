@@ -5,6 +5,11 @@ import {
   completeTelegramDelivery,
   failTelegramDelivery
 } from "../repositories/telegramRepository.js";
+import {
+  claimTelegramBroadcastDeliveries,
+  completeTelegramBroadcastDelivery,
+  failTelegramBroadcastDelivery
+} from "../repositories/telegramBroadcastRepository.js";
 
 const telegramApiOrigin = "https://api.telegram.org";
 const defaultPollIntervalMs = 2500;
@@ -171,6 +176,18 @@ export async function sendTelegramResultDelivery(delivery, { fetchImpl = globalT
   }, { fetchImpl });
 }
 
+export async function sendTelegramBroadcastMessage(chatId, broadcast, { fetchImpl = globalThis.fetch } = {}) {
+  const label = String(broadcast?.buttonLabel || "").trim();
+  const url = String(broadcast?.buttonUrl || "").trim();
+  return telegramRequest("sendMessage", {
+    chat_id: String(chatId),
+    text: String(broadcast?.message || ""),
+    disable_notification: broadcast?.silent === true,
+    link_preview_options: { is_disabled: true },
+    ...(label && url ? { reply_markup: { inline_keyboard: [[{ text: label, url }]] } } : {})
+  }, { fetchImpl });
+}
+
 function deliveryFailure(error) {
   const status = Number(error?.status || 0);
   return {
@@ -205,6 +222,26 @@ export async function dispatchTelegramDeliveriesOnce({ limit = 10, fetchImpl = g
   return { claimed: deliveries.length, sent, failed };
 }
 
+export async function dispatchTelegramBroadcastsOnce({ limit = 10, fetchImpl = globalThis.fetch } = {}) {
+  if (!telegramConfiguration().configured) return { claimed: 0, sent: 0, failed: 0 };
+  const deliveries = await claimTelegramBroadcastDeliveries(limit);
+  let sent = 0;
+  let failed = 0;
+  for (const [index, delivery] of deliveries.entries()) {
+    try {
+      const response = await sendTelegramBroadcastMessage(delivery.chatId, delivery.broadcast, { fetchImpl });
+      await completeTelegramBroadcastDelivery(delivery.id, response?.message_id);
+      sent += 1;
+    } catch (error) {
+      await failTelegramBroadcastDelivery(delivery, deliveryFailure(error));
+      failed += 1;
+      console.error("Telegram broadcast delivery failed", { deliveryId: delivery.id, code: error?.code || "TELEGRAM_SEND_FAILED" });
+    }
+    if (index < deliveries.length - 1) await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  return { claimed: deliveries.length, sent, failed };
+}
+
 export function startTelegramDispatcher({ intervalMs = defaultPollIntervalMs } = {}) {
   if (activeDispatcher) return activeDispatcher;
   let timer = null;
@@ -221,6 +258,9 @@ export function startTelegramDispatcher({ intervalMs = defaultPollIntervalMs } =
         let result;
         do {
           result = await dispatchTelegramDeliveriesOnce();
+        } while (!stopped && result.claimed >= 10);
+        do {
+          result = await dispatchTelegramBroadcastsOnce();
         } while (!stopped && result.claimed >= 10);
       } catch (error) {
         console.error("Telegram dispatcher cycle failed", { code: error?.code || "TELEGRAM_DISPATCH_FAILED" });

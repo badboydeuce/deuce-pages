@@ -38,8 +38,29 @@ function connectionFromRow(row) {
     lastTestAt: row.last_test_at || null,
     failureCount: Number(row.failure_count || 0),
     lastErrorCode: row.last_error_code || "",
+    broadcastOptIn: row.broadcast_opt_in === true,
     updatedAt: row.updated_at
   };
+}
+
+export async function setTelegramBroadcastPreference(userId, enabled) {
+  if (!userId) throw statusError("Authentication required", 401);
+  if (useJsonDb()) {
+    return updateJsonDb((db) => {
+      const connection = (db.telegramConnections || []).find((item) => item.userId === userId && item.status === "active");
+      if (!connection) throw statusError("Connect Telegram before changing broadcast preferences", 409);
+      connection.broadcastOptIn = enabled === true;
+      connection.updatedAt = new Date().toISOString();
+      return connection;
+    });
+  }
+  const result = await query(
+    `UPDATE telegram_connections SET broadcast_opt_in = $2, updated_at = now()
+     WHERE user_id = $1 AND status = 'active' RETURNING *`,
+    [userId, enabled === true]
+  );
+  if (!result.rows[0]) throw statusError("Connect Telegram before changing broadcast preferences", 409);
+  return connectionFromRow(result.rows[0]);
 }
 
 function deliveryFromRow(row) {
@@ -250,6 +271,13 @@ export async function disconnectTelegram(userId) {
           delivery.updatedAt = now;
         }
       }
+      for (const delivery of db.telegramBroadcastDeliveries || []) {
+        if (delivery.userId === userId && ["pending", "retry", "sending"].includes(delivery.status)) {
+          delivery.status = "cancelled";
+          delivery.errorCode = "TELEGRAM_DISCONNECTED";
+          delivery.updatedAt = now;
+        }
+      }
       return connection;
     });
   }
@@ -264,6 +292,12 @@ export async function disconnectTelegram(userId) {
     );
     await client.query(
       "UPDATE telegram_link_tokens SET revoked_at = now() WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL",
+      [userId]
+    );
+    await client.query(
+      `UPDATE telegram_broadcast_deliveries
+       SET status = 'cancelled', error_code = 'TELEGRAM_DISCONNECTED', updated_at = now()
+       WHERE user_id = $1 AND status IN ('pending', 'retry', 'sending')`,
       [userId]
     );
     await client.query(
