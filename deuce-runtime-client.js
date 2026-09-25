@@ -74,6 +74,27 @@
     }
   }
 
+  function absolutePageLink(anchor) {
+    if (!anchor || !anchor.getAttribute) return "";
+    var raw = String(anchor.getAttribute("href") || "").trim();
+    if (!/^(?:https?:)?\/\//i.test(raw)) return "";
+    try {
+      var target = new URL(raw, location.href);
+      return ["http:", "https:"].indexOf(target.protocol) !== -1 ? target.href : "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function leaveRuntimeFrame(url) {
+    if (!url) return;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: "deuce:navigate", url: url }, "*");
+      return;
+    }
+    location.assign(url);
+  }
+
   function fieldLabel(input) {
     var escapedId = input.id && window.CSS && CSS.escape ? CSS.escape(input.id) : "";
     var linkedLabel = escapedId && document.querySelector ? document.querySelector('label[for="' + escapedId + '"]') : null;
@@ -321,6 +342,14 @@
   }, true);
 
   document.addEventListener("click", function (event) {
+    var externalLink = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+    var externalUrl = absolutePageLink(externalLink);
+    if (externalUrl) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      leaveRuntimeFrame(externalUrl);
+      return;
+    }
     var button = event.target && event.target.closest ? event.target.closest('button, input[type="submit"]') : null;
     if (!button || !button.form) return;
     lastSubmitter = button;

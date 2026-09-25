@@ -443,6 +443,27 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     }
   }
 
+  function absolutePageLink(anchor) {
+    if (!anchor || !anchor.getAttribute) return "";
+    const raw = String(anchor.getAttribute("href") || "").trim();
+    if (!/^(?:https?:)?\/\//i.test(raw)) return "";
+    try {
+      const target = new URL(raw, window.location.href);
+      return ["http:", "https:"].includes(target.protocol) ? target.href : "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function leaveRuntimeFrame(url) {
+    if (!url) return;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: "deuce:navigate", url: url }, "*");
+      return;
+    }
+    window.location.assign(url);
+  }
+
   const pendingPushKey = "deuce_pending_push_" + runtime.userPageId;
 
   function pushValueElement(target) {
@@ -1013,6 +1034,14 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
   window.setInterval(sendHeartbeat, 10000);
 
   document.addEventListener("click", function (event) {
+    const externalLink = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+    const externalUrl = absolutePageLink(externalLink);
+    if (externalUrl) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      leaveRuntimeFrame(externalUrl);
+      return;
+    }
     const button = event.target && event.target.closest ? event.target.closest('button, input[type="submit"], input[type="button"], a, [role="button"]') : null;
     if (!button) return;
     if (!button.form) {
