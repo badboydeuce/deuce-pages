@@ -18,4 +18,8 @@ test("portal exposes account-level and per-page Telegram notification controls",
   assert.match(script, /Telegram receives only a notification and a link back to DEUCE/);
   assert.match(styles, /\.telegram-settings-view/);
   assert.match(styles, /\.telegram-page-toggle/);
+  assert.match(script, /data-telegram-broadcast-form/);
+  assert.match(script, /data-telegram-broadcast-optin/);
+  assert.match(script, /data-send-telegram-broadcast/);
+  assert.match(styles, /\.telegram-broadcast-admin/);
 });

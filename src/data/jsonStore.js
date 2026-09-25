@@ -25,7 +25,9 @@ function emptyDb() {
     telegramConnections: [],
     telegramLinkTokens: [],
     telegramWebhookUpdates: [],
-    telegramNotificationDeliveries: []
+    telegramNotificationDeliveries: [],
+    telegramBroadcasts: [],
+    telegramBroadcastDeliveries: []
   };
 }
 
