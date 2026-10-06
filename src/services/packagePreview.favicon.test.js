@@ -33,6 +33,15 @@ test("root-relative preview assets resolve from the package root", () => {
   assert.equal(resolveRelativePath("pages/login.html", "/favicon.svg"), "favicon.svg");
 });
 
+test("Windows-style imported asset paths resolve to package paths", () => {
+  assert.equal(resolveRelativePath("index.html", "res\\css\\main.css"), "res/css/main.css");
+  assert.equal(resolveRelativePath("index.html", "res\\img/logo.svg"), "res/img/logo.svg");
+  assert.equal(
+    rewritePreviewAssets('<link rel="stylesheet" href="res\\css\\main.css">', { file: "index.html" }),
+    '<link rel="stylesheet" href="/p/asset?file=res%2Fcss%2Fmain.css">'
+  );
+});
+
 test("preview journey starts at entry and still includes every enabled screen", () => {
   const pagePackage = {
     id: "pkg_complete_journey",

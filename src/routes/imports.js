@@ -93,7 +93,7 @@ function contentTypeFor(filePath) {
 }
 
 function resolveRelativePath(fromFile, relativePath) {
-  const value = String(relativePath || "").trim();
+  const value = String(relativePath || "").trim().replace(/\\/g, "/");
   if (
     !value
     || /^(?:[a-z]+:)?\/\//i.test(value)

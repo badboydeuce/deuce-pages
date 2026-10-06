@@ -171,10 +171,14 @@ export async function fetchGitHubPackageFile(source) {
 }
 
 export function resolveRelativePath(fromFile, relativePath) {
-  if (!relativePath || /^(?:[a-z]+:)?\/\//i.test(relativePath) || /^(?:data|mailto|tel):/i.test(relativePath) || relativePath.startsWith("#")) {
+  const value = String(relativePath || "").trim();
+  if (!value || /^(?:[a-z]+:)?\/\//i.test(value) || /^(?:data|mailto|tel):/i.test(value) || value.startsWith("#")) {
     return null;
   }
-  const clean = relativePath.split("#")[0].split("?")[0];
+  // Browser-facing URLs must use forward slashes, but imported pages are often
+  // authored on Windows and contain paths such as res\css\main.css.
+  const normalizedValue = value.replace(/\\/g, "/");
+  const clean = normalizedValue.split("#")[0].split("?")[0];
   const fromParts = clean.startsWith("/") ? [] : String(fromFile || "").split("/");
   fromParts.pop();
 
