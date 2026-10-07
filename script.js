@@ -3270,15 +3270,6 @@ function createPackageRuntimeIndex(page, pagePackage) {
       const blockCopy = document.getElementById("deuceBlockCopy");
       let turnstileWidgetId = null;
 
-      window.addEventListener("message", (event) => {
-        if (event.source !== frame.contentWindow || event.data?.type !== "deuce:navigate") return;
-        try {
-          const target = new URL(String(event.data.url || ""), window.location.href);
-          if (!["http:", "https:"].includes(target.protocol)) return;
-          window.location.assign(target.href);
-        } catch (error) {}
-      });
-
       function enableContentDeterrence() {
         if (!config.security?.contentDeterrence || document.documentElement.dataset.deuceContentDeterrence === "on") return;
         document.documentElement.dataset.deuceContentDeterrence = "on";

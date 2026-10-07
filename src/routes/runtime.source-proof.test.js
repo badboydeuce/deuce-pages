@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 
 import {
   createChallengeProof,
@@ -220,6 +221,11 @@ test("runtime source and assets require a verified HttpOnly proof", async () => 
     assert.match(verifiedSourceHtml, /send\("uploads\/start"/);
     assert.match(verifiedSourceHtml, /attachmentIds: attachmentIds \|\| \[\]/);
     assert.match(verifiedSourceHtml, /uploadSelectedFiles\(inputs\)/);
+    const runtimeScripts = [...verifiedSourceHtml.matchAll(/<script>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+    assert.ok(runtimeScripts.length);
+    for (const runtimeScript of runtimeScripts) {
+      assert.doesNotThrow(() => new vm.Script(runtimeScript));
+    }
     const manifestToken = verifiedSourceHtml.match(/fieldManifestToken:\s*"([^"]+)"/)?.[1];
     assert.ok(manifestToken);
     const resultManifest = verifyResultFieldManifest(manifestToken, { userPageId: "page_proof", screenFile: "index.html" });
