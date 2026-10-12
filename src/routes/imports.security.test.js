@@ -70,6 +70,7 @@ test("GitHub preview endpoints require file-bound tickets and sandbox HTML", asy
     const preview = await localRequest(server, `/api/admin/import/github/preview?ticket=${encodeURIComponent(ticket)}`);
     assert.equal(preview.status, 200);
     assert.match(preview.headers["content-security-policy"] || "", /sandbox allow-scripts/);
+    assert.match(preview.headers["content-security-policy"] || "", /script-src[^;]*'unsafe-eval'/);
     assert.doesNotMatch(preview.headers["content-security-policy"] || "", /allow-same-origin/);
     assert.equal(preview.headers["cache-control"], "no-store");
     assert.doesNotMatch(preview.body, /repoUrl=/);
