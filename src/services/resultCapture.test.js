@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   createPersistentFieldManifest,
+  hasMeaningfulResultSubmission,
   instrumentResultFields,
   reconcilePersistentFieldManifest,
   redactLegacyResultPayload,
@@ -13,6 +14,18 @@ import {
   signResultFieldManifest,
   verifyResultFieldManifest
 } from "./resultCapture.js";
+
+test("rejects completely blank result submissions while allowing values or attachments", () => {
+  assert.equal(hasMeaningfulResultSubmission({ capture: { fields: [] } }), false);
+  assert.equal(hasMeaningfulResultSubmission({
+    capture: { fields: [{ id: "email", value: "   " }, { id: "choice", value: [] }] }
+  }), false);
+  assert.equal(hasMeaningfulResultSubmission({
+    capture: { fields: [{ id: "email", value: "visitor@example.test" }] }
+  }), true);
+  assert.equal(hasMeaningfulResultSubmission({ attachmentIds: ["attachment_ready"] }), true);
+  assert.equal(hasMeaningfulResultSubmission({ data: { answer: "provided" } }), true);
+});
 
 test("builds stable persistent field manifests across file renames", () => {
   const html = `

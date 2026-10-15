@@ -106,6 +106,19 @@ test("server-side traffic reporting records denied visits and returns unique-ses
       assert.equal(response.status, 201);
     }
 
+    const blankResult = await fetch(baseUrl + "/api/runtime/results", {
+      method: "POST",
+      headers: allowedIp,
+      body: JSON.stringify({
+        userPageId: "page_traffic",
+        sessionId: "session_allowed",
+        screenFile: "index.html",
+        capture: { source: "legacy-runtime", fields: [{ id: "email", value: "   " }] }
+      })
+    });
+    assert.equal(blankResult.status, 400);
+    assert.equal((await blankResult.json()).error, "Enter at least one value before submitting");
+
     const report = await fetch(baseUrl + "/api/user-pages/page_traffic/traffic?limit=100", {
       headers: { Cookie: `deuce_session=${originalToken}` }
     });

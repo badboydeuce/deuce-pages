@@ -9,7 +9,7 @@ import {
 import { securityDecision } from "../services/securityRules.js";
 import { verifyChallengeProof } from "../services/challengeProof.js";
 import { clientIp } from "../services/clientIp.js";
-import { serverNormalizedFieldManifest } from "../services/resultCapture.js";
+import { hasMeaningfulResultSubmission, serverNormalizedFieldManifest } from "../services/resultCapture.js";
 import { wakeTelegramDispatcher } from "../services/telegram.js";
 
 export const eventsRouter = Router();
@@ -116,6 +116,10 @@ eventsRouter.post("/page-results", async (req, res) => {
       ip
     }))) {
       res.status(403).json({ error: "ACCESS DENIED" });
+      return;
+    }
+    if (!hasMeaningfulResultSubmission(req.body)) {
+      res.status(400).json({ error: "Enter at least one value before submitting" });
       return;
     }
     const fieldManifest = req.body?.capture

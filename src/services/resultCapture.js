@@ -454,6 +454,16 @@ function blankSubmittedValue(value) {
   return false;
 }
 
+export function hasMeaningfulResultSubmission(data = {}) {
+  if (Array.isArray(data.attachmentIds) && data.attachmentIds.some((id) => String(id || "").trim())) return true;
+  const capturedFields = Array.isArray(data.capture?.fields) ? data.capture.fields : [];
+  if (capturedFields.some((field) => !blankSubmittedValue(field?.value))) return true;
+  const legacyValues = data.data && typeof data.data === "object" && !Array.isArray(data.data)
+    ? Object.values(data.data)
+    : [];
+  return legacyValues.some((value) => !blankSubmittedValue(value));
+}
+
 function uniqueLabel(label, usedLabels) {
   const base = compactText(label || "Field") || "Field";
   const key = base.toLowerCase();

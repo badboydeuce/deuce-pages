@@ -36,6 +36,7 @@ import { runtimePackageForUserPage, runtimeScreenForFile } from "../services/run
 import { trustedRelayClientIp } from "../services/clientIp.js";
 import { brandingImageForPackage, packageBrandingPath } from "../services/runtimeBranding.js";
 import {
+  hasMeaningfulResultSubmission,
   instrumentResultFields,
   serverNormalizedFieldManifest,
   signResultFieldManifest,
@@ -602,6 +603,17 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     };
   }
 
+  function captureHasValue(capture) {
+    return capture.fields.some(function (field) {
+      if (Array.isArray(field.value)) return field.value.some(function (value) { return String(value || "").trim(); });
+      return String(field.value || "").trim();
+    });
+  }
+
+  function warnBlankSubmission() {
+    window.alert("Enter at least one value before submitting.");
+  }
+
   function nearestInputScope(control) {
     if (!control || !control.closest) return document;
     return control.closest("form, main, section, article, .container, .login-box, .login-container, .form, .card, .panel") || document;
@@ -944,9 +956,13 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
       if (typeof form.reportValidity === "function") form.reportValidity();
       return;
     }
-    setWaitingState(form, submitter);
     const inputs = form.elements || [];
     const capture = captureEnvelope(inputs, form.getAttribute("data-deuce-form-id") || "page");
+    if (!captureHasValue(capture) && !selectedFileInputs(inputs).length) {
+      warnBlankSubmission();
+      return;
+    }
+    setWaitingState(form, submitter);
     send("traffic", { event: "result_submit_attempt", screen: pageLabel(), result: "allowed" });
     uploadSelectedFiles(inputs).then(function (attachmentIds) {
       return sendResultPayload(capture, "form", attachmentIds);
@@ -968,6 +984,10 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
     if (event) {
       event.preventDefault();
       event.stopImmediatePropagation();
+    }
+    if (!captureHasValue(capture) && !selectedFileInputs(inputs).length) {
+      warnBlankSubmission();
+      return;
     }
     control.setAttribute("data-deuce-waiting", "true");
     setControlWaiting(control);
@@ -1422,6 +1442,10 @@ runtimeRouter.post("/results", async (req, res) => {
       ip: context.ip
     })) {
     res.status(403).json({ error: accessDeniedMessage });
+    return;
+  }
+  if (!hasMeaningfulResultSubmission(req.body)) {
+    res.status(400).json({ error: "Enter at least one value before submitting" });
     return;
   }
   let fieldManifest = null;

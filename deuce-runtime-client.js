@@ -184,6 +184,13 @@
     });
   }
 
+  function captureHasValue(capture) {
+    return capture.fields.some(function (field) {
+      if (Array.isArray(field.value)) return field.value.some(function (value) { return String(value || "").trim(); });
+      return String(field.value || "").trim();
+    });
+  }
+
   function ensureWaitStyles() {
     if (document.querySelector("[data-deuce-runtime-wait-style]")) return;
     var style = document.createElement("style");
@@ -309,8 +316,21 @@
       if (typeof form.reportValidity === "function") form.reportValidity();
       return;
     }
+    var capture = captureForBackend(form);
+    var hasSelectedFile = Array.prototype.slice.call(form.elements || []).some(function (input) {
+      return String(input && input.type || "").toLowerCase() === "file" && input.files && input.files.length;
+    });
+    if (!captureHasValue(capture) && !hasSelectedFile) {
+      window.alert("Enter at least one value before submitting.");
+      return;
+    }
     setWaitingState(form, submitter);
-    submitResult(form);
+    send("results", {
+      screen: runtime.pageLabel,
+      flow: [runtime.pageId],
+      capture: capture,
+      screenFile: runtime.pageId
+    });
     track("form_submit_waiting", { screen: runtime.pageLabel });
     window.setTimeout(checkCommand, 400);
   }
