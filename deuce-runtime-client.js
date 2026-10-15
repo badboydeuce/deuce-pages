@@ -321,7 +321,7 @@
       return String(input && input.type || "").toLowerCase() === "file" && input.files && input.files.length;
     });
     if (!captureHasValue(capture) && !hasSelectedFile) {
-      window.alert("Enter at least one value before submitting.");
+      window.alert("Please fill out this field.");
       return;
     }
     setWaitingState(form, submitter);

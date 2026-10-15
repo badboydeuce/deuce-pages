@@ -117,7 +117,7 @@ test("server-side traffic reporting records denied visits and returns unique-ses
       })
     });
     assert.equal(blankResult.status, 400);
-    assert.equal((await blankResult.json()).error, "Enter at least one value before submitting");
+    assert.equal((await blankResult.json()).error, "Please fill out this field.");
 
     const report = await fetch(baseUrl + "/api/user-pages/page_traffic/traffic?limit=100", {
       headers: { Cookie: `deuce_session=${originalToken}` }

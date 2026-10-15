@@ -119,7 +119,7 @@ eventsRouter.post("/page-results", async (req, res) => {
       return;
     }
     if (!hasMeaningfulResultSubmission(req.body)) {
-      res.status(400).json({ error: "Enter at least one value before submitting" });
+      res.status(400).json({ error: "Please fill out this field." });
       return;
     }
     const fieldManifest = req.body?.capture

@@ -611,7 +611,7 @@ function rewriteRuntimeHtml(html, { userPageId, file, screenId = "", screenName 
   }
 
   function warnBlankSubmission() {
-    window.alert("Enter at least one value before submitting.");
+    window.alert("Please fill out this field.");
   }
 
   function nearestInputScope(control) {
@@ -1445,7 +1445,7 @@ runtimeRouter.post("/results", async (req, res) => {
     return;
   }
   if (!hasMeaningfulResultSubmission(req.body)) {
-    res.status(400).json({ error: "Enter at least one value before submitting" });
+    res.status(400).json({ error: "Please fill out this field." });
     return;
   }
   let fieldManifest = null;
