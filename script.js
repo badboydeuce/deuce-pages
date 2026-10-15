@@ -2650,10 +2650,13 @@ async function handleRequest(request) {
   const headers = new Headers(request.headers);
   headers.delete("origin");
   headers.delete("x-deuce-client-ip");
+  headers.delete("x-deuce-client-country");
   headers.set("x-deuce-relay-secret", RELAY_SECRET);
   headers.set("x-deuce-client-host", url.hostname);
   const visitorIp = request.headers.get("cf-connecting-ip") || "";
   if (visitorIp) headers.set("x-deuce-client-ip", visitorIp);
+  const visitorCountry = request.cf?.country || request.headers.get("cf-ipcountry") || "";
+  if (visitorCountry) headers.set("x-deuce-client-country", visitorCountry);
 
   return fetch(target.toString(), {
     method: request.method,
@@ -6950,6 +6953,20 @@ function trafficGraphMarkup(insights) {
   `;
 }
 
+function trafficCountryMarkup(event = {}) {
+  const countryCode = String(event.metadata?.countryCode || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(countryCode)) {
+    return `<span class="traffic-country is-unknown" title="Country unavailable" aria-label="Country unavailable">?</span>`;
+  }
+  let countryName = countryCode;
+  try {
+    countryName = new Intl.DisplayNames([document.documentElement.lang || "en"], { type: "region" }).of(countryCode) || countryCode;
+  } catch {
+    countryName = countryCode;
+  }
+  return `<img class="traffic-country" src="https://flagcdn.com/${countryCode.toLowerCase()}.svg" alt="${escapeHtml(countryName)} flag" title="${escapeHtml(countryName)} (${countryCode})" loading="lazy" referrerpolicy="no-referrer">`;
+}
+
 function trafficRowsMarkup(trafficLog, pageSlug, bannedIps = [], whitelistIps = []) {
   if (!trafficLog.length) {
     return `
@@ -6969,7 +6986,7 @@ function trafficRowsMarkup(trafficLog, pageSlug, bannedIps = [], whitelistIps = 
     return `
       <div>
         <span>${escapeHtml(formatTrafficTime(event.createdAt || event.time))}</span>
-        <strong>${escapeHtml(ip || "unknown ip")}</strong>
+        <strong class="traffic-ip">${trafficCountryMarkup(event)}<span>${escapeHtml(ip || "unknown ip")}</span></strong>
         <mark class="traffic-device ${escapeHtml(deviceType)}">${escapeHtml(trafficDeviceLabels[deviceType] || "Other")}</mark>
         <em class="${isBanned ? "is-banned" : isWhitelisted ? "is-whitelisted" : ""}">${escapeHtml(status)}</em>
         <section class="traffic-actions" aria-label="Traffic IP actions">

@@ -81,7 +81,8 @@ test("server-side traffic reporting records denied visits and returns unique-ses
     "Content-Type": "application/json",
     "x-deuce-relay-secret": relaySecret,
     "x-deuce-client-host": "client.example",
-    "x-deuce-client-ip": "198.51.100.44"
+    "x-deuce-client-ip": "198.51.100.44",
+    "x-deuce-client-country": "NG"
   };
 
   try {
@@ -115,6 +116,7 @@ test("server-side traffic reporting records denied visits and returns unique-ses
     assert.equal(body.trafficSummary.blockedVisits, 1);
     assert.equal(body.trafficSummary.blockEvents, 1);
     assert.equal(body.trafficSummary.totalEvents, 3);
+    assert.equal(body.trafficEvents.every((event) => event.metadata?.countryCode === "NG"), true);
     assert.equal(body.trafficEvents.some((event) => event.event === "security_denied" && event.result === "blocked"), true);
 
     const invalidClear = await fetch(baseUrl + "/api/user-pages/page_traffic/traffic", {

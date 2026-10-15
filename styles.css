@@ -5209,6 +5209,36 @@ code,
   font: 800 0.72rem var(--mono);
 }
 
+.traffic-ip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.traffic-ip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-country {
+  width: 24px;
+  height: 18px;
+  flex: 0 0 24px;
+  border-radius: 3px;
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.traffic-country.is-unknown {
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.055);
+  font: 800 0.65rem var(--mono);
+}
+
 .traffic-log mark {
   padding: 5px 8px;
   border-radius: 999px;

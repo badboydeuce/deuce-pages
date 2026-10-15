@@ -186,6 +186,12 @@ function allowedHostsFor(page) {
   ].map(normalizeHost).filter(Boolean)));
 }
 
+function trustedRelayCountryCode(req) {
+  if (!req?.deuceRelayTrusted) return null;
+  const code = String(req.headers?.["x-deuce-client-country"] || "").trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) && !["XX", "T1", "A1", "A2"].includes(code) ? code : null;
+}
+
 async function recordRuntimeBlock(page, req, details = {}) {
   if (!page?.id) return;
   try {
@@ -201,6 +207,7 @@ async function recordRuntimeBlock(page, req, details = {}) {
       reason: details.reason || "Runtime access denied",
       metadata: {
         decisionSource: details.decisionSource || "runtime_context",
+        countryCode: trustedRelayCountryCode(req),
         deviceType: details.decision?.deviceType || null,
         proxyType: details.decision?.proxyType || null,
         reputation: details.decision?.reputation || null,
@@ -1265,7 +1272,7 @@ runtimeRouter.post("/verify-human", async (req, res) => {
       path: req.path,
       result: "allowed",
       reason: "Turnstile passed",
-      metadata: { decisionSource: "turnstile" }
+      metadata: { decisionSource: "turnstile", countryCode: trustedRelayCountryCode(req) }
     }, context.ip, req.headers["user-agent"]);
     setSourceProofCookie(res, createSourceChallengeProof({
       userPageId: context.page.id,
@@ -1302,6 +1309,7 @@ runtimeRouter.post("/traffic", async (req, res) => {
     metadata: {
       ...(req.body?.metadata || {}),
       screenFile: String(req.body?.screenFile || ""),
+      countryCode: trustedRelayCountryCode(req),
       decisionSource: decision.allowed ? (runtimeReportedBlock ? "runtime_client" : null) : "server_security",
       deviceType: decision.deviceType || null,
       proxyType: decision.proxyType || null,
